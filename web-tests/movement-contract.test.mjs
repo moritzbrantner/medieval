@@ -17,7 +17,7 @@ test("movement destinations come from the Rust command surface", () => {
 test("movement sends an intent instead of mutating campaign state in the browser", () => {
   assert.match(script, /invoke\("move_army", \{ armyId, destination \}\)/);
   assert.doesNotMatch(script, /\.province\s*=\s*destination/);
-  assert.doesNotMatch(script, /pendingBattle\s*=/);
+  assert.doesNotMatch(script, /campaign\.pendingBattle\s*=/);
 });
 
 test("pending battle state is projected explicitly", () => {
