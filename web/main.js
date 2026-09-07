@@ -21,6 +21,8 @@ let campaign;
 let selectedProvinceId;
 let selectedArmyId;
 let legalDestinationIds = [];
+let recruitmentOptions = [];
+let recruitmentProvinceId;
 
 function showView(name) {
   for (const [viewName, element] of Object.entries(views)) {
@@ -33,6 +35,10 @@ function factionName(id) {
   return campaign.factions.find((faction) => faction.id === id)?.name ?? id;
 }
 
+function activeFaction() {
+  return campaign.factions.find((faction) => faction.id === campaign.activeFaction);
+}
+
 function provinceName(id) {
   return campaign.provinces.find((province) => province.id === id)?.name ?? id;
 }
@@ -42,9 +48,64 @@ function armyInProvince(provinceId) {
 }
 
 function renderSummary() {
-  const faction = factionName(campaign.activeFaction);
+  const faction = activeFaction();
   const battleSuffix = campaign.pendingBattle ? " · Battle pending" : "";
-  summary.textContent = `${campaign.year} · Turn ${campaign.turn} · ${faction}${battleSuffix}`;
+  const treasury = faction ? ` · ${faction.treasury} gold` : "";
+  summary.textContent = `${campaign.year} · Turn ${campaign.turn} · ${faction?.name ?? campaign.activeFaction}${treasury}${battleSuffix}`;
+}
+
+function renderRecruitment(province) {
+  const section = document.createElement("section");
+  section.className = "recruitment";
+
+  const eyebrow = document.createElement("p");
+  eyebrow.className = "eyebrow";
+  eyebrow.textContent = "Recruitment";
+  section.append(eyebrow);
+
+  const queuedOrders = (campaign.recruitmentQueue ?? []).filter(
+    (order) => order.provinceId === province.id,
+  );
+  for (const order of queuedOrders) {
+    const queued = document.createElement("p");
+    queued.className = "recruitment-queued";
+    queued.textContent = `${order.soldiers} ${order.label} queued · ready on turn ${order.readyOnTurn}`;
+    section.append(queued);
+  }
+
+  if (recruitmentProvinceId !== province.id) {
+    const loading = document.createElement("p");
+    loading.className = "recruitment-note";
+    loading.textContent = "Loading Rust recruitment options…";
+    section.append(loading);
+    detail.append(section);
+    return;
+  }
+
+  const options = document.createElement("div");
+  options.className = "recruitment-options";
+
+  for (const option of recruitmentOptions) {
+    const row = document.createElement("div");
+    row.className = "recruitment-option";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.disabled = !option.available;
+    button.textContent = `${option.label} · ${option.soldiers} · ${option.cost} gold`;
+    button.addEventListener("click", () => queueRecruitment(province.id, option.unit));
+
+    row.append(button);
+    if (option.reason) {
+      const reason = document.createElement("small");
+      reason.textContent = option.reason;
+      row.append(reason);
+    }
+    options.append(row);
+  }
+
+  section.append(options);
+  detail.append(section);
 }
 
 function renderProvinceDetail() {
@@ -97,6 +158,8 @@ function renderProvinceDetail() {
       : "Rust returned no legal destinations for the selected army.";
     detail.append(orderHint);
   }
+
+  renderRecruitment(province);
 }
 
 function renderMap() {
@@ -128,16 +191,16 @@ function renderMap() {
       button.append(legal);
     }
 
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       if (selectedArmyId && isLegalDestination) {
-        moveSelectedArmy(province.id);
+        await moveSelectedArmy(province.id);
         return;
       }
 
       selectedProvinceId = province.id;
       clearMovementSelection();
-      renderMap();
-      renderProvinceDetail();
+      await refreshRecruitmentOptions();
+      renderCampaign();
     });
     map.append(button);
   }
@@ -193,6 +256,19 @@ function clearMovementSelection() {
   legalDestinationIds = [];
 }
 
+async function refreshRecruitmentOptions() {
+  if (!invoke || !campaign || !selectedProvinceId) {
+    recruitmentOptions = [];
+    recruitmentProvinceId = undefined;
+    return;
+  }
+
+  recruitmentOptions = await invoke("recruitment_options", {
+    provinceId: selectedProvinceId,
+  });
+  recruitmentProvinceId = selectedProvinceId;
+}
+
 async function ensureCampaignLoaded() {
   if (campaign) return;
   if (!invoke) {
@@ -201,6 +277,7 @@ async function ensureCampaignLoaded() {
 
   campaign = await invoke("campaign_state");
   selectedProvinceId = campaign.provinces[0]?.id;
+  await refreshRecruitmentOptions();
   renderCampaign();
 }
 
@@ -213,6 +290,7 @@ async function selectArmy(armyId) {
     selectedArmyId = armyId;
     const army = campaign.armies.find((item) => item.id === armyId);
     selectedProvinceId = army?.province ?? selectedProvinceId;
+    await refreshRecruitmentOptions();
     renderCampaign();
   } catch (error) {
     clearMovementSelection();
@@ -232,11 +310,25 @@ async function moveSelectedArmy(destination) {
     campaign = await invoke("move_army", { armyId, destination });
     selectedProvinceId = destination;
     clearMovementSelection();
+    await refreshRecruitmentOptions();
     renderCampaign();
   } catch (error) {
     reportError(error);
   } finally {
     syncCampaignActions();
+  }
+}
+
+async function queueRecruitment(provinceId, unit) {
+  if (!invoke) return;
+
+  errorBox.hidden = true;
+  try {
+    campaign = await invoke("queue_recruitment", { provinceId, unit });
+    await refreshRecruitmentOptions();
+    renderCampaign();
+  } catch (error) {
+    reportError(error);
   }
 }
 
@@ -250,6 +342,7 @@ async function runCommand(command) {
     if (!campaign.provinces.some((province) => province.id === selectedProvinceId)) {
       selectedProvinceId = campaign.provinces[0]?.id;
     }
+    await refreshRecruitmentOptions();
     renderCampaign();
   } catch (error) {
     reportError(error);
