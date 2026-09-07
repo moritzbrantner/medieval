@@ -11,9 +11,9 @@ impl Default for GameState {
     }
 }
 
-fn lock_campaign(
-    state: &State<'_, GameState>,
-) -> Result<std::sync::MutexGuard<'_, CampaignState>, String> {
+fn lock_campaign<'a>(
+    state: &'a State<'_, GameState>,
+) -> Result<std::sync::MutexGuard<'a, CampaignState>, String> {
     state
         .0
         .lock()
