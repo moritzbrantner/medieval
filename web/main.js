@@ -23,6 +23,7 @@ let selectedArmyId;
 let legalDestinationIds = [];
 let recruitmentOptions = [];
 let recruitmentProvinceId;
+let recruitmentRequestId = 0;
 
 function showView(name) {
   for (const [viewName, element] of Object.entries(views)) {
@@ -257,16 +258,26 @@ function clearMovementSelection() {
 }
 
 async function refreshRecruitmentOptions() {
+  const requestId = ++recruitmentRequestId;
   if (!invoke || !campaign || !selectedProvinceId) {
     recruitmentOptions = [];
     recruitmentProvinceId = undefined;
     return;
   }
 
-  recruitmentOptions = await invoke("recruitment_options", {
-    provinceId: selectedProvinceId,
+  const requestedProvinceId = selectedProvinceId;
+  const options = await invoke("recruitment_options", {
+    provinceId: requestedProvinceId,
   });
-  recruitmentProvinceId = selectedProvinceId;
+  if (
+    requestId !== recruitmentRequestId ||
+    requestedProvinceId !== selectedProvinceId
+  ) {
+    return;
+  }
+
+  recruitmentOptions = options;
+  recruitmentProvinceId = requestedProvinceId;
 }
 
 async function ensureCampaignLoaded() {
