@@ -170,7 +170,8 @@ fn start_new_campaign(
 #[tauri::command]
 fn save_campaign(app: AppHandle, state: State<'_, GameState>) -> Result<(), String> {
     let path = campaign_save_path(&app)?;
-    save_session_to_path(&lock_session(&state)?, &path)
+    let session = lock_session(&state)?;
+    save_session_to_path(&session, &path)
 }
 
 #[tauri::command]
