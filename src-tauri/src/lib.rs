@@ -144,8 +144,10 @@ fn end_player_turn(state: State<'_, GameState>, seed: u64) -> Result<CampaignSta
     ensure_campaign_running(&session)?;
 
     if session.campaign.active_faction != session.player_faction {
-        return Err("the deterministic opponent must finish before the player can end another turn"
-            .to_owned());
+        return Err(
+            "the deterministic opponent must finish before the player can end another turn"
+                .to_owned(),
+        );
     }
 
     session
