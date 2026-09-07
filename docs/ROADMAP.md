@@ -4,18 +4,21 @@
 
 Medieval should reproduce the *shape* that made the first Medieval: Total War compelling — a turn-based province campaign feeding into battles — without trying to reproduce proprietary assets, source code, data, or presentation.
 
-The first playable target is deliberately compact: a two-faction, six-province campaign that can be finished in roughly 30–60 minutes. Every slice must improve that loop before the project expands outward.
+Campaign is not the application shell. Medieval opens on a simple mode menu so tactical battles can later exist independently as Online Battle, without requiring a campaign save.
+
+The first single-player target remains deliberately compact: a two-faction, six-province campaign that can be finished in roughly 30–60 minutes. Every campaign slice must improve that loop before the campaign expands outward.
 
 ## Ownership boundaries
 
 - **`medieval-core` owns truth:** campaign state, adjacency, movement legality, economy, recruitment rules, combat resolution, AI decisions, seeded randomness, victory conditions, and serialization versions.
 - **Tauri owns platform integration:** application lifecycle, local save-file access, native packaging, and later mobile/desktop integrations.
-- **The webview owns projection and input:** rendering, selection, camera/view state, accessibility, and translating gestures into explicit player intents. It must not silently reimplement game rules.
+- **The webview owns projection and input:** rendering, selection, camera/view state, accessibility, menu/navigation state, and translating gestures into explicit player intents. It must not silently reimplement game rules.
 - **Future real-time battles remain Rust-owned:** unit state, formation rules, morale, pathing, collision/combat outcomes, and deterministic simulation ticks. A renderer may project the simulation but cannot become the authority.
+- **`multiplayer-setup-service` owns rendezvous only:** lobby capabilities, targeted opaque WebRTC signaling, resilience helpers, TURN policy hooks, and optional peer-content coordination. It never owns Medieval gameplay truth or asset authority.
 
 ## MVP vertical slices
 
-### 0. Foundation — current slice
+### 0. Foundation — complete
 
 - Rust workspace with platform-independent `medieval-core`.
 - Tauri 2 shell suitable for desktop and mobile targets.
@@ -25,6 +28,16 @@ The first playable target is deliberately compact: a two-faction, six-province c
 - Rust format, Clippy, and test CI.
 
 **Exit:** the app opens, renders the six-province campaign, and ending a turn changes authoritative Rust state.
+
+### 0.5. Main menu and mode shell — current slice
+
+- Open Medieval on a small mode chooser instead of directly entering Campaign.
+- Campaign loads the Rust-owned campaign only after the player chooses it.
+- Add Online Battle as a first-class destination without pretending its network controls are implemented yet.
+- Preview the future lobby and verified-asset readiness gate.
+- Keep mode/navigation state presentation-owned; no campaign rule migrates into JavaScript.
+
+**Exit:** Campaign and future Online Battle have independent entry points and the existing campaign remains playable through the menu.
 
 ### 1. Army movement
 
@@ -71,11 +84,11 @@ The first playable target is deliberately compact: a two-faction, six-province c
 - Desktop keyboard/mouse acceptance and mobile touch-layout acceptance.
 - Package smoke tests for Linux, Windows, macOS, Android, and iOS where runners/devices are available.
 
-**Exit:** the MVP is durable enough to play across sessions and package on target platforms.
+**Exit:** the campaign MVP is durable enough to play across sessions and package on target platforms.
 
-## Post-MVP: tactical battle track
+## Tactical battle track
 
-Only start this after slices 1–5 are coherent.
+A real Online Battle depends on this deterministic battle foundation. It does **not** need to wait for the full campaign handoff.
 
 1. **Battle simulation kernel:** flat test battlefield, fixed-step clock, units, formations, movement orders.
 2. **Morale and combat:** frontage, fatigue, casualties, morale shocks, routs, pursuit.
@@ -84,17 +97,32 @@ Only start this after slices 1–5 are coherent.
 5. **Sieges:** walls, gates, towers, capture points, pathing constraints.
 6. **Campaign handoff:** campaign army composition seeds tactical battle; tactical outcome returns casualties and control changes.
 
+## Online Battle track
+
+The entry point exists early, but real networking should reuse `multiplayer-setup-service` and only launch once a deterministic tactical kernel can run the same battle on both peers.
+
+See [`ONLINE-BATTLE.md`](ONLINE-BATTLE.md) for the full contract.
+
+1. **Private two-player lobby:** host/join/invite flow through `/lobbies` and `LobbySession`; private participant capabilities never appear in invite links.
+2. **Release readiness:** both peers identify a compatible Medieval release/battle protocol and exchange compact ready state.
+3. **Verified asset gate:** trusted release manifest, persistent verified cache, optional P2P seeding, multi-source chunk download, and progress based only on verified chunks.
+4. **Start gate:** battle cannot start until both peers have the same compatible release and all required battle assets verified.
+5. **Battle command transport:** deterministic fixed ticks, compact commands/inputs, sequence validation, and periodic state hashes over direct WebRTC.
+6. **Resilience:** reuse signaling reconnect, ICE restart, and TURN fallback; gameplay bandwidth always outranks bulk asset transfer.
+7. **Divergence handling:** detect state-hash mismatch and fail/recover explicitly rather than silently drifting.
+8. **Competitive authority, later if needed:** friendly peer matches do not claim cheat resistance; add an authoritative game server only if competitive anti-cheat becomes a product requirement.
+
 ## Later campaign depth
 
 After the tactical handoff is proven, add depth incrementally: more factions and provinces, buildings, commanders/traits, diplomacy, agents, religion, rebellions, naval transport, historical events, and larger campaign maps.
 
-## Explicit non-goals for the MVP
+## Explicit non-goals for the campaign MVP
 
 - Full Europe/North Africa/Middle East campaign map.
 - Thousands of independently simulated soldiers.
-- Real-time tactical battles.
+- Real-time tactical battles inside campaign slices 1–5.
 - Sieges, naval battles, diplomacy, agents, dynasties, religion, or crusades.
-- Online multiplayer.
+- Shipping Online Battle before the deterministic tactical kernel exists.
 - Historical-accuracy content pass beyond a coherent medieval-inspired sandbox.
 
 These are valuable later, but none should delay a small complete strategy loop.
