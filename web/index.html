@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="economy.css" />
     <link rel="stylesheet" href="battle.css" />
+    <link rel="stylesheet" href="opponent.css" />
   </head>
   <body>
     <div id="app">
@@ -48,6 +49,11 @@
           <section class="campaign-map" aria-label="Campaign provinces" id="campaign-map"></section>
 
           <aside class="sidebar">
+            <section id="campaign-outcome" class="campaign-outcome" hidden>
+              <p class="eyebrow">Campaign result</p>
+              <div id="campaign-outcome-detail"></div>
+            </section>
+
             <section>
               <p class="eyebrow">Province</p>
               <div id="province-detail" class="province-detail">Select a province on the map.</div>
@@ -74,6 +80,14 @@
               <p class="eyebrow">Chronicle</p>
               <ol id="chronicle" class="chronicle"></ol>
             </section>
+
+            <div class="campaign-reset">
+              <label for="player-faction">New campaign faction</label>
+              <select id="player-faction">
+                <option value="england">Kingdom of England</option>
+                <option value="france">Kingdom of France</option>
+              </select>
+            </div>
 
             <div class="actions">
               <button id="new-campaign" class="secondary" type="button">New campaign</button>

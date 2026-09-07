@@ -1,0 +1,37 @@
+.campaign-outcome {
+  border: 1px solid rgba(232, 201, 132, 0.48);
+  border-radius: 0.75rem;
+  padding: 0.9rem 1rem;
+  background: rgba(232, 201, 132, 0.08);
+}
+
+.campaign-outcome strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 1.1rem;
+}
+
+.campaign-outcome p {
+  margin: 0;
+}
+
+.campaign-reset {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.campaign-reset label {
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.78;
+}
+
+.campaign-reset select {
+  width: 100%;
+  border: 1px solid rgba(232, 201, 132, 0.28);
+  border-radius: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  background: #171511;
+  color: inherit;
+}
