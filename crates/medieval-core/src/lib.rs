@@ -3,7 +3,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 mod battle;
+mod save;
 pub use battle::{ArmyRoster, BattleOutcome, BattleReport};
+pub use save::{CAMPAIGN_SAVE_SCHEMA_VERSION, CampaignSave, SaveError};
 
 const INCOME_PER_WEALTH: u32 = 50;
 const UNIT_KINDS: [UnitKind; 4] = [

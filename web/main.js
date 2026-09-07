@@ -18,6 +18,9 @@ const resolveBattleButton = document.querySelector("#resolve-battle");
 const campaignOutcome = document.querySelector("#campaign-outcome");
 const campaignOutcomeDetail = document.querySelector("#campaign-outcome-detail");
 const playerFactionSelect = document.querySelector("#player-faction");
+const saveCampaignButton = document.querySelector("#save-campaign");
+const loadCampaignButton = document.querySelector("#load-campaign");
+const saveStatus = document.querySelector("#save-status");
 const errorBox = document.querySelector("#error");
 const endTurnButton = document.querySelector("#end-turn");
 const newCampaignButton = document.querySelector("#new-campaign");
@@ -33,6 +36,7 @@ let legalDestinationIds = [];
 let recruitmentOptions = [];
 let recruitmentProvinceId;
 let recruitmentRequestId = 0;
+let campaignBusy = false;
 
 function showView(name) {
   for (const [viewName, element] of Object.entries(views)) {
@@ -136,7 +140,7 @@ function renderRecruitment(province) {
 
     const button = document.createElement("button");
     button.type = "button";
-    button.disabled = !option.available;
+    button.disabled = campaignBusy || !option.available;
     button.textContent = `${option.label} · ${option.soldiers} · ${option.cost} gold`;
     button.addEventListener("click", () => queueRecruitment(province.id, option.unit));
 
@@ -188,7 +192,7 @@ function renderProvinceDetail() {
     const selectArmyButton = document.createElement("button");
     selectArmyButton.type = "button";
     selectArmyButton.className = "army-select";
-    selectArmyButton.disabled = Boolean(campaignWinner) || army.owner !== playerFaction;
+    selectArmyButton.disabled = campaignBusy || Boolean(campaignWinner) || army.owner !== playerFaction;
     selectArmyButton.textContent = army.owner !== playerFaction
       ? "Opponent army"
       : army.id === selectedArmyId
@@ -221,6 +225,7 @@ function renderMap() {
     button.type = "button";
     button.className = `province owner-${province.owner}${isLegalDestination ? " legal-destination" : ""}`;
     button.dataset.province = province.id;
+    button.disabled = campaignBusy;
     button.setAttribute("aria-pressed", String(province.id === selectedProvinceId));
 
     const name = document.createElement("strong");
@@ -242,6 +247,7 @@ function renderMap() {
     }
 
     button.addEventListener("click", async () => {
+      if (campaignBusy) return;
       if (selectedArmyId && isLegalDestination) {
         await moveSelectedArmy(province.id);
         return;
@@ -312,12 +318,16 @@ function renderChronicle() {
 }
 
 function syncCampaignActions() {
-  endTurnButton.disabled = Boolean(campaign?.pendingBattle)
+  endTurnButton.disabled = campaignBusy
+    || Boolean(campaign?.pendingBattle)
     || Boolean(campaignWinner)
     || campaign?.activeFaction !== playerFaction;
-  resolveBattleButton.disabled = !campaign?.pendingBattle || Boolean(campaignWinner);
-  newCampaignButton.disabled = false;
-  playerFactionSelect.disabled = false;
+  resolveBattleButton.disabled = campaignBusy || !campaign?.pendingBattle || Boolean(campaignWinner);
+  battleSeedInput.disabled = campaignBusy || !campaign?.pendingBattle || Boolean(campaignWinner);
+  newCampaignButton.disabled = campaignBusy;
+  playerFactionSelect.disabled = campaignBusy;
+  saveCampaignButton.disabled = campaignBusy || !campaign || !invoke;
+  loadCampaignButton.disabled = campaignBusy || !invoke;
 }
 
 function renderCampaign() {
@@ -334,6 +344,18 @@ function renderCampaign() {
 function reportError(error) {
   errorBox.hidden = false;
   errorBox.textContent = String(error);
+}
+
+function setSaveStatus(message) {
+  saveStatus.textContent = message;
+}
+
+function setCampaignBusy(busy) {
+  campaignBusy = busy;
+  if (busy) recruitmentRequestId += 1;
+  views.campaign.setAttribute("aria-busy", String(busy));
+  if (campaign) renderCampaign();
+  else syncCampaignActions();
 }
 
 function clearMovementSelection() {
@@ -387,7 +409,7 @@ async function ensureCampaignLoaded() {
 }
 
 async function selectArmy(armyId) {
-  if (!invoke || campaignWinner) return;
+  if (!invoke || campaignWinner || campaignBusy) return;
 
   errorBox.hidden = true;
   try {
@@ -405,11 +427,10 @@ async function selectArmy(armyId) {
 }
 
 async function moveSelectedArmy(destination) {
-  if (!invoke || !selectedArmyId || campaignWinner) return;
+  if (!invoke || !selectedArmyId || campaignWinner || campaignBusy) return;
 
   const armyId = selectedArmyId;
-  endTurnButton.disabled = true;
-  newCampaignButton.disabled = true;
+  setCampaignBusy(true);
   errorBox.hidden = true;
   try {
     campaign = await invoke("move_army", { armyId, destination });
@@ -421,13 +442,14 @@ async function moveSelectedArmy(destination) {
   } catch (error) {
     reportError(error);
   } finally {
-    syncCampaignActions();
+    setCampaignBusy(false);
   }
 }
 
 async function queueRecruitment(provinceId, unit) {
-  if (!invoke || campaignWinner) return;
+  if (!invoke || campaignWinner || campaignBusy) return;
 
+  setCampaignBusy(true);
   errorBox.hidden = true;
   try {
     campaign = await invoke("queue_recruitment", { provinceId, unit });
@@ -436,11 +458,13 @@ async function queueRecruitment(provinceId, unit) {
     renderCampaign();
   } catch (error) {
     reportError(error);
+  } finally {
+    setCampaignBusy(false);
   }
 }
 
 async function resolvePendingBattle() {
-  if (!invoke || !campaign?.pendingBattle || campaignWinner) return;
+  if (!invoke || !campaign?.pendingBattle || campaignWinner || campaignBusy) return;
 
   const seed = Number(battleSeedInput.value);
   if (!Number.isSafeInteger(seed) || seed < 0) {
@@ -448,7 +472,7 @@ async function resolvePendingBattle() {
     return;
   }
 
-  resolveBattleButton.disabled = true;
+  setCampaignBusy(true);
   errorBox.hidden = true;
   try {
     campaign = await invoke("resolve_pending_battle", { seed });
@@ -461,16 +485,57 @@ async function resolvePendingBattle() {
   } catch (error) {
     reportError(error);
   } finally {
-    syncCampaignActions();
+    setCampaignBusy(false);
+  }
+}
+
+async function saveCampaign() {
+  if (!invoke || !campaign || campaignBusy) return;
+
+  setCampaignBusy(true);
+  errorBox.hidden = true;
+  try {
+    await invoke("save_campaign");
+    setSaveStatus(`Saved ${campaign.year}, turn ${campaign.turn}.`);
+  } catch (error) {
+    setSaveStatus("Save failed.");
+    reportError(error);
+  } finally {
+    setCampaignBusy(false);
+  }
+}
+
+async function loadCampaign() {
+  if (!invoke || campaignBusy) return;
+
+  setCampaignBusy(true);
+  errorBox.hidden = true;
+  try {
+    campaign = await invoke("load_campaign");
+    [playerFaction, campaignWinner] = await Promise.all([
+      invoke("campaign_player_faction"),
+      invoke("campaign_winner"),
+    ]);
+    playerFactionSelect.value = playerFaction;
+    clearMovementSelection();
+    selectedProvinceId = campaign.provinces.find((province) => province.owner === playerFaction)?.id
+      ?? campaign.provinces[0]?.id;
+    await refreshRecruitmentOptions();
+    renderCampaign();
+    setSaveStatus(`Loaded ${campaign.year}, turn ${campaign.turn}.`);
+  } catch (error) {
+    setSaveStatus("Load failed; current campaign kept unchanged.");
+    reportError(error);
+  } finally {
+    setCampaignBusy(false);
   }
 }
 
 async function endPlayerTurn() {
-  if (!invoke || campaignWinner || campaign?.pendingBattle) return;
+  if (!invoke || campaignWinner || campaign?.pendingBattle || campaignBusy) return;
 
   const seed = campaign.turn;
-  endTurnButton.disabled = true;
-  newCampaignButton.disabled = true;
+  setCampaignBusy(true);
   errorBox.hidden = true;
   try {
     campaign = await invoke("end_player_turn", { seed });
@@ -481,20 +546,20 @@ async function endPlayerTurn() {
     }
     await refreshRecruitmentOptions();
     renderCampaign();
+    setSaveStatus(`Autosaved ${campaign.year}, turn ${campaign.turn}.`);
   } catch (error) {
+    setSaveStatus("Turn did not commit because its autosave did not complete.");
     reportError(error);
   } finally {
-    syncCampaignActions();
+    setCampaignBusy(false);
   }
 }
 
 async function startNewCampaign() {
-  if (!invoke) return;
+  if (!invoke || campaignBusy) return;
 
   const requestedFaction = playerFactionSelect.value;
-  endTurnButton.disabled = true;
-  newCampaignButton.disabled = true;
-  playerFactionSelect.disabled = true;
+  setCampaignBusy(true);
   errorBox.hidden = true;
   try {
     campaign = await invoke("start_new_campaign", { playerFaction: requestedFaction });
@@ -506,10 +571,11 @@ async function startNewCampaign() {
     await refreshCampaignWinner();
     await refreshRecruitmentOptions();
     renderCampaign();
+    setSaveStatus("New campaign started; save manually or end the turn to autosave.");
   } catch (error) {
     reportError(error);
   } finally {
-    syncCampaignActions();
+    setCampaignBusy(false);
   }
 }
 
@@ -528,6 +594,8 @@ for (const button of document.querySelectorAll("[data-back-to-menu]")) {
 }
 
 resolveBattleButton.addEventListener("click", resolvePendingBattle);
+saveCampaignButton.addEventListener("click", saveCampaign);
+loadCampaignButton.addEventListener("click", loadCampaign);
 endTurnButton.addEventListener("click", endPlayerTurn);
 newCampaignButton.addEventListener("click", startNewCampaign);
 
