@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use medieval_core::{CampaignState, new_campaign as fresh_campaign};
+use medieval_core::{CampaignState, RecruitmentOption, UnitKind, new_campaign as fresh_campaign};
 use tauri::State;
 
 struct GameState(Mutex<CampaignState>);
@@ -56,6 +56,29 @@ fn move_army(
 }
 
 #[tauri::command]
+fn recruitment_options(
+    state: State<'_, GameState>,
+    province_id: String,
+) -> Result<Vec<RecruitmentOption>, String> {
+    lock_campaign(&state)?
+        .recruitment_options(&province_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn queue_recruitment(
+    state: State<'_, GameState>,
+    province_id: String,
+    unit: UnitKind,
+) -> Result<CampaignState, String> {
+    let mut campaign = lock_campaign(&state)?;
+    campaign
+        .queue_recruitment(&province_id, unit)
+        .map_err(|error| error.to_string())?;
+    Ok(campaign.clone())
+}
+
+#[tauri::command]
 fn end_turn(state: State<'_, GameState>) -> Result<CampaignState, String> {
     let mut campaign = lock_campaign(&state)?;
     campaign.end_turn().map_err(|error| error.to_string())?;
@@ -71,6 +94,8 @@ pub fn run() {
             start_new_campaign,
             legal_army_destinations,
             move_army,
+            recruitment_options,
+            queue_recruitment,
             end_turn
         ])
         .run(tauri::generate_context!())

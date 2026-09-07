@@ -1,0 +1,45 @@
+.recruitment {
+  margin-top: 1.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid #4e4635;
+}
+
+.recruitment-options {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.recruitment-option {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.recruitment-option button {
+  min-height: 2.4rem;
+  padding: 0.6rem 0.75rem;
+  color: #171612;
+  text-align: left;
+  border: 1px solid #d0b96d;
+  background: #d0b96d;
+  font: 700 0.78rem/1.2 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.recruitment-option button:disabled {
+  color: #aaa18a;
+  border-color: #514a39;
+  background: #25231e;
+  cursor: not-allowed;
+}
+
+.recruitment-option small,
+.recruitment-note,
+.recruitment-queued {
+  color: #9f967f;
+  font: 0.75rem/1.4 system-ui, sans-serif;
+}
+
+.recruitment-queued {
+  margin-bottom: 0.6rem;
+  color: #d0b96d;
+}
