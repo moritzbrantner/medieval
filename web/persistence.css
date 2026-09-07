@@ -32,6 +32,27 @@
   font: 0.78rem/1.4 system-ui, sans-serif;
 }
 
+button,
+input,
+select {
+  touch-action: manipulation;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #d0b96d;
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  button,
+  input,
+  select {
+    min-height: 3rem;
+  }
+}
+
 @media (max-width: 560px) {
   .save-actions {
     grid-template-columns: 1fr;
