@@ -50,7 +50,7 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 **Exit:** the player can create a conflict by moving an army across a border without moving campaign rules into JavaScript.
 
-### 2. Economy and recruitment — current slice
+### 2. Economy and recruitment — complete in stacked dependency
 
 - Provincial income is computed in Rust from controlled territory and paid once at each faction-turn start.
 - Turn-start economy processing is idempotent for the same faction/turn pair.
@@ -62,14 +62,17 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 **Exit:** territory generates resources and those resources become military force without duplicating economic rules in JavaScript.
 
-### 3. Deterministic auto-resolve
+### 3. Deterministic auto-resolve — current slice
 
-- Seeded battle resolution based on troop composition plus a small terrain/defender modifier.
-- Casualties, retreat, destruction, and province capture.
-- Battle report stores inputs, seed, and result for reproducibility.
-- Property/unit tests cover conservation and deterministic replay.
+- A Rust-owned pending battle is resolved only through an explicit `u64` seed.
+- The battle kernel derives scores from troop composition and a small fixed defender advantage.
+- Rust applies deterministic casualty percentages to attacker and defending armies.
+- Attacker victory captures the target province; surviving defenders retreat to the first adjacent friendly province or are destroyed if no retreat exists.
+- Every resolution persists a `BattleReport` containing seed, inputs, scores, before/after rosters, casualty rules, outcome, capture, and retreat information.
+- The browser only submits the seed and renders the persisted report; no combat arithmetic is duplicated in JavaScript.
+- Tests cover deterministic replay, casualty conservation, capture, and the browser ownership boundary.
 
-**Exit:** moving into hostile territory completes a full strategic conquest loop without a tactical renderer.
+**Exit:** moving into hostile territory completes a reproducible strategic conquest loop without a tactical renderer.
 
 ### 4. Opponent and victory
 
