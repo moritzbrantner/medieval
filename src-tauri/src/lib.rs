@@ -58,13 +58,11 @@ fn campaign_save_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn save_session_to_path(session: &GameSession, path: &Path) -> Result<(), String> {
-    let document = CampaignSave::from_campaign(
-        session.campaign.clone(),
-        session.player_faction.clone(),
-    )
-    .map_err(|error| error.to_string())?
-    .to_json()
-    .map_err(|error| error.to_string())?;
+    let document =
+        CampaignSave::from_campaign(session.campaign.clone(), session.player_faction.clone())
+            .map_err(|error| error.to_string())?
+            .to_json()
+            .map_err(|error| error.to_string())?;
     write_save_document(path, &document)
 }
 
@@ -267,7 +265,9 @@ fn end_player_turn(
     }
 
     let mut next = session.clone();
-    next.campaign.end_turn().map_err(|error| error.to_string())?;
+    next.campaign
+        .end_turn()
+        .map_err(|error| error.to_string())?;
 
     if next.campaign.winner().is_none() {
         let player_faction = next.player_faction.clone();
@@ -330,7 +330,10 @@ mod tests {
     fn session_save_round_trip_preserves_campaign_and_player_faction() {
         let path = test_save_path("campaign-save.json");
         let mut session = GameSession::default();
-        session.campaign.move_army("england-main", "wessex").unwrap();
+        session
+            .campaign
+            .move_army("england-main", "wessex")
+            .unwrap();
 
         save_session_to_path(&session, &path).unwrap();
         let loaded = load_session_from_path(&path).unwrap();
