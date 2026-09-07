@@ -2,6 +2,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+mod battle;
+pub use battle::{ArmyRoster, BattleOutcome, BattleReport};
+
 const INCOME_PER_WEALTH: u32 = 50;
 const UNIT_KINDS: [UnitKind; 4] = [
     UnitKind::Levy,
@@ -21,6 +24,7 @@ pub struct CampaignState {
     pub armies: Vec<Army>,
     pub pending_battle: Option<PendingBattle>,
     pub recruitment_queue: Vec<RecruitmentOrder>,
+    pub battle_reports: Vec<BattleReport>,
     pub log: Vec<String>,
 }
 
@@ -143,6 +147,7 @@ pub enum CampaignError {
     },
     ArmyAlreadyMoved(String),
     BattlePending,
+    NoPendingBattle,
     DestinationNotAdjacent {
         from: String,
         destination: String,
@@ -186,6 +191,7 @@ impl fmt::Display for CampaignError {
             Self::BattlePending => {
                 write!(formatter, "resolve the pending battle before continuing")
             }
+            Self::NoPendingBattle => write!(formatter, "there is no pending battle to resolve"),
             Self::DestinationNotAdjacent { from, destination } => {
                 write!(formatter, "{destination} is not adjacent to {from}")
             }
@@ -685,6 +691,7 @@ pub fn new_campaign() -> CampaignState {
         ],
         pending_battle: None,
         recruitment_queue: Vec::new(),
+        battle_reports: Vec::new(),
         log: vec!["The campaign begins in 1087.".into()],
     }
 }

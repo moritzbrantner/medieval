@@ -1,0 +1,61 @@
+.battle-resolution-controls {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+}
+
+.battle-resolution-controls label {
+  display: grid;
+  gap: 0.35rem;
+  color: #bfb59d;
+  font: 0.75rem/1.3 system-ui, sans-serif;
+}
+
+.battle-resolution-controls input {
+  width: 100%;
+  min-height: 2.4rem;
+  padding: 0.55rem 0.65rem;
+  color: #eee6d2;
+  border: 1px solid #665f4b;
+  background: #171612;
+  font: 0.85rem/1 system-ui, sans-serif;
+}
+
+.battle-resolution-controls button {
+  min-height: 2.5rem;
+  padding: 0.6rem 0.75rem;
+  color: #171612;
+  border: 1px solid #d0b96d;
+  background: #d0b96d;
+  font: 700 0.78rem/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.battle-resolution-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.battle-report {
+  padding: 0.9rem 1rem;
+  border: 1px solid #514a39;
+  background: #211f1a;
+}
+
+.battle-report strong {
+  display: block;
+  margin-bottom: 0.65rem;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.battle-report p {
+  margin-bottom: 0.5rem;
+  color: #bfb59d;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.battle-report p:last-child {
+  margin-bottom: 0;
+}

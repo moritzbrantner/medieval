@@ -7,6 +7,7 @@
     <title>Medieval</title>
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="economy.css" />
+    <link rel="stylesheet" href="battle.css" />
   </head>
   <body>
     <div id="app">
@@ -55,6 +56,18 @@
             <section id="pending-battle" class="battle-alert" hidden>
               <p class="eyebrow">Pending battle</p>
               <div id="pending-battle-detail"></div>
+              <div class="battle-resolution-controls">
+                <label>
+                  Deterministic seed
+                  <input id="battle-seed" type="number" min="0" step="1" value="42" />
+                </label>
+                <button id="resolve-battle" type="button">Auto-resolve in Rust</button>
+              </div>
+            </section>
+
+            <section id="battle-report" class="battle-report" hidden>
+              <p class="eyebrow">Last battle report</p>
+              <div id="battle-report-detail"></div>
             </section>
 
             <section>

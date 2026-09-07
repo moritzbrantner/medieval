@@ -79,6 +79,15 @@ fn queue_recruitment(
 }
 
 #[tauri::command]
+fn resolve_pending_battle(state: State<'_, GameState>, seed: u64) -> Result<CampaignState, String> {
+    let mut campaign = lock_campaign(&state)?;
+    campaign
+        .resolve_pending_battle(seed)
+        .map_err(|error| error.to_string())?;
+    Ok(campaign.clone())
+}
+
+#[tauri::command]
 fn end_turn(state: State<'_, GameState>) -> Result<CampaignState, String> {
     let mut campaign = lock_campaign(&state)?;
     campaign.end_turn().map_err(|error| error.to_string())?;
@@ -96,6 +105,7 @@ pub fn run() {
             move_army,
             recruitment_options,
             queue_recruitment,
+            resolve_pending_battle,
             end_turn
         ])
         .run(tauri::generate_context!())

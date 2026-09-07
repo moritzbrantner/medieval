@@ -11,6 +11,10 @@ const detail = document.querySelector("#province-detail");
 const chronicle = document.querySelector("#chronicle");
 const pendingBattle = document.querySelector("#pending-battle");
 const pendingBattleDetail = document.querySelector("#pending-battle-detail");
+const battleReport = document.querySelector("#battle-report");
+const battleReportDetail = document.querySelector("#battle-report-detail");
+const battleSeedInput = document.querySelector("#battle-seed");
+const resolveBattleButton = document.querySelector("#resolve-battle");
 const errorBox = document.querySelector("#error");
 const endTurnButton = document.querySelector("#end-turn");
 const newCampaignButton = document.querySelector("#new-campaign");
@@ -46,6 +50,10 @@ function provinceName(id) {
 
 function armyInProvince(provinceId) {
   return campaign.armies.filter((army) => army.province === provinceId);
+}
+
+function rosterText(roster) {
+  return `${roster.levy} levy · ${roster.spearmen} spearmen · ${roster.archers} archers · ${roster.knights} knights`;
 }
 
 function renderSummary() {
@@ -219,9 +227,38 @@ function renderPendingBattle() {
 
   const note = document.createElement("p");
   note.className = "battle-note";
-  note.textContent = "Combat is intentionally unresolved. The later battle slice will consume this Rust-owned pending battle.";
+  note.textContent = "Choose an explicit seed. Rust will resolve casualties, retreat, and province control deterministically.";
 
   pendingBattleDetail.append(text, note);
+}
+
+function renderBattleReport() {
+  const report = campaign.battleReports?.at(-1);
+  battleReport.hidden = !report;
+  battleReportDetail.replaceChildren();
+
+  if (!report) return;
+
+  const headline = document.createElement("strong");
+  headline.textContent = report.outcome === "attackerVictory"
+    ? `${factionName(report.attackerFaction)} won at ${provinceName(report.targetProvince)}.`
+    : `${factionName(report.defenderFaction)} held ${provinceName(report.targetProvince)}.`;
+
+  const seed = document.createElement("p");
+  seed.textContent = `Seed ${report.seed} · defender modifier ${report.defenderModifierPercent}% · scores ${report.attackerScore} / ${report.defenderScore}`;
+
+  const attacker = document.createElement("p");
+  attacker.textContent = `Attacker: ${rosterText(report.attackerBefore)} → ${rosterText(report.attackerAfter)} · ${report.attackerCasualtyPercent}% casualty rule`;
+
+  const defender = document.createElement("p");
+  defender.textContent = `Defender: ${rosterText(report.defenderBefore)} → ${rosterText(report.defenderAfter)} · ${report.defenderCasualtyPercent}% casualty rule`;
+
+  const result = document.createElement("p");
+  result.textContent = report.captured
+    ? `Province captured.${report.defenderRetreatProvince ? ` Defenders retreated to ${provinceName(report.defenderRetreatProvince)}.` : " No defender retreat was available."}`
+    : "Province remained with the defender.";
+
+  battleReportDetail.append(headline, seed, attacker, defender, result);
 }
 
 function renderChronicle() {
@@ -235,6 +272,7 @@ function renderChronicle() {
 
 function syncCampaignActions() {
   endTurnButton.disabled = Boolean(campaign?.pendingBattle);
+  resolveBattleButton.disabled = !campaign?.pendingBattle;
   newCampaignButton.disabled = false;
 }
 
@@ -243,6 +281,7 @@ function renderCampaign() {
   renderMap();
   renderProvinceDetail();
   renderPendingBattle();
+  renderBattleReport();
   renderChronicle();
   syncCampaignActions();
 }
@@ -343,6 +382,31 @@ async function queueRecruitment(provinceId, unit) {
   }
 }
 
+async function resolvePendingBattle() {
+  if (!invoke || !campaign?.pendingBattle) return;
+
+  const seed = Number(battleSeedInput.value);
+  if (!Number.isSafeInteger(seed) || seed < 0) {
+    reportError("Battle seed must be a non-negative safe integer.");
+    return;
+  }
+
+  resolveBattleButton.disabled = true;
+  errorBox.hidden = true;
+  try {
+    campaign = await invoke("resolve_pending_battle", { seed });
+    const report = campaign.battleReports?.at(-1);
+    if (report) selectedProvinceId = report.targetProvince;
+    clearMovementSelection();
+    await refreshRecruitmentOptions();
+    renderCampaign();
+  } catch (error) {
+    reportError(error);
+  } finally {
+    syncCampaignActions();
+  }
+}
+
 async function runCommand(command) {
   endTurnButton.disabled = true;
   newCampaignButton.disabled = true;
@@ -376,6 +440,7 @@ for (const button of document.querySelectorAll("[data-back-to-menu]")) {
   button.addEventListener("click", () => showView("menu"));
 }
 
+resolveBattleButton.addEventListener("click", resolvePendingBattle);
 endTurnButton.addEventListener("click", () => runCommand("end_turn"));
 newCampaignButton.addEventListener("click", () => runCommand("start_new_campaign"));
 
