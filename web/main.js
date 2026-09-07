@@ -1,4 +1,10 @@
 const invoke = window.__TAURI__?.core?.invoke;
+const views = {
+  menu: document.querySelector("#menu-view"),
+  campaign: document.querySelector("#campaign-view"),
+  online: document.querySelector("#online-view"),
+};
+
 const map = document.querySelector("#campaign-map");
 const summary = document.querySelector("#turn-summary");
 const detail = document.querySelector("#province-detail");
@@ -6,9 +12,18 @@ const chronicle = document.querySelector("#chronicle");
 const errorBox = document.querySelector("#error");
 const endTurnButton = document.querySelector("#end-turn");
 const newCampaignButton = document.querySelector("#new-campaign");
+const campaignButton = document.querySelector("#open-campaign");
+const onlineButton = document.querySelector("#open-online");
 
 let campaign;
 let selectedProvinceId;
+
+function showView(name) {
+  for (const [viewName, element] of Object.entries(views)) {
+    element.hidden = viewName !== name;
+  }
+  errorBox.hidden = true;
+}
 
 function factionName(id) {
   return campaign.factions.find((faction) => faction.id === id)?.name ?? id;
@@ -93,11 +108,27 @@ function renderChronicle() {
   }
 }
 
-function render() {
+function renderCampaign() {
   renderSummary();
   renderMap();
   renderProvinceDetail();
   renderChronicle();
+}
+
+function reportError(error) {
+  errorBox.hidden = false;
+  errorBox.textContent = String(error);
+}
+
+async function ensureCampaignLoaded() {
+  if (campaign) return;
+  if (!invoke) {
+    throw new Error("Campaign mode uses the Rust game core through Tauri. Run the app with `cargo tauri dev`.");
+  }
+
+  campaign = await invoke("campaign_state");
+  selectedProvinceId = campaign.provinces[0]?.id;
+  renderCampaign();
 }
 
 async function runCommand(command) {
@@ -108,32 +139,30 @@ async function runCommand(command) {
     if (!campaign.provinces.some((province) => province.id === selectedProvinceId)) {
       selectedProvinceId = campaign.provinces[0]?.id;
     }
-    render();
+    renderCampaign();
   } catch (error) {
-    errorBox.hidden = false;
-    errorBox.textContent = String(error);
+    reportError(error);
   } finally {
     endTurnButton.disabled = false;
     newCampaignButton.disabled = false;
   }
 }
 
-async function start() {
-  if (!invoke) {
-    errorBox.hidden = false;
-    errorBox.textContent = "This prototype uses the Rust game core through Tauri. Run it with `cargo tauri dev`.";
-    return;
+campaignButton.addEventListener("click", async () => {
+  showView("campaign");
+  try {
+    await ensureCampaignLoaded();
+  } catch (error) {
+    reportError(error);
   }
+});
 
-  campaign = await invoke("campaign_state");
-  selectedProvinceId = campaign.provinces[0]?.id;
-  render();
+onlineButton.addEventListener("click", () => showView("online"));
+for (const button of document.querySelectorAll("[data-back-to-menu]")) {
+  button.addEventListener("click", () => showView("menu"));
 }
 
 endTurnButton.addEventListener("click", () => runCommand("end_turn"));
 newCampaignButton.addEventListener("click", () => runCommand("start_new_campaign"));
 
-start().catch((error) => {
-  errorBox.hidden = false;
-  errorBox.textContent = String(error);
-});
+showView("menu");
