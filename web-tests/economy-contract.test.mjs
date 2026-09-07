@@ -7,7 +7,13 @@ const script = await readFile(new URL("../web/main.js", import.meta.url), "utf8"
 test("recruitment options and rejection reasons come from Rust", () => {
   assert.match(
     script,
-    /invoke\("recruitment_options", \{\s*provinceId: selectedProvinceId,?\s*\}\)/,
+    /invoke\("recruitment_options", \{\s*provinceId: requestedProvinceId,?\s*\}\)/,
+  );
+  assert.match(script, /const requestedProvinceId = selectedProvinceId/);
+  assert.match(script, /const requestId = \+\+recruitmentRequestId/);
+  assert.match(
+    script,
+    /requestId !== recruitmentRequestId \|\|\s*requestedProvinceId !== selectedProvinceId/,
   );
   assert.match(script, /button\.disabled = !option\.available/);
   assert.match(script, /reason\.textContent = option\.reason/);
