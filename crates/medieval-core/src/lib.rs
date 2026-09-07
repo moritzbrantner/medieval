@@ -89,7 +89,9 @@ impl fmt::Display for CampaignError {
             Self::ArmyAlreadyMoved(army_id) => {
                 write!(formatter, "army {army_id} has already moved this turn")
             }
-            Self::BattlePending => write!(formatter, "resolve the pending battle before continuing"),
+            Self::BattlePending => {
+                write!(formatter, "resolve the pending battle before continuing")
+            }
             Self::DestinationNotAdjacent { from, destination } => {
                 write!(formatter, "{destination} is not adjacent to {from}")
             }
@@ -159,7 +161,11 @@ impl CampaignState {
         }
 
         let source = self.province(&from_province)?;
-        if !source.neighbors.iter().any(|neighbor| neighbor == destination) {
+        if !source
+            .neighbors
+            .iter()
+            .any(|neighbor| neighbor == destination)
+        {
             return Err(CampaignError::DestinationNotAdjacent {
                 from: from_province,
                 destination: destination.to_owned(),
@@ -425,7 +431,10 @@ mod tests {
                 defender_faction: "france".into(),
             })
         );
-        assert!(matches!(campaign.end_turn(), Err(CampaignError::BattlePending)));
+        assert!(matches!(
+            campaign.end_turn(),
+            Err(CampaignError::BattlePending)
+        ));
     }
 
     #[test]
@@ -437,11 +446,13 @@ mod tests {
         campaign.end_turn().unwrap();
 
         assert_eq!(campaign.active_faction, "england");
-        assert!(!campaign
-            .armies
-            .iter()
-            .find(|army| army.id == "england-main")
-            .unwrap()
-            .moved_this_turn);
+        assert!(
+            !campaign
+                .armies
+                .iter()
+                .find(|army| army.id == "england-main")
+                .unwrap()
+                .moved_this_turn
+        );
     }
 }
