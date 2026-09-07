@@ -27,10 +27,17 @@ impl fmt::Display for SaveError {
         match self {
             Self::InvalidJson(message) => write!(formatter, "invalid save document: {message}"),
             Self::UnsupportedVersion(version) => {
-                write!(formatter, "unsupported campaign save schema version {version}")
+                write!(
+                    formatter,
+                    "unsupported campaign save schema version {version}"
+                )
             }
-            Self::InvalidState(message) => write!(formatter, "invalid campaign save state: {message}"),
-            Self::Serialization(message) => write!(formatter, "could not serialize campaign save: {message}"),
+            Self::InvalidState(message) => {
+                write!(formatter, "invalid campaign save state: {message}")
+            }
+            Self::Serialization(message) => {
+                write!(formatter, "could not serialize campaign save: {message}")
+            }
         }
     }
 }
@@ -122,7 +129,10 @@ impl CampaignSave {
         }
 
         let province_ids = unique_ids(
-            campaign.provinces.iter().map(|province| province.id.as_str()),
+            campaign
+                .provinces
+                .iter()
+                .map(|province| province.id.as_str()),
             "province",
         )?;
         for province in &campaign.provinces {
@@ -154,10 +164,7 @@ impl CampaignSave {
             }
         }
 
-        let army_ids = unique_ids(
-            campaign.armies.iter().map(|army| army.id.as_str()),
-            "army",
-        )?;
+        let army_ids = unique_ids(campaign.armies.iter().map(|army| army.id.as_str()), "army")?;
         for army in &campaign.armies {
             if !faction_ids.contains(army.owner.as_str()) {
                 return invalid(format!(
@@ -333,8 +340,8 @@ mod tests {
 
     #[test]
     fn future_schema_is_rejected_before_future_payload_is_interpreted() {
-        let error = CampaignSave::from_json(r#"{"schemaVersion":99,"futureShape":true}"#)
-            .unwrap_err();
+        let error =
+            CampaignSave::from_json(r#"{"schemaVersion":99,"futureShape":true}"#).unwrap_err();
 
         assert_eq!(error, SaveError::UnsupportedVersion(99));
     }
