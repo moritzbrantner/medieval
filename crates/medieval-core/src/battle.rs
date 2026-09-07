@@ -277,7 +277,7 @@ fn mix(seed: u64, salt: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{new_campaign, UnitKind};
+    use crate::{UnitKind, new_campaign};
 
     fn contested_campaign() -> CampaignState {
         let mut campaign = new_campaign();
@@ -356,14 +356,19 @@ mod tests {
             })
             .expect("expected at least one attacker-winning seed");
 
-        assert!(campaign.recruitment_queue.iter().all(|order| {
-            order.faction_id != "france" || order.province_id != "paris"
-        }));
+        assert!(
+            campaign
+                .recruitment_queue
+                .iter()
+                .all(|order| { order.faction_id != "france" || order.province_id != "paris" })
+        );
 
         campaign.end_turn().unwrap();
-        assert!(!campaign
-            .armies
-            .iter()
-            .any(|army| army.owner == "france" && army.province == "paris"));
+        assert!(
+            !campaign
+                .armies
+                .iter()
+                .any(|army| army.owner == "france" && army.province == "paris")
+        );
     }
 }
