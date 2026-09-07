@@ -329,11 +329,7 @@ impl CampaignState {
             .copied()
             .map(|unit| {
                 let spec = unit.spec();
-                let reason = self.recruitment_unavailable_reason(
-                    province,
-                    unit,
-                    faction.treasury,
-                );
+                let reason = self.recruitment_unavailable_reason(province, unit, faction.treasury);
                 RecruitmentOption {
                     unit,
                     label: spec.label.to_owned(),
@@ -469,9 +465,8 @@ impl CampaignState {
         }
 
         let income = self.income_for(&faction_id);
-        self.factions[faction_index].treasury = self.factions[faction_index]
-            .treasury
-            .saturating_add(income);
+        self.factions[faction_index].treasury =
+            self.factions[faction_index].treasury.saturating_add(income);
         self.factions[faction_index].last_economy_turn = Some(self.turn);
         let faction_name = self.factions[faction_index].name.clone();
         self.log.push(format!(
@@ -485,9 +480,8 @@ impl CampaignState {
             .filter(|order| order.faction_id == faction_id && order.ready_on_turn <= self.turn)
             .cloned()
             .collect();
-        self.recruitment_queue.retain(|order| {
-            !(order.faction_id == faction_id && order.ready_on_turn <= self.turn)
-        });
+        self.recruitment_queue
+            .retain(|order| !(order.faction_id == faction_id && order.ready_on_turn <= self.turn));
 
         for order in ready_orders {
             self.complete_recruitment(order)?;
@@ -498,30 +492,29 @@ impl CampaignState {
 
     fn complete_recruitment(&mut self, order: RecruitmentOrder) -> Result<(), CampaignError> {
         let province_name = self.province(&order.province_id)?.name.clone();
-        let army_index = if let Some(index) = self.armies.iter().position(|army| {
-            army.owner == order.faction_id && army.province == order.province_id
-        }) {
-            index
-        } else {
-            self.armies.push(Army {
-                id: format!("{}-{}-recruits", order.faction_id, order.province_id),
-                owner: order.faction_id.clone(),
-                province: order.province_id.clone(),
-                levy: 0,
-                spearmen: 0,
-                archers: 0,
-                knights: 0,
-                moved_this_turn: false,
-            });
-            self.armies.len() - 1
-        };
+        let army_index =
+            if let Some(index) = self.armies.iter().position(|army| {
+                army.owner == order.faction_id && army.province == order.province_id
+            }) {
+                index
+            } else {
+                self.armies.push(Army {
+                    id: format!("{}-{}-recruits", order.faction_id, order.province_id),
+                    owner: order.faction_id.clone(),
+                    province: order.province_id.clone(),
+                    levy: 0,
+                    spearmen: 0,
+                    archers: 0,
+                    knights: 0,
+                    moved_this_turn: false,
+                });
+                self.armies.len() - 1
+            };
 
         let army = &mut self.armies[army_index];
         match order.unit {
             UnitKind::Levy => army.levy = army.levy.saturating_add(order.soldiers),
-            UnitKind::Spearmen => {
-                army.spearmen = army.spearmen.saturating_add(order.soldiers)
-            }
+            UnitKind::Spearmen => army.spearmen = army.spearmen.saturating_add(order.soldiers),
             UnitKind::Archers => army.archers = army.archers.saturating_add(order.soldiers),
             UnitKind::Knights => army.knights = army.knights.saturating_add(order.soldiers),
         }
@@ -860,9 +853,13 @@ mod tests {
 
         let enemy_options = campaign.recruitment_options("paris").unwrap();
         assert!(enemy_options.iter().all(|option| !option.available));
-        assert!(enemy_options
-            .iter()
-            .all(|option| option.reason.as_deref().unwrap().contains("does not control")));
+        assert!(enemy_options.iter().all(|option| {
+            option
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("does not control")
+        }));
     }
 
     #[test]
