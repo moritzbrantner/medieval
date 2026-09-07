@@ -89,9 +89,8 @@ impl CampaignState {
 
         let attacker_score = rolled_score(attacker_before.strength(), seed, 0xA771_A771);
         let defender_raw = rolled_score(defender_before.strength(), seed, 0xD3F3_D3F3);
-        let defender_score = defender_raw
-            .saturating_mul(u64::from(100 + DEFENDER_MODIFIER_PERCENT))
-            / 100;
+        let defender_score =
+            defender_raw.saturating_mul(u64::from(100 + DEFENDER_MODIFIER_PERCENT)) / 100;
 
         let outcome = if attacker_score > defender_score {
             BattleOutcome::AttackerVictory
@@ -110,10 +109,7 @@ impl CampaignState {
             ),
         };
 
-        apply_casualties(
-            &mut self.armies[attacker_index],
-            attacker_casualty_percent,
-        );
+        apply_casualties(&mut self.armies[attacker_index], attacker_casualty_percent);
         for index in &defender_indices {
             apply_casualties(&mut self.armies[*index], defender_casualty_percent);
         }
@@ -294,14 +290,8 @@ mod tests {
         let mut campaign = contested_campaign();
         let report = campaign.resolve_pending_battle(7).unwrap();
 
-        assert!(
-            report.attacker_after.soldiers()
-                <= report.attacker_before.soldiers()
-        );
-        assert!(
-            report.defender_after.soldiers()
-                <= report.defender_before.soldiers()
-        );
+        assert!(report.attacker_after.soldiers() <= report.attacker_before.soldiers());
+        assert!(report.defender_after.soldiers() <= report.defender_before.soldiers());
     }
 
     #[test]
