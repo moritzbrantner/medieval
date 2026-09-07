@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="economy.css" />
     <link rel="stylesheet" href="battle.css" />
     <link rel="stylesheet" href="opponent.css" />
+    <link rel="stylesheet" href="platform.css" />
   </head>
   <body>
     <div id="app">
@@ -81,6 +82,18 @@
               <ol id="chronicle" class="chronicle"></ol>
             </section>
 
+            <section class="save-panel" aria-labelledby="save-game-heading">
+              <p id="save-game-heading" class="eyebrow">Save game</p>
+              <div class="save-actions">
+                <button id="save-campaign" type="button">Save</button>
+                <button id="load-campaign" class="secondary" type="button">Load save</button>
+                <button id="load-autosave" class="secondary" type="button">Load autosave</button>
+              </div>
+              <p id="save-status" class="save-status" aria-live="polite">
+                Autosave runs after safe completed turn boundaries.
+              </p>
+            </section>
+
             <div class="campaign-reset">
               <label for="player-faction">New campaign faction</label>
               <select id="player-faction">
@@ -147,5 +160,6 @@
 
     <div id="error" class="error" hidden></div>
     <script src="main.js"></script>
+    <script src="save.js"></script>
   </body>
 </html>
