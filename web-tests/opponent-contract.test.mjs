@@ -38,12 +38,12 @@ test("ending a player turn supplies an explicit deterministic seed to Rust AI", 
 });
 
 test("Rust opponent reuses the same legal command surfaces as the human", () => {
-  assert.match(battle, /self\.recruitment_options\(&province_id\)\?/);
-  assert.match(battle, /self\.queue_recruitment\(&province_id, options\[option_index\]\)\?/);
-  assert.match(battle, /self\.legal_destinations\(&army_id\)\?/);
-  assert.match(battle, /self\.move_army\(army_id, destination\)\?/);
-  assert.match(battle, /self\.resolve_pending_battle\(/);
-  assert.match(battle, /self\.end_turn\(\)\?/);
+  assert.match(battle, /self\s*\.recruitment_options\(&province_id\)\?/);
+  assert.match(battle, /self\s*\.queue_recruitment\(&province_id, options\[option_index\]\)\?/);
+  assert.match(battle, /self\s*\.legal_destinations\(&army_id\)\?/);
+  assert.match(battle, /self\s*\.move_army\(army_id, destination\)\?/);
+  assert.match(battle, /self\s*\.resolve_pending_battle\(/);
+  assert.match(battle, /self\s*\.end_turn\(\)\?/);
 });
 
 test("AI strategic scoring and victory rules are absent from JavaScript", () => {
