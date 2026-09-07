@@ -134,12 +134,7 @@ fn write_save_document(path: &Path, document: &str) -> Result<(), String> {
     }
 
     if had_existing {
-        fs::remove_file(&backup).map_err(|error| {
-            format!(
-                "campaign save succeeded but backup cleanup failed {}: {error}",
-                backup.display()
-            )
-        })?;
+        let _ = fs::remove_file(&backup);
     }
     Ok(())
 }
