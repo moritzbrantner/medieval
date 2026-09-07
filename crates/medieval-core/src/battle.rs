@@ -121,24 +121,23 @@ impl CampaignState {
         let attacker_after = roster_from_army(&self.armies[attacker_index]);
         let defender_after = roster_from_indices(&self.armies, &defender_indices);
 
-        let defender_retreat_province = if outcome == BattleOutcome::AttackerVictory
-            && defender_after.soldiers() > 0
-        {
-            self.provinces
-                .iter()
-                .find(|province| province.id == pending.target_province)
-                .and_then(|target| {
-                    target.neighbors.iter().find(|neighbor_id| {
-                        self.provinces.iter().any(|province| {
-                            province.id == **neighbor_id
-                                && province.owner == pending.defender_faction
+        let defender_retreat_province =
+            if outcome == BattleOutcome::AttackerVictory && defender_after.soldiers() > 0 {
+                self.provinces
+                    .iter()
+                    .find(|province| province.id == pending.target_province)
+                    .and_then(|target| {
+                        target.neighbors.iter().find(|neighbor_id| {
+                            self.provinces.iter().any(|province| {
+                                province.id == **neighbor_id
+                                    && province.owner == pending.defender_faction
+                            })
                         })
                     })
-                })
-                .cloned()
-        } else {
-            None
-        };
+                    .cloned()
+            } else {
+                None
+            };
 
         let captured = outcome == BattleOutcome::AttackerVictory;
         if captured {
@@ -216,14 +215,16 @@ fn roster_from_army(army: &Army) -> ArmyRoster {
 }
 
 fn roster_from_indices(armies: &[Army], indices: &[usize]) -> ArmyRoster {
-    indices.iter().fold(ArmyRoster::default(), |mut total, index| {
-        let roster = roster_from_army(&armies[*index]);
-        total.levy = total.levy.saturating_add(roster.levy);
-        total.spearmen = total.spearmen.saturating_add(roster.spearmen);
-        total.archers = total.archers.saturating_add(roster.archers);
-        total.knights = total.knights.saturating_add(roster.knights);
-        total
-    })
+    indices
+        .iter()
+        .fold(ArmyRoster::default(), |mut total, index| {
+            let roster = roster_from_army(&armies[*index]);
+            total.levy = total.levy.saturating_add(roster.levy);
+            total.spearmen = total.spearmen.saturating_add(roster.spearmen);
+            total.archers = total.archers.saturating_add(roster.archers);
+            total.knights = total.knights.saturating_add(roster.knights);
+            total
+        })
 }
 
 fn apply_casualties(army: &mut Army, casualty_percent: u32) {
