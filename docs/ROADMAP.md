@@ -10,9 +10,10 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 ## Ownership boundaries
 
-- **`medieval-core` owns truth:** campaign state, adjacency, movement legality, economy, recruitment rules, combat resolution, AI decisions, seeded randomness, victory conditions, and serialization versions.
-- **Tauri owns platform integration:** application lifecycle, local save-file access, native packaging, and later mobile/desktop integrations.
-- **The webview owns projection and input:** rendering, selection, camera/view state, accessibility, menu/navigation state, and translating gestures into explicit player intents. It must not silently reimplement game rules.
+- **`medieval-core` owns truth:** campaign state, adjacency, movement legality, economy, recruitment rules, combat resolution, AI decisions, seeded randomness, victory conditions, serialization versions, and future tactical simulation state.
+- **Tauri owns platform integration:** application lifecycle, constrained local save-file access, native packaging, and later mobile/desktop integrations.
+- **GitHub Pages is a Three.js demo/projection surface:** browser rendering, selection, camera/view state, accessibility, menu/navigation state, and translating gestures into explicit player intents may live there. It must not silently reimplement game rules, simulation, or trust decisions.
+- **The production desktop renderer is Rust + `wgpu`:** tactical rendering, GPU resource management, batching/instancing, and frame scheduling stay on the Rust side so desktop performance does not depend on the browser or Three.js demo.
 - **Future real-time battles remain Rust-owned:** unit state, formation rules, morale, pathing, collision/combat outcomes, and deterministic simulation ticks. A renderer may project the simulation but cannot become the authority.
 - **`multiplayer-setup-service` owns rendezvous only:** lobby capabilities, targeted opaque WebRTC signaling, resilience helpers, TURN policy hooks, and optional peer-content coordination. It never owns Medieval gameplay truth or asset authority.
 
@@ -99,10 +100,11 @@ A real Online Battle depends on this deterministic battle foundation. It does **
 
 1. **Battle simulation kernel:** flat test battlefield, fixed-step clock, units, formations, movement orders.
 2. **Morale and combat:** frontage, fatigue, casualties, morale shocks, routs, pursuit.
-3. **Renderer:** 3D battlefield projection with camera, selection, order previews, and large-unit batching/instancing.
-4. **Terrain:** height, forests, rivers, chokepoints, deployment zones.
-5. **Sieges:** walls, gates, towers, capture points, pathing constraints.
-6. **Campaign handoff:** campaign army composition seeds tactical battle; tactical outcome returns casualties and control changes.
+3. **Production desktop renderer:** Rust + `wgpu` battlefield projection with camera, selection, order previews, GPU batching/instancing, and native frame scheduling.
+4. **GitHub Pages demo renderer:** Three.js projection of the same authoritative battle state/contracts for browser dogfood and public demos; no duplicate simulation truth.
+5. **Terrain:** height, forests, rivers, chokepoints, deployment zones.
+6. **Sieges:** walls, gates, towers, capture points, pathing constraints.
+7. **Campaign handoff:** campaign army composition seeds tactical battle; tactical outcome returns casualties and control changes.
 
 ## Online Battle track
 
