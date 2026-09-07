@@ -66,14 +66,45 @@ fn save_session_to_path(session: &GameSession, path: &Path) -> Result<(), String
     write_save_document(path, &document)
 }
 
-fn load_session_from_path(path: &Path) -> Result<GameSession, String> {
-    let document = fs::read_to_string(path)
-        .map_err(|error| format!("could not read campaign save {}: {error}", path.display()))?;
-    let save = CampaignSave::from_json(&document).map_err(|error| error.to_string())?;
+fn decode_session_document(document: &str) -> Result<GameSession, String> {
+    let save = CampaignSave::from_json(document).map_err(|error| error.to_string())?;
     Ok(GameSession {
         campaign: save.campaign,
         player_faction: save.player_faction,
     })
+}
+
+fn load_session_from_path(path: &Path) -> Result<GameSession, String> {
+    match fs::read_to_string(path) {
+        Ok(document) => decode_session_document(&document),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let backup = path.with_extension("json.bak");
+            let backup_document = fs::read_to_string(&backup).map_err(|backup_error| {
+                if backup_error.kind() == std::io::ErrorKind::NotFound {
+                    format!("could not read campaign save {}: {error}", path.display())
+                } else {
+                    format!(
+                        "could not read staged campaign save backup {}: {backup_error}",
+                        backup.display()
+                    )
+                }
+            })?;
+
+            let loaded = decode_session_document(&backup_document)?;
+            fs::rename(&backup, path).map_err(|recovery_error| {
+                format!(
+                    "validated campaign save backup {} but could not recover it to {}: {recovery_error}",
+                    backup.display(),
+                    path.display()
+                )
+            })?;
+            Ok(loaded)
+        }
+        Err(error) => Err(format!(
+            "could not read campaign save {}: {error}",
+            path.display()
+        )),
+    }
 }
 
 fn load_into_session(session: &mut GameSession, path: &Path) -> Result<(), String> {
@@ -366,6 +397,39 @@ mod tests {
         save_session_to_path(&second, &path).unwrap();
 
         assert_eq!(load_session_from_path(&path).unwrap(), second);
+        remove_test_directory(&path);
+    }
+
+    #[test]
+    fn interrupted_replacement_recovers_the_valid_staged_backup() {
+        let path = test_save_path("campaign-save.json");
+        let backup = path.with_extension("json.bak");
+        let mut expected = GameSession::default();
+        expected
+            .campaign
+            .move_army("england-main", "wessex")
+            .unwrap();
+        save_session_to_path(&expected, &path).unwrap();
+        fs::rename(&path, &backup).unwrap();
+
+        let loaded = load_session_from_path(&path).unwrap();
+
+        assert_eq!(loaded, expected);
+        assert!(path.is_file());
+        assert!(!backup.exists());
+        remove_test_directory(&path);
+    }
+
+    #[test]
+    fn invalid_staged_backup_fails_closed_without_installing_it() {
+        let path = test_save_path("campaign-save.json");
+        let backup = path.with_extension("json.bak");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&backup, "{broken").unwrap();
+
+        assert!(load_session_from_path(&path).is_err());
+        assert!(!path.exists());
+        assert!(backup.exists());
         remove_test_directory(&path);
     }
 
