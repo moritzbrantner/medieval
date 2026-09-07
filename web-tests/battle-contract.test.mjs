@@ -10,7 +10,10 @@ const [html, script] = await Promise.all([
 test("battle resolution is an explicit seeded Rust command", () => {
   assert.match(html, /id="battle-seed"/);
   assert.match(html, /id="resolve-battle"/);
+  assert.match(script, /const seed = Number\(battleSeedInput\.value\)/);
+  assert.match(script, /Number\.isSafeInteger\(seed\)/);
   assert.match(script, /invoke\("resolve_pending_battle", \{ seed \}\)/);
+  assert.doesNotMatch(script, /Number\.parseInt/);
   assert.doesNotMatch(script, /Math\.random/);
 });
 
