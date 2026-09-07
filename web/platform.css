@@ -1,0 +1,70 @@
+.save-panel {
+  padding-top: 1rem;
+  border-top: 1px solid #4e4635;
+}
+
+.save-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.save-actions button {
+  min-height: 2.8rem;
+  padding: 0.65rem 0.75rem;
+  color: #171612;
+  border: 1px solid #d0b96d;
+  border-radius: 0.25rem;
+  background: #d0b96d;
+  font: 700 0.78rem/1.15 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.save-actions button.secondary {
+  color: #d6cdb5;
+  border-color: #665f4b;
+  background: transparent;
+}
+
+.save-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.save-status {
+  min-height: 1.2rem;
+  margin: 0.65rem 0 0;
+  color: #9f967f;
+  font: 0.76rem/1.45 system-ui, sans-serif;
+}
+
+button,
+input,
+select {
+  touch-action: manipulation;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #d0b96d;
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  button,
+  input,
+  select {
+    min-height: 3rem;
+  }
+
+  .province {
+    min-height: 10rem;
+  }
+}
+
+@media (max-width: 560px) {
+  .save-actions {
+    grid-template-columns: 1fr;
+  }
+}
