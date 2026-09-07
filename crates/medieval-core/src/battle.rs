@@ -280,11 +280,7 @@ impl CampaignState {
     /// recruitment, movement, battle-resolution, and end-turn commands that a
     /// human turn uses. The caller supplies the human faction only to identify
     /// which active faction must never be automated.
-    pub fn play_ai_turn(
-        &mut self,
-        human_faction: &str,
-        seed: u64,
-    ) -> Result<(), CampaignError> {
+    pub fn play_ai_turn(&mut self, human_faction: &str, seed: u64) -> Result<(), CampaignError> {
         self.faction(human_faction)?;
         if self.active_faction == human_faction || self.winner().is_some() {
             return Ok(());
@@ -319,9 +315,9 @@ impl CampaignState {
             .filter(|province| province.owner == faction_id)
             .map(|province| {
                 let frontier = province.neighbors.iter().any(|neighbor_id| {
-                    self.provinces.iter().any(|neighbor| {
-                        neighbor.id == *neighbor_id && neighbor.owner != faction_id
-                    })
+                    self.provinces
+                        .iter()
+                        .any(|neighbor| neighbor.id == *neighbor_id && neighbor.owner != faction_id)
                 });
                 let score = u64::from(frontier) * AI_REINFORCE_SCORE
                     + u64::from(province.wealth).saturating_mul(100)
@@ -329,12 +325,8 @@ impl CampaignState {
                 (score, province.id.clone())
             })
             .collect();
-        province_candidates.sort_by(|left, right| {
-            right
-                .0
-                .cmp(&left.0)
-                .then_with(|| left.1.cmp(&right.1))
-        });
+        province_candidates
+            .sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
 
         for (_, province_id) in province_candidates {
             let options: Vec<UnitKind> = self
@@ -389,9 +381,8 @@ impl CampaignState {
                     seed,
                     hash_text(&format!("{army_id}:{destination}")) ^ 0xA11C_0A0E,
                 ) % 1_000;
-                let score = strategic_score
-                    + u64::from(province.wealth).saturating_mul(100)
-                    + tie_break;
+                let score =
+                    strategic_score + u64::from(province.wealth).saturating_mul(100) + tie_break;
                 choices.push((score, army_id.clone(), destination));
             }
         }
@@ -463,9 +454,11 @@ fn casualty_percent(seed: u64, salt: u64, min: u32, max_exclusive: u32) -> u32 {
 }
 
 fn hash_text(text: &str) -> u64 {
-    text.as_bytes().iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01B3)
-    })
+    text.as_bytes()
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01B3)
+        })
 }
 
 fn mix(seed: u64, salt: u64) -> u64 {
@@ -583,7 +576,10 @@ mod tests {
         assert_eq!(campaign.turn, 1);
         assert_eq!(campaign.year, 1087);
         assert_eq!(campaign.faction("france").unwrap().treasury, 1_200);
-        assert_eq!(campaign.faction("france").unwrap().last_economy_turn, Some(1));
+        assert_eq!(
+            campaign.faction("france").unwrap().last_economy_turn,
+            Some(1)
+        );
         assert_eq!(campaign.faction("england").unwrap().last_economy_turn, None);
     }
 
@@ -648,10 +644,12 @@ mod tests {
 
         let france = campaign.faction("france").unwrap();
         assert!(france.treasury <= treasury_before);
-        assert!(campaign
-            .recruitment_queue
-            .iter()
-            .any(|order| order.faction_id == "france"));
+        assert!(
+            campaign
+                .recruitment_queue
+                .iter()
+                .any(|order| order.faction_id == "france")
+        );
     }
 
     #[test]
@@ -716,10 +714,12 @@ mod tests {
 
         campaign.play_ai_turn("england", 101).unwrap();
 
-        assert!(campaign
-            .recruitment_queue
-            .iter()
-            .all(|order| order.faction_id != "france"));
+        assert!(
+            campaign
+                .recruitment_queue
+                .iter()
+                .all(|order| order.faction_id != "france")
+        );
         assert!(campaign.pending_battle.is_none());
         assert_eq!(campaign.active_faction, "england");
     }
