@@ -62,7 +62,7 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 **Exit:** territory generates resources and those resources become military force without duplicating economic rules in JavaScript.
 
-### 3. Deterministic auto-resolve — current slice
+### 3. Deterministic auto-resolve — complete
 
 - A Rust-owned pending battle is resolved only through an explicit `u64` seed.
 - The battle kernel derives scores from troop composition and a small fixed defender advantage.
@@ -74,7 +74,7 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 **Exit:** moving into hostile territory completes a reproducible strategic conquest loop without a tactical renderer.
 
-### 4. Opponent and victory
+### 4. Opponent and victory — complete
 
 - Narrow AI that recruits, reinforces, and attacks using the same legal commands as the player.
 - AI scoring remains deterministic for a given state/seed.
@@ -83,7 +83,7 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 **Exit:** a complete single-player campaign can be won or lost.
 
-### 5. Save/load and platform acceptance
+### 5. Save/load and platform acceptance — current slice
 
 - Versioned Rust serialization for campaign saves.
 - Tauri file persistence with a constrained capability surface.

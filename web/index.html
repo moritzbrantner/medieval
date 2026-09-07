@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="economy.css" />
     <link rel="stylesheet" href="battle.css" />
     <link rel="stylesheet" href="opponent.css" />
+    <link rel="stylesheet" href="persistence.css" />
   </head>
   <body>
     <div id="app">
@@ -88,6 +89,12 @@
                 <option value="france">Kingdom of France</option>
               </select>
             </div>
+
+            <div class="save-actions" aria-label="Campaign persistence">
+              <button id="save-campaign" class="secondary" type="button">Save</button>
+              <button id="load-campaign" class="secondary" type="button">Load</button>
+            </div>
+            <p id="save-status" class="save-status" aria-live="polite">Turns autosave after the opponent finishes.</p>
 
             <div class="actions">
               <button id="new-campaign" class="secondary" type="button">New campaign</button>

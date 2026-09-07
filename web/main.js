@@ -18,6 +18,9 @@ const resolveBattleButton = document.querySelector("#resolve-battle");
 const campaignOutcome = document.querySelector("#campaign-outcome");
 const campaignOutcomeDetail = document.querySelector("#campaign-outcome-detail");
 const playerFactionSelect = document.querySelector("#player-faction");
+const saveCampaignButton = document.querySelector("#save-campaign");
+const loadCampaignButton = document.querySelector("#load-campaign");
+const saveStatus = document.querySelector("#save-status");
 const errorBox = document.querySelector("#error");
 const endTurnButton = document.querySelector("#end-turn");
 const newCampaignButton = document.querySelector("#new-campaign");
@@ -318,6 +321,8 @@ function syncCampaignActions() {
   resolveBattleButton.disabled = !campaign?.pendingBattle || Boolean(campaignWinner);
   newCampaignButton.disabled = false;
   playerFactionSelect.disabled = false;
+  saveCampaignButton.disabled = !campaign || !invoke;
+  loadCampaignButton.disabled = !invoke;
 }
 
 function renderCampaign() {
@@ -334,6 +339,10 @@ function renderCampaign() {
 function reportError(error) {
   errorBox.hidden = false;
   errorBox.textContent = String(error);
+}
+
+function setSaveStatus(message) {
+  saveStatus.textContent = message;
 }
 
 function clearMovementSelection() {
@@ -465,12 +474,60 @@ async function resolvePendingBattle() {
   }
 }
 
+async function saveCampaign() {
+  if (!invoke || !campaign) return;
+
+  saveCampaignButton.disabled = true;
+  loadCampaignButton.disabled = true;
+  errorBox.hidden = true;
+  try {
+    await invoke("save_campaign");
+    setSaveStatus(`Saved ${campaign.year}, turn ${campaign.turn}.`);
+  } catch (error) {
+    setSaveStatus("Save failed.");
+    reportError(error);
+  } finally {
+    syncCampaignActions();
+  }
+}
+
+async function loadCampaign() {
+  if (!invoke) return;
+
+  saveCampaignButton.disabled = true;
+  loadCampaignButton.disabled = true;
+  endTurnButton.disabled = true;
+  newCampaignButton.disabled = true;
+  errorBox.hidden = true;
+  try {
+    campaign = await invoke("load_campaign");
+    [playerFaction, campaignWinner] = await Promise.all([
+      invoke("campaign_player_faction"),
+      invoke("campaign_winner"),
+    ]);
+    playerFactionSelect.value = playerFaction;
+    clearMovementSelection();
+    selectedProvinceId = campaign.provinces.find((province) => province.owner === playerFaction)?.id
+      ?? campaign.provinces[0]?.id;
+    await refreshRecruitmentOptions();
+    renderCampaign();
+    setSaveStatus(`Loaded ${campaign.year}, turn ${campaign.turn}.`);
+  } catch (error) {
+    setSaveStatus("Load failed; current campaign kept unchanged.");
+    reportError(error);
+  } finally {
+    syncCampaignActions();
+  }
+}
+
 async function endPlayerTurn() {
   if (!invoke || campaignWinner || campaign?.pendingBattle) return;
 
   const seed = campaign.turn;
   endTurnButton.disabled = true;
   newCampaignButton.disabled = true;
+  saveCampaignButton.disabled = true;
+  loadCampaignButton.disabled = true;
   errorBox.hidden = true;
   try {
     campaign = await invoke("end_player_turn", { seed });
@@ -481,7 +538,9 @@ async function endPlayerTurn() {
     }
     await refreshRecruitmentOptions();
     renderCampaign();
+    setSaveStatus(`Autosaved ${campaign.year}, turn ${campaign.turn}.`);
   } catch (error) {
+    setSaveStatus("Turn did not commit because its autosave did not complete.");
     reportError(error);
   } finally {
     syncCampaignActions();
@@ -494,6 +553,8 @@ async function startNewCampaign() {
   const requestedFaction = playerFactionSelect.value;
   endTurnButton.disabled = true;
   newCampaignButton.disabled = true;
+  saveCampaignButton.disabled = true;
+  loadCampaignButton.disabled = true;
   playerFactionSelect.disabled = true;
   errorBox.hidden = true;
   try {
@@ -506,6 +567,7 @@ async function startNewCampaign() {
     await refreshCampaignWinner();
     await refreshRecruitmentOptions();
     renderCampaign();
+    setSaveStatus("New campaign started; save manually or end the turn to autosave.");
   } catch (error) {
     reportError(error);
   } finally {
@@ -528,6 +590,8 @@ for (const button of document.querySelectorAll("[data-back-to-menu]")) {
 }
 
 resolveBattleButton.addEventListener("click", resolvePendingBattle);
+saveCampaignButton.addEventListener("click", saveCampaign);
+loadCampaignButton.addEventListener("click", loadCampaign);
 endTurnButton.addEventListener("click", endPlayerTurn);
 newCampaignButton.addEventListener("click", startNewCampaign);
 
