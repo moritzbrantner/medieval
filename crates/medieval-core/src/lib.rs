@@ -499,7 +499,10 @@ impl CampaignState {
                 index
             } else {
                 self.armies.push(Army {
-                    id: format!("{}-{}-recruits", order.faction_id, order.province_id),
+                    id: format!(
+                        "{}-{}-recruits-t{}",
+                        order.faction_id, order.province_id, self.turn
+                    ),
                     owner: order.faction_id.clone(),
                     province: order.province_id.clone(),
                     levy: 0,
@@ -887,5 +890,38 @@ mod tests {
             .find(|army| army.id == "england-main")
             .unwrap();
         assert_eq!(army.spearmen, 110);
+    }
+
+    #[test]
+    fn recruited_army_ids_remain_unique_after_armies_move() {
+        let mut campaign = new_campaign();
+        campaign
+            .queue_recruitment("wessex", UnitKind::Levy)
+            .unwrap();
+        campaign.end_turn().unwrap();
+        campaign.end_turn().unwrap();
+
+        let first_id = campaign
+            .armies
+            .iter()
+            .find(|army| army.owner == "england" && army.province == "wessex")
+            .unwrap()
+            .id
+            .clone();
+        campaign.move_army(&first_id, "normandy").unwrap();
+        campaign
+            .queue_recruitment("wessex", UnitKind::Archers)
+            .unwrap();
+        campaign.end_turn().unwrap();
+        campaign.end_turn().unwrap();
+
+        let second_id = campaign
+            .armies
+            .iter()
+            .find(|army| army.owner == "england" && army.province == "wessex")
+            .unwrap()
+            .id
+            .clone();
+        assert_ne!(first_id, second_id);
     }
 }
