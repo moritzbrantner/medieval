@@ -39,7 +39,7 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 **Exit:** Campaign and future Online Battle have independent entry points and the existing campaign remains playable through the menu.
 
-### 1. Army movement — current slice
+### 1. Army movement — complete in stacked dependency
 
 - Select one army and request its legal destinations from Rust.
 - Rust validates active faction, adjacency, one-move-per-turn state, and pending-battle constraints.
@@ -50,14 +50,17 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 **Exit:** the player can create a conflict by moving an army across a border without moving campaign rules into JavaScript.
 
-### 2. Economy and recruitment
+### 2. Economy and recruitment — current slice
 
-- Province income paid at the start of a faction turn.
+- Provincial income is computed in Rust from controlled territory and paid once at each faction-turn start.
+- Turn-start economy processing is idempotent for the same faction/turn pair.
 - Small unit roster: levy, spearmen, archers, knights.
-- Recruitment price, queue, and one-turn completion.
-- Province/army panel exposes actionable reasons when recruitment is illegal.
+- Rust owns recruitment batch sizes, prices, treasury checks, duplicate-queue rejection, and one-turn completion timing.
+- Recruitment orders deduct their price immediately and complete when that faction next becomes active.
+- Completed recruits reinforce an army in the province or create a deterministic local army when none exists.
+- Province UI displays treasury, queue state, costs, availability, and rejection reasons returned by Rust.
 
-**Exit:** territory generates resources and those resources become military force.
+**Exit:** territory generates resources and those resources become military force without duplicating economic rules in JavaScript.
 
 ### 3. Deterministic auto-resolve
 
