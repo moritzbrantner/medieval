@@ -79,10 +79,7 @@ fn queue_recruitment(
 }
 
 #[tauri::command]
-fn resolve_pending_battle(
-    state: State<'_, GameState>,
-    seed: u64,
-) -> Result<CampaignState, String> {
+fn resolve_pending_battle(state: State<'_, GameState>, seed: u64) -> Result<CampaignState, String> {
     let mut campaign = lock_campaign(&state)?;
     campaign
         .resolve_pending_battle(seed)
