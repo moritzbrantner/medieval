@@ -48,6 +48,46 @@ test("failed load validates before replacing the live session", () => {
   assert.ok(commitIndex > loadIndex);
 });
 
+test("interrupted staged saves validate and recover their backup before load succeeds", () => {
+  const loader = tauri.slice(
+    tauri.indexOf("fn load_session_from_path("),
+    tauri.indexOf("fn load_into_session("),
+  );
+  const backupReadIndex = loader.indexOf('path.with_extension("json.bak")');
+  const validationIndex = loader.indexOf("decode_session_document(&backup_document)?");
+  const recoveryIndex = loader.indexOf("fs::rename(&backup, path)");
+
+  assert.ok(backupReadIndex >= 0, "missing primary saves must inspect the staged backup");
+  assert.ok(validationIndex > backupReadIndex, "backup bytes must be Rust-validated");
+  assert.ok(recoveryIndex > validationIndex, "only a validated backup may be recovered");
+});
+
+test("campaign transitions share one busy gate so stale orders cannot cross turn boundaries", () => {
+  assert.match(script, /let campaignBusy = false;/);
+  assert.match(script, /function setCampaignBusy\(busy\)/);
+  assert.match(script, /button\.disabled = campaignBusy \|\| !option\.available;/);
+  assert.match(script, /selectArmyButton\.disabled = campaignBusy \|\|/);
+  assert.match(script, /button\.disabled = campaignBusy;/);
+
+  const turnCommand = script.slice(
+    script.indexOf("async function endPlayerTurn()"),
+    script.indexOf("async function startNewCampaign()"),
+  );
+  const busyIndex = turnCommand.indexOf("setCampaignBusy(true);");
+  const invokeIndex = turnCommand.indexOf('invoke("end_player_turn"');
+  const releaseIndex = turnCommand.lastIndexOf("setCampaignBusy(false);");
+
+  assert.ok(busyIndex >= 0 && busyIndex < invokeIndex, "end turn must close the gate before invoking Rust");
+  assert.ok(releaseIndex > invokeIndex, "end turn must keep the gate closed through UI refresh");
+
+  for (const action of ["moveSelectedArmy", "queueRecruitment", "resolvePendingBattle"]) {
+    const start = script.indexOf(`async function ${action}`);
+    const next = script.indexOf("\nasync function ", start + 1);
+    const body = script.slice(start, next >= 0 ? next : undefined);
+    assert.match(body, /campaignBusy\) return;/, `${action} must reject stale input while busy`);
+  }
+});
+
 test("save schema version and validation remain Rust-owned", () => {
   assert.match(saveCore, /pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 1/);
   assert.match(saveCore, /pub fn from_json\(json: &str\) -> Result<Self, SaveError>/);
