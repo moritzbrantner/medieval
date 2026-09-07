@@ -1,8 +1,6 @@
 use std::sync::Mutex;
 
-use medieval_core::{
-    CampaignState, RecruitmentOption, UnitKind, new_campaign as fresh_campaign,
-};
+use medieval_core::{CampaignState, RecruitmentOption, UnitKind, new_campaign as fresh_campaign};
 use tauri::State;
 
 struct GameState(Mutex<CampaignState>);
