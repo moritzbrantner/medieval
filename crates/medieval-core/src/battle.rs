@@ -294,8 +294,12 @@ mod tests {
         let mut campaign = contested_campaign();
         let report = campaign.resolve_pending_battle(7).unwrap();
 
-        assert!(report.attacker_after.soldiers() <= report.attacker_before.soldiers());
-        assert!(report.defender_after.soldiers() <= report.defender_before.soldiers());
+        assert!(
+            report.attacker_after.soldiers() <= report.attacker_before.soldiers()
+        );
+        assert!(
+            report.defender_after.soldiers() <= report.defender_before.soldiers()
+        );
     }
 
     #[test]
