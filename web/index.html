@@ -9,34 +9,107 @@
   </head>
   <body>
     <div id="app">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">Campaign prototype</p>
-          <h1>Medieval</h1>
-        </div>
-        <div class="turn-summary" id="turn-summary"></div>
-      </header>
+      <section id="menu-view" class="screen menu-screen" aria-labelledby="game-title">
+        <div class="menu-panel">
+          <p class="eyebrow">Strategy & battles</p>
+          <h1 id="game-title">Medieval</h1>
+          <p class="menu-intro">Choose how you want to play.</p>
 
-      <main class="layout">
-        <section class="campaign-map" aria-label="Campaign provinces" id="campaign-map"></section>
+          <div class="mode-list" aria-label="Game modes">
+            <button id="open-campaign" class="mode-button" type="button">
+              <span class="mode-title">Campaign</span>
+              <span class="mode-copy">Rule provinces, raise armies, and conquer the map turn by turn.</span>
+            </button>
 
-        <aside class="sidebar">
-          <section>
-            <p class="eyebrow">Province</p>
-            <div id="province-detail" class="province-detail">Select a province on the map.</div>
-          </section>
-
-          <section>
-            <p class="eyebrow">Chronicle</p>
-            <ol id="chronicle" class="chronicle"></ol>
-          </section>
-
-          <div class="actions">
-            <button id="new-campaign" class="secondary" type="button">New campaign</button>
-            <button id="end-turn" type="button">End turn</button>
+            <button id="open-online" class="mode-button" type="button">
+              <span class="mode-title">Online Battle</span>
+              <span class="mode-copy">Prepare a direct battle with a friend through a private lobby.</span>
+              <span class="mode-status">Foundation planned</span>
+            </button>
           </div>
-        </aside>
-      </main>
+        </div>
+      </section>
+
+      <section id="campaign-view" class="screen" hidden>
+        <header class="topbar">
+          <div class="topbar-title">
+            <button class="back-button" data-back-to-menu type="button">Back</button>
+            <div>
+              <p class="eyebrow">Campaign prototype</p>
+              <h1>Medieval</h1>
+            </div>
+          </div>
+          <div class="turn-summary" id="turn-summary"></div>
+        </header>
+
+        <main class="layout">
+          <section class="campaign-map" aria-label="Campaign provinces" id="campaign-map"></section>
+
+          <aside class="sidebar">
+            <section>
+              <p class="eyebrow">Province</p>
+              <div id="province-detail" class="province-detail">Select a province on the map.</div>
+            </section>
+
+            <section>
+              <p class="eyebrow">Chronicle</p>
+              <ol id="chronicle" class="chronicle"></ol>
+            </section>
+
+            <div class="actions">
+              <button id="new-campaign" class="secondary" type="button">New campaign</button>
+              <button id="end-turn" type="button">End turn</button>
+            </div>
+          </aside>
+        </main>
+      </section>
+
+      <section id="online-view" class="screen online-screen" hidden aria-labelledby="online-title">
+        <header class="topbar">
+          <div class="topbar-title">
+            <button class="back-button" data-back-to-menu type="button">Back</button>
+            <div>
+              <p class="eyebrow">Direct multiplayer</p>
+              <h1 id="online-title">Online Battle</h1>
+            </div>
+          </div>
+        </header>
+
+        <main class="online-layout">
+          <section class="online-panel">
+            <p class="eyebrow">Match setup</p>
+            <h2>Battle a friend without starting a campaign</h2>
+            <p>
+              This mode will use the multiplayer setup service for a private two-player lobby and direct WebRTC connection.
+              The game will not pretend to be connected until that integration is implemented.
+            </p>
+
+            <div class="online-actions">
+              <button type="button" disabled>Host battle</button>
+              <button type="button" class="secondary" disabled>Join invite</button>
+            </div>
+            <p class="availability-note">Lobby controls are the next multiplayer implementation horizon.</p>
+          </section>
+
+          <section class="online-panel sync-panel">
+            <p class="eyebrow">Before battle</p>
+            <h2>Asset readiness gate</h2>
+            <ol class="readiness-flow">
+              <li>Create or join the private lobby.</li>
+              <li>Verify the trusted Medieval release manifest.</li>
+              <li>Find missing battle assets in the verified local cache.</li>
+              <li>Download missing verified chunks from HTTPS and opted-in peers.</li>
+              <li>Show upload/download progress while either player is still syncing.</li>
+              <li>Enable Start battle only when both players report the same release and required assets ready.</li>
+            </ol>
+            <div class="sync-preview" aria-label="Future asset synchronization status">
+              <span class="sync-label">Future status</span>
+              <strong>Sharing battle assets with your friend…</strong>
+              <span>The match remains locked until required content is verified on both computers.</span>
+            </div>
+          </section>
+        </main>
+      </section>
     </div>
 
     <div id="error" class="error" hidden></div>
