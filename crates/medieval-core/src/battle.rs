@@ -295,10 +295,12 @@ mod tests {
         let report = campaign.resolve_pending_battle(7).unwrap();
 
         assert!(
-            report.attacker_after.soldiers() <= report.attacker_before.soldiers()
+            report.attacker_after.soldiers()
+                <= report.attacker_before.soldiers()
         );
         assert!(
-            report.defender_after.soldiers() <= report.defender_before.soldiers()
+            report.defender_after.soldiers()
+                <= report.defender_before.soldiers()
         );
     }
 
