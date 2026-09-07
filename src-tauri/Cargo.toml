@@ -18,4 +18,5 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 medieval-core = { path = "../crates/medieval-core" }
+medieval-save = { path = "../crates/medieval-save" }
 tauri = { version = "2", features = [] }
