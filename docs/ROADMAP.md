@@ -29,7 +29,7 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 **Exit:** the app opens, renders the six-province campaign, and ending a turn changes authoritative Rust state.
 
-### 0.5. Main menu and mode shell — current slice
+### 0.5. Main menu and mode shell — complete
 
 - Open Medieval on a small mode chooser instead of directly entering Campaign.
 - Campaign loads the Rust-owned campaign only after the player chooses it.
@@ -39,15 +39,16 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 **Exit:** Campaign and future Online Battle have independent entry points and the existing campaign remains playable through the menu.
 
-### 1. Army movement
+### 1. Army movement — current slice
 
-- Select one army and an adjacent friendly/enemy province.
-- Rust validates adjacency and ownership constraints.
-- One move per army per turn.
-- Movement into an enemy-held province creates a pending battle.
-- UI exposes legal destinations returned by Rust rather than recomputing them.
+- Select one army and request its legal destinations from Rust.
+- Rust validates active faction, adjacency, one-move-per-turn state, and pending-battle constraints.
+- Friendly movement relocates the army immediately in authoritative Rust state.
+- Movement into an enemy-held province creates a Rust-owned pending battle without resolving combat.
+- UI highlights only destination IDs returned by Rust and sends explicit move intents back to Rust.
+- End turn is rejected while a battle remains pending.
 
-**Exit:** the player can create a conflict by moving an army across a border.
+**Exit:** the player can create a conflict by moving an army across a border without moving campaign rules into JavaScript.
 
 ### 2. Economy and recruitment
 

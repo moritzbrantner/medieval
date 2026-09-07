@@ -33,9 +33,32 @@ fn start_new_campaign(state: State<'_, GameState>) -> Result<CampaignState, Stri
 }
 
 #[tauri::command]
+fn legal_army_destinations(
+    state: State<'_, GameState>,
+    army_id: String,
+) -> Result<Vec<String>, String> {
+    lock_campaign(&state)?
+        .legal_destinations(&army_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn move_army(
+    state: State<'_, GameState>,
+    army_id: String,
+    destination: String,
+) -> Result<CampaignState, String> {
+    let mut campaign = lock_campaign(&state)?;
+    campaign
+        .move_army(&army_id, &destination)
+        .map_err(|error| error.to_string())?;
+    Ok(campaign.clone())
+}
+
+#[tauri::command]
 fn end_turn(state: State<'_, GameState>) -> Result<CampaignState, String> {
     let mut campaign = lock_campaign(&state)?;
-    campaign.end_turn();
+    campaign.end_turn().map_err(|error| error.to_string())?;
     Ok(campaign.clone())
 }
 
@@ -46,6 +69,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             campaign_state,
             start_new_campaign,
+            legal_army_destinations,
+            move_army,
             end_turn
         ])
         .run(tauri::generate_context!())
