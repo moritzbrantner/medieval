@@ -111,6 +111,12 @@ test("the controller delegates private identity and recovery to LobbySession", (
   assert.equal(controller.split("sendReliable(").length - 1, 1);
 });
 
+test("the controller preserves readiness that arrives before the local peer-ready event", () => {
+  assert.match(controller, /const samePeer = currentPeerId === peerId/);
+  assert.match(controller, /if \(!samePeer\) peerReadiness = null/);
+  assert.match(controller, /renderPeerReadiness\(peerReadiness\)/);
+});
+
 test("the desktop CSP allows rendezvous connections while scripts stay self-hosted", () => {
   const csp = tauriConfig.app.security.csp;
   assert.match(csp, /script-src 'self'/);
