@@ -41,8 +41,8 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Compile native application shell
-        run: cargo build --package medieval
+      - name: Compile native application shell in release mode
+        run: cargo build --package medieval --release
 
   browser-input-contract:
     name: desktop and mobile input contract
@@ -52,5 +52,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Verify semantic controls and responsive touch targets
+      - name: Verify semantic controls, keyboard focus, and responsive touch targets
         run: node --test web-tests/persistence-contract.test.mjs
