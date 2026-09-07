@@ -201,13 +201,23 @@ h2 {
   border-radius: 0.35rem;
   background: #3e4834;
   cursor: pointer;
-  transition: transform 120ms ease, border-color 120ms ease;
+  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .province:hover,
 .province[aria-pressed="true"] {
   transform: translateY(-2px);
   border-color: #ddc98e;
+}
+
+.province.legal-destination {
+  border-color: #d0b96d;
+  box-shadow: inset 0 0 0 1px #d0b96d;
+}
+
+.province.legal-destination:hover,
+.province.legal-destination:focus-visible {
+  box-shadow: inset 0 0 0 1px #d0b96d, 0 0 0 2px rgba(208, 185, 109, 0.18);
 }
 
 .province.owner-france {
@@ -238,10 +248,17 @@ h2 {
   color: #aaa18a;
 }
 
+.province .legal-label {
+  color: #e0c978;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .sidebar {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 1.4rem;
   padding: 1.5rem;
   border-left: 1px solid #4e4635;
@@ -259,6 +276,48 @@ h2 {
   border-top: 1px solid #4e4635;
   color: #bfb59d;
   font-size: 0.88rem;
+}
+
+.army p {
+  margin-bottom: 0.55rem;
+}
+
+.army-status,
+.order-hint,
+.battle-note {
+  color: #9f967f;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.army-select {
+  min-height: 2.3rem;
+  padding: 0.55rem 0.7rem;
+  color: #d6cdb5;
+  border: 1px solid #665f4b;
+  background: transparent;
+  font: 700 0.76rem/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.army-select:hover,
+.army-select:focus-visible {
+  border-color: #d0b96d;
+}
+
+.order-hint {
+  margin: 0.9rem 0 0;
+  color: #d0b96d;
+}
+
+.battle-alert {
+  padding: 0.9rem 1rem;
+  border: 1px solid #8b7041;
+  background: #2d2619;
+}
+
+.battle-alert p:last-child {
+  margin-bottom: 0;
 }
 
 .chronicle {
