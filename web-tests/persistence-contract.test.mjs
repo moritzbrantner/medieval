@@ -61,3 +61,16 @@ test("mobile campaign persistence keeps single-column controls and touch targets
   assert.match(persistenceCss, /\.save-actions\s*\{\s*grid-template-columns: 1fr;/s);
   assert.match(persistenceCss, /\.save-actions button[\s\S]*min-height: 44px/);
 });
+
+test("keyboard focus remains visible for native campaign controls", () => {
+  assert.match(persistenceCss, /button:focus-visible/);
+  assert.match(persistenceCss, /input:focus-visible/);
+  assert.match(persistenceCss, /select:focus-visible/);
+  assert.match(persistenceCss, /outline:\s*2px solid/);
+});
+
+test("coarse pointers receive explicit touch-sized native controls", () => {
+  assert.match(persistenceCss, /@media \(pointer: coarse\)/);
+  assert.match(persistenceCss, /button,[\s\S]*input,[\s\S]*select[\s\S]*min-height:\s*3rem/);
+  assert.match(persistenceCss, /touch-action:\s*manipulation/);
+});
