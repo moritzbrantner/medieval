@@ -153,7 +153,8 @@ function fail(error) {
 
 function beginReleaseCheck(current, peerId) {
   if (current !== session || !current.readyPeerIds().includes(peerId)) return;
-  if (currentPeerId === peerId && (localReady || readinessSendPending)) {
+  const samePeer = currentPeerId === peerId;
+  if (samePeer && (localReady || readinessSendPending)) {
     updateStartGate();
     return;
   }
@@ -161,9 +162,9 @@ function beginReleaseCheck(current, peerId) {
   currentPeerId = peerId;
   localReady = false;
   readinessSendPending = true;
-  peerReadiness = null;
+  if (!samePeer) peerReadiness = null;
   startButton.disabled = true;
-  renderPeerReadiness(null);
+  renderPeerReadiness(peerReadiness);
   setState("peer-connected", "Direct channels are ready; Medieval owns the compatibility decision next.");
 
   window.requestAnimationFrame(() => {
@@ -179,6 +180,11 @@ function beginReleaseCheck(current, peerId) {
       current.sendReliable(peerId, createReadinessMessage({ ready: true }));
       localReady = true;
       readinessSendPending = false;
+      if (peerReadiness?.recognized && !peerReadiness.compatible) {
+        startButton.disabled = true;
+        setState("failure", peerReadiness.reason);
+        return;
+      }
       updateStartGate();
     } catch (error) {
       readinessSendPending = false;
