@@ -245,8 +245,7 @@ fn apply_casualties(army: &mut Army, casualty_percent: u32) {
 }
 
 fn survivors(count: u16, casualty_percent: u32) -> u16 {
-    let casualties =
-        u32::from(count).saturating_mul(casualty_percent.min(100)) / 100;
+    let casualties = u32::from(count).saturating_mul(casualty_percent.min(100)) / 100;
     count.saturating_sub(u16::try_from(casualties).unwrap_or(count))
 }
 
