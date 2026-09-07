@@ -146,6 +146,20 @@ impl CampaignState {
                 province.owner = pending.attacker_faction.clone();
             }
 
+            let queued_before_capture = self.recruitment_queue.len();
+            self.recruitment_queue.retain(|order| {
+                !(order.faction_id == pending.defender_faction
+                    && order.province_id == pending.target_province)
+            });
+            let cancelled_orders =
+                queued_before_capture.saturating_sub(self.recruitment_queue.len());
+            if cancelled_orders > 0 {
+                self.log.push(format!(
+                    "Turn {}: {} queued recruitment order(s) in {} are cancelled after capture.",
+                    self.turn, cancelled_orders, pending.target_province
+                ));
+            }
+
             if let Some(retreat) = &defender_retreat_province {
                 for index in &defender_indices {
                     self.armies[*index].province = retreat.clone();
@@ -231,9 +245,9 @@ fn apply_casualties(army: &mut Army, casualty_percent: u32) {
 }
 
 fn survivors(count: u16, casualty_percent: u32) -> u16 {
-    let survivor_percent = 100_u32.saturating_sub(casualty_percent.min(100));
-    let survivors = u32::from(count).saturating_mul(survivor_percent) / 100;
-    u16::try_from(survivors).unwrap_or(u16::MAX)
+    let casualties =
+        u32::from(count).saturating_mul(casualty_percent.min(100)) / 100;
+    count.saturating_sub(u16::try_from(casualties).unwrap_or(count))
 }
 
 fn army_soldiers(army: &Army) -> u32 {
@@ -264,7 +278,7 @@ fn mix(seed: u64, salt: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::new_campaign;
+    use crate::{new_campaign, UnitKind};
 
     fn contested_campaign() -> CampaignState {
         let mut campaign = new_campaign();
@@ -295,6 +309,14 @@ mod tests {
     }
 
     #[test]
+    fn casualty_rounding_does_not_overstate_small_group_losses() {
+        assert_eq!(survivors(1, 20), 1);
+        assert_eq!(survivors(4, 20), 4);
+        assert_eq!(survivors(5, 20), 4);
+        assert_eq!(survivors(1, 100), 0);
+    }
+
+    #[test]
     fn attacker_victory_captures_the_target_province() {
         let base = contested_campaign();
         let (mut campaign, report) = (0..10_000)
@@ -317,5 +339,32 @@ mod tests {
 
         campaign.battle_reports.clear();
         assert!(campaign.resolve_pending_battle(1).is_err());
+    }
+
+    #[test]
+    fn capture_cancels_former_owners_recruitment_in_the_province() {
+        let mut base = new_campaign();
+        base.end_turn().unwrap();
+        base.queue_recruitment("paris", UnitKind::Levy).unwrap();
+        base.end_turn().unwrap();
+        base.move_army("england-main", "paris").unwrap();
+
+        let mut campaign = (0..10_000)
+            .find_map(|seed| {
+                let mut attempt = base.clone();
+                let report = attempt.resolve_pending_battle(seed).unwrap();
+                (report.outcome == BattleOutcome::AttackerVictory).then_some(attempt)
+            })
+            .expect("expected at least one attacker-winning seed");
+
+        assert!(campaign.recruitment_queue.iter().all(|order| {
+            order.faction_id != "france" || order.province_id != "paris"
+        }));
+
+        campaign.end_turn().unwrap();
+        assert!(!campaign
+            .armies
+            .iter()
+            .any(|army| army.owner == "france" && army.province == "paris"));
     }
 }
