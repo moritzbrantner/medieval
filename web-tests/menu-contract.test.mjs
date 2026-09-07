@@ -24,14 +24,18 @@ test("campaign state is loaded lazily after the campaign mode is selected", () =
   assert.match(script, /campaignButton\.addEventListener\("click"[\s\S]*ensureCampaignLoaded\(\)/);
 });
 
-test("online battle preview does not expose fake host or join controls", () => {
-  assert.match(index, /<button type="button" disabled>Host battle<\/button>/);
-  assert.match(index, /<button type="button" class="secondary" disabled>Join invite<\/button>/);
-  assert.match(index, /The game will not pretend to be connected until that integration is implemented\./);
+test("online battle exposes real lobby controls and a separate module", () => {
+  assert.match(index, /id="host-battle"[^>]*>Host battle<\/button>/);
+  assert.match(index, /id="join-battle"[^>]*>Join invite<\/button>/);
+  assert.match(index, /id="lobby-code"/);
+  assert.match(index, /id="start-battle"[^>]*disabled>Start battle<\/button>/);
+  assert.match(index, /<script type="module" src="online-battle\.js"><\/script>/);
+  assert.doesNotMatch(index, /Lobby controls are the next multiplayer implementation horizon/);
 });
 
-test("the future battle gate explicitly waits for verified content on both peers", () => {
+test("the future asset gate remains explicitly separate from lobby readiness", () => {
+  assert.match(index, /Next networking slice/);
   assert.match(index, /Verify the trusted Medieval release manifest\./);
-  assert.match(index, /Enable Start battle only when both players report the same release and required assets ready\./);
-  assert.match(index, /The match remains locked until required content is verified on both computers\./);
+  assert.match(index, /Require the same verified content fingerprint on both computers\./);
+  assert.match(index, /The match will remain locked until required content is verified on both computers\./);
 });

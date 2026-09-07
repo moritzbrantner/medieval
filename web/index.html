@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="economy.css" />
     <link rel="stylesheet" href="battle.css" />
+    <link rel="stylesheet" href="online-battle.css" />
   </head>
   <body>
     <div id="app">
@@ -26,7 +27,7 @@
             <button id="open-online" class="mode-button" type="button">
               <span class="mode-title">Online Battle</span>
               <span class="mode-copy">Prepare a direct battle with a friend through a private lobby.</span>
-              <span class="mode-status">Foundation planned</span>
+              <span class="mode-status">Private lobby & release check</span>
             </button>
           </div>
         </div>
@@ -96,35 +97,75 @@
 
         <main class="online-layout">
           <section class="online-panel">
-            <p class="eyebrow">Match setup</p>
+            <p class="eyebrow">Private match</p>
             <h2>Battle a friend without starting a campaign</h2>
             <p>
-              This mode will use the multiplayer setup service for a private two-player lobby and direct WebRTC connection.
-              The game will not pretend to be connected until that integration is implemented.
+              Host a private two-player lobby or join an invite. Medieval checks release compatibility over the direct peer
+              channel before the battle gate can open.
             </p>
 
-            <div class="online-actions">
-              <button type="button" disabled>Host battle</button>
-              <button type="button" class="secondary" disabled>Join invite</button>
+            <label class="lobby-code-label" for="lobby-code">Invite code</label>
+            <input id="lobby-code" class="lobby-code-input" type="text" autocomplete="off" spellcheck="false" placeholder="Enter a friend's lobby code" />
+
+            <div class="online-actions setup-actions">
+              <button id="host-battle" type="button">Host battle</button>
+              <button id="join-battle" type="button" class="secondary">Join invite</button>
             </div>
-            <p class="availability-note">Lobby controls are the next multiplayer implementation horizon.</p>
+
+            <div id="lobby-invite" class="lobby-invite" hidden>
+              <span class="sync-label">Private lobby</span>
+              <strong id="lobby-display-code"></strong>
+              <a id="invite-link" class="invite-link" href=""></a>
+              <div class="invite-copy-row">
+                <button id="copy-invite" class="secondary compact-button" type="button">Copy invite</button>
+                <span id="copy-notice" class="copy-notice" aria-live="polite"></span>
+              </div>
+            </div>
+
+            <div id="online-status" class="connection-status" data-state="idle" aria-live="polite">
+              <span id="online-status-label" class="sync-label">Idle</span>
+              <strong id="online-status-title">Host a private battle or join a friend's invite.</strong>
+              <span id="online-status-detail"></span>
+            </div>
+
+            <div class="release-summary" aria-label="Medieval release readiness">
+              <div class="release-row">
+                <span>You</span>
+                <strong id="local-release"></strong>
+              </div>
+              <div class="release-row">
+                <span>Friend</span>
+                <strong id="peer-release">Waiting for friend…</strong>
+              </div>
+            </div>
+
+            <div class="online-actions battle-actions">
+              <button id="start-battle" type="button" disabled>Start battle</button>
+              <button id="leave-lobby" type="button" class="secondary" disabled>Leave lobby</button>
+            </div>
+            <p id="battle-gate-note" class="availability-note">
+              This slice stops at compatibility/readiness. No battle simulation traffic is sent.
+            </p>
           </section>
 
           <section class="online-panel sync-panel">
-            <p class="eyebrow">Before battle</p>
-            <h2>Asset readiness gate</h2>
+            <p class="eyebrow">Next networking slice</p>
+            <h2>Verified asset readiness gate</h2>
+            <p>
+              Content synchronization remains separate from this lobby/release slice. The next gate will verify trusted
+              Medieval assets locally before either player can enter a real tactical match.
+            </p>
             <ol class="readiness-flow">
-              <li>Create or join the private lobby.</li>
               <li>Verify the trusted Medieval release manifest.</li>
               <li>Find missing battle assets in the verified local cache.</li>
               <li>Download missing verified chunks from HTTPS and opted-in peers.</li>
               <li>Show upload/download progress while either player is still syncing.</li>
-              <li>Enable Start battle only when both players report the same release and required assets ready.</li>
+              <li>Require the same verified content fingerprint on both computers.</li>
             </ol>
             <div class="sync-preview" aria-label="Future asset synchronization status">
               <span class="sync-label">Future status</span>
               <strong>Sharing battle assets with your friend…</strong>
-              <span>The match remains locked until required content is verified on both computers.</span>
+              <span>The match will remain locked until required content is verified on both computers.</span>
             </div>
           </section>
         </main>
@@ -133,5 +174,6 @@
 
     <div id="error" class="error" hidden></div>
     <script src="main.js"></script>
+    <script type="module" src="online-battle.js"></script>
   </body>
 </html>

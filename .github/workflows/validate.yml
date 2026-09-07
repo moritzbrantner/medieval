@@ -33,6 +33,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check JavaScript syntax
-        run: node --check web/main.js
-      - name: Test menu contract
+        run: find web -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | sort -z | xargs -0 -n1 node --check
+      - name: Test web contracts
         run: node --test web-tests/*.test.mjs
