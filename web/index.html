@@ -129,6 +129,13 @@
               <button type="button" class="secondary" disabled>Join invite</button>
             </div>
             <p class="availability-note">Lobby controls are the next multiplayer implementation horizon.</p>
+
+            <div class="online-actions">
+              <button id="open-native-battle" type="button">Open local renderer preview</button>
+            </div>
+            <p id="native-battle-status" class="availability-note" aria-live="polite">
+              Desktop builds can project a fixed Rust-owned tactical snapshot through the native wgpu renderer.
+            </p>
           </section>
 
           <section class="online-panel sync-panel">
@@ -154,5 +161,6 @@
 
     <div id="error" class="error" hidden></div>
     <script src="main.js"></script>
+    <script src="native-battle.js"></script>
   </body>
 </html>
