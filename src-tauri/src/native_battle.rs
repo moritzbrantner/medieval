@@ -16,7 +16,7 @@ use tauri::{Manager, State, Window, WindowEvent};
 
 mod controls;
 
-use controls::{SelectionMode, TacticalControlRequest, TacticalControls};
+use controls::{TacticalControlRequest, TacticalControls};
 
 const BATTLE_WINDOW_LABEL: &str = "tactical-battle";
 const FRAME_INTERVAL: Duration = Duration::from_millis(16);
