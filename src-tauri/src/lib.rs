@@ -13,7 +13,7 @@ use tauri::{AppHandle, Manager, State};
 mod native_battle;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-use native_battle::open_native_battle_renderer;
+use native_battle::{control_native_battle, open_native_battle_renderer};
 
 const SAVE_FILE_NAME: &str = "campaign-save.json";
 
@@ -326,6 +326,12 @@ fn open_native_battle_renderer() -> Result<(), String> {
     Err("the native tactical renderer is currently desktop-only".to_owned())
 }
 
+#[cfg(any(target_os = "android", target_os = "ios"))]
+#[tauri::command]
+fn control_native_battle() -> Result<(), String> {
+    Err("native tactical controls are currently desktop-only".to_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default().manage(GameState::default());
@@ -350,7 +356,8 @@ pub fn run() {
             queue_recruitment,
             resolve_pending_battle,
             end_player_turn,
-            open_native_battle_renderer
+            open_native_battle_renderer,
+            control_native_battle
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Medieval");
