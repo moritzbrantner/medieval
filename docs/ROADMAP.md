@@ -98,11 +98,11 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 A real Online Battle depends on this deterministic battle foundation. It does **not** need to wait for the full campaign handoff.
 
-The current slice is the first production renderer foundation: `medieval-renderer` projects immutable `medieval-core` tactical snapshots into renderer-owned camera/view metadata and a batched `wgpu` instance stream. Native Tauri surface/window/frame-loop integration follows as a separate renderer slice.
+The production renderer foundation now projects immutable `medieval-core` tactical snapshots through `medieval-renderer` into renderer-owned camera/view metadata and a batched `wgpu` instance stream. The native integration slice hosts that renderer in a dedicated desktop Tauri window with lazy GPU initialization, bounded main-thread frame scheduling, resize and lost-surface recovery, and explicit cleanup when the application window is destroyed. The next production-renderer slice is to replace the fixed preview snapshot with live Rust-owned tactical snapshots and view intents; the browser remains a separate projection surface.
 
 1. **Battle simulation kernel — complete:** flat test battlefield, fixed-step clock, units, formations, movement orders.
 2. **Morale and combat — complete:** frontage, fatigue, simultaneous casualties, morale shocks, routs, pursuit.
-3. **Production desktop renderer — current:** Rust + `wgpu` battlefield projection with camera, selection, order previews, GPU batching/instancing, then native frame scheduling.
+3. **Production desktop renderer — current:** Rust + `wgpu` battlefield projection, camera, selection, order previews, GPU batching/instancing, and native Tauri window/surface/frame lifecycle are in place; next feed live tactical snapshots and view intents through that boundary.
 4. **GitHub Pages demo renderer:** Three.js projection of the same authoritative battle state/contracts for browser dogfood and public demos; no duplicate simulation truth.
 5. **Terrain:** height, forests, rivers, chokepoints, deployment zones.
 6. **Sieges:** walls, gates, towers, capture points, pathing constraints.
