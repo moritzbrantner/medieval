@@ -4,8 +4,13 @@ use serde::{Deserialize, Serialize};
 
 mod battle;
 mod save;
+mod tactical;
 pub use battle::{ArmyRoster, BattleOutcome, BattleReport};
 pub use save::{CAMPAIGN_SAVE_SCHEMA_VERSION, CampaignSave, SaveError};
+pub use tactical::{
+    BattlePoint, BattleSide, FlatBattlefield, Formation, MovementOrder, TACTICAL_TICKS_PER_SECOND,
+    TacticalBattle, TacticalError, TacticalUnit,
+};
 
 const INCOME_PER_WEALTH: u32 = 50;
 const UNIT_KINDS: [UnitKind; 4] = [

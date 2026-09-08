@@ -84,7 +84,7 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 **Exit:** a complete single-player campaign can be won or lost.
 
-### 5. Save/load and platform acceptance — current slice
+### 5. Save/load and platform acceptance — complete
 
 - Versioned Rust serialization for campaign saves.
 - Tauri file persistence with a constrained capability surface.
@@ -98,7 +98,9 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 A real Online Battle depends on this deterministic battle foundation. It does **not** need to wait for the full campaign handoff.
 
-1. **Battle simulation kernel:** flat test battlefield, fixed-step clock, units, formations, movement orders.
+The current slice is the battle simulation kernel only: a flat bounded field, fixed simulation ticks, unit/formation state, and explicit movement orders owned by `medieval-core`.
+
+1. **Battle simulation kernel — current:** flat test battlefield, fixed-step clock, units, formations, movement orders.
 2. **Morale and combat:** frontage, fatigue, casualties, morale shocks, routs, pursuit.
 3. **Production desktop renderer:** Rust + `wgpu` battlefield projection with camera, selection, order previews, GPU batching/instancing, and native frame scheduling.
 4. **GitHub Pages demo renderer:** Three.js projection of the same authoritative battle state/contracts for browser dogfood and public demos; no duplicate simulation truth.
