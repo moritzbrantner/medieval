@@ -12,11 +12,14 @@ use medieval_core::{
     BattlePoint, BattleSide, FlatBattlefield, Formation, TacticalBattle, TacticalUnit,
 };
 use medieval_renderer::{BattleRenderSnapshot, GpuBattleRenderer};
-use tauri::{Manager, State, Window, WindowEvent};
+use serde::Serialize;
+use tauri::{Manager, State, WebviewWindow, Window, WindowEvent};
 
 mod controls;
+mod input;
 
 use controls::{TacticalControlRequest, TacticalControls};
+use input::{DesktopInputState, install_browser_input_listener};
 
 const BATTLE_WINDOW_LABEL: &str = "tactical-battle";
 const FRAME_INTERVAL: Duration = Duration::from_millis(16);
@@ -32,6 +35,7 @@ type SharedSession = Arc<Mutex<NativeBattleSession>>;
 type SharedError = Arc<Mutex<Option<String>>>;
 
 pub struct NativeBattleState {
+    main_window: WebviewWindow,
     window: Window,
     renderer: SharedRenderer,
     session: SharedSession,
@@ -51,12 +55,20 @@ impl Drop for NativeBattleState {
 struct NativeBattleSession {
     battle: TacticalBattle,
     controls: TacticalControls,
+    player_side: BattleSide,
+    input: DesktopInputState,
 }
 
 impl NativeBattleSession {
     fn snapshot(&self) -> BattleRenderSnapshot {
         BattleRenderSnapshot::project(&self.battle, &self.controls.render_view(&self.battle))
     }
+}
+
+#[derive(Copy, Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeBattleOpenResult {
+    browser_input: bool,
 }
 
 struct NativeSurfaceRenderer {
@@ -205,12 +217,10 @@ impl NativeSurfaceRenderer {
 }
 
 pub fn install(app: &tauri::App) -> tauri::Result<()> {
-    let window = tauri::window::WindowBuilder::new(app, BATTLE_WINDOW_LABEL)
-        .title("Medieval — Tactical Battle")
-        .inner_size(1024.0, 720.0)
-        .min_inner_size(640.0, 480.0)
-        .visible(false)
-        .build()?;
+    let main_window = app
+        .get_webview_window("main")
+        .expect("configured Medieval main window must exist during setup");
+    let window = build_battle_window(app, &main_window)?;
     let renderer = Arc::new(Mutex::new(None));
     let session = Arc::new(Mutex::new(sample_session()));
     let running = Arc::new(AtomicBool::new(false));
@@ -218,25 +228,54 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     let shutdown = Arc::new(AtomicBool::new(false));
     let last_error = Arc::new(Mutex::new(None));
 
-    let main_window = app
-        .get_webview_window("main")
-        .expect("configured Medieval main window must exist during setup");
     let shutdown_window = window.clone();
     let shutdown_renderer = Arc::clone(&renderer);
     let shutdown_running = Arc::clone(&running);
     let shutdown_flag = Arc::clone(&shutdown);
+    let overlay_main = main_window.clone();
+    let overlay_window = window.clone();
     main_window.on_window_event(move |event| {
-        if matches!(event, WindowEvent::Destroyed) {
-            shutdown_running.store(false, Ordering::Release);
-            shutdown_flag.store(true, Ordering::Release);
-            if let Ok(mut renderer) = shutdown_renderer.lock() {
-                *renderer = None;
+        match event {
+            WindowEvent::Destroyed => {
+                shutdown_running.store(false, Ordering::Release);
+                shutdown_flag.store(true, Ordering::Release);
+                if let Ok(mut renderer) = shutdown_renderer.lock() {
+                    *renderer = None;
+                }
+                let _ = shutdown_window.destroy();
             }
-            let _ = shutdown_window.destroy();
+            WindowEvent::Resized(_) | WindowEvent::Moved(_) => {
+                let _ = sync_browser_input_window(&overlay_main, &overlay_window);
+            }
+            _ => {}
         }
     });
 
     install_close_handler(&window, Arc::clone(&running));
+
+    #[cfg(target_os = "linux")]
+    input::install_linux_input(
+        &window,
+        Arc::clone(&session),
+        Arc::clone(&running),
+        Arc::clone(&last_error),
+    )
+    .map_err(tauri::Error::AssetNotFound)?;
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        window.set_ignore_cursor_events(true)?;
+        install_browser_input_listener(
+            app,
+            window.clone(),
+            Arc::clone(&session),
+            Arc::clone(&running),
+            Arc::clone(&last_error),
+        );
+        sync_browser_input_window(&main_window, &window)
+            .map_err(tauri::Error::AssetNotFound)?;
+    }
+
     spawn_frame_scheduler(
         window.clone(),
         Arc::clone(&renderer),
@@ -247,6 +286,7 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     );
 
     assert!(app.manage(NativeBattleState {
+        main_window,
         window,
         renderer,
         session,
@@ -258,21 +298,115 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn build_battle_window(app: &tauri::App, main_window: &WebviewWindow) -> tauri::Result<Window> {
+    let parent = main_window.hwnd()?;
+    tauri::window::WindowBuilder::new(app, BATTLE_WINDOW_LABEL)
+        .parent_raw(parent)
+        .title("Medieval — Tactical Battle")
+        .decorations(false)
+        .resizable(false)
+        .focusable(false)
+        .focused(false)
+        .visible(false)
+        .build()
+}
+
+#[cfg(target_os = "macos")]
+fn build_battle_window(app: &tauri::App, main_window: &WebviewWindow) -> tauri::Result<Window> {
+    let parent = main_window.ns_window()?;
+    tauri::window::WindowBuilder::new(app, BATTLE_WINDOW_LABEL)
+        .parent_raw(parent)
+        .title("Medieval — Tactical Battle")
+        .decorations(false)
+        .resizable(false)
+        .focusable(false)
+        .focused(false)
+        .visible(false)
+        .build()
+}
+
+#[cfg(target_os = "linux")]
+fn build_battle_window(app: &tauri::App, _main_window: &WebviewWindow) -> tauri::Result<Window> {
+    tauri::window::WindowBuilder::new(app, BATTLE_WINDOW_LABEL)
+        .title("Medieval — Tactical Battle")
+        .inner_size(1024.0, 720.0)
+        .min_inner_size(640.0, 480.0)
+        .visible(false)
+        .build()
+}
+
+#[cfg(target_os = "windows")]
+fn sync_browser_input_window(main_window: &WebviewWindow, window: &Window) -> Result<(), String> {
+    let size = main_window
+        .inner_size()
+        .map_err(|error| format!("could not read main window size for tactical overlay: {error}"))?;
+    window
+        .set_position(tauri::PhysicalPosition::new(0, 0))
+        .map_err(|error| format!("could not position tactical child window: {error}"))?;
+    window
+        .set_size(size)
+        .map_err(|error| format!("could not size tactical child window: {error}"))
+}
+
+#[cfg(target_os = "macos")]
+fn sync_browser_input_window(main_window: &WebviewWindow, window: &Window) -> Result<(), String> {
+    let position = main_window
+        .inner_position()
+        .map_err(|error| format!("could not read main window position for tactical overlay: {error}"))?;
+    let size = main_window
+        .inner_size()
+        .map_err(|error| format!("could not read main window size for tactical overlay: {error}"))?;
+    window
+        .set_position(position)
+        .map_err(|error| format!("could not position tactical child window: {error}"))?;
+    window
+        .set_size(size)
+        .map_err(|error| format!("could not size tactical child window: {error}"))
+}
+
+#[cfg(target_os = "linux")]
+fn sync_browser_input_window(_main_window: &WebviewWindow, _window: &Window) -> Result<(), String> {
+    Ok(())
+}
+
+const fn browser_input_enabled() -> bool {
+    cfg!(any(target_os = "windows", target_os = "macos"))
+}
+
 #[tauri::command]
 pub async fn open_native_battle_renderer(
     state: State<'_, NativeBattleState>,
-) -> Result<(), String> {
+) -> Result<NativeBattleOpenResult, String> {
     ensure_renderer_initialized(&state)?;
+    sync_browser_input_window(&state.main_window, &state.window)?;
+    state
+        .session
+        .lock()
+        .map_err(|_| "native tactical session lock was poisoned".to_owned())?
+        .input
+        .reset_browser_sequence();
     state
         .window
         .show()
         .map_err(|error| format!("could not show tactical battle window: {error}"))?;
+
+    #[cfg(target_os = "linux")]
     state
         .window
         .set_focus()
         .map_err(|error| format!("could not focus tactical battle window: {error}"))?;
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    state
+        .main_window
+        .set_focus()
+        .map_err(|error| format!("could not keep the tactical input host focused: {error}"))?;
+
     state.running.store(true, Ordering::Release);
-    Ok(())
+    Ok(NativeBattleOpenResult {
+        browser_input: browser_input_enabled(),
+    })
 }
 
 #[tauri::command]
@@ -284,7 +418,9 @@ pub fn control_native_battle(
         .session
         .lock()
         .map_err(|_| "native tactical session lock was poisoned".to_owned())?;
-    let NativeBattleSession { battle, controls } = &mut *session;
+    let NativeBattleSession {
+        battle, controls, ..
+    } = &mut *session;
     controls
         .apply_request(battle, request)
         .map_err(|error| error.to_string())
@@ -451,7 +587,8 @@ fn sample_session() -> NativeBattleSession {
         ],
     )
     .expect("native renderer sample battle is valid");
-    let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
+    let player_side = BattleSide::Attacker;
+    let mut controls = TacticalControls::new(&battle, player_side);
     controls
         .apply_request(
             &mut battle.clone(),
@@ -473,7 +610,12 @@ fn sample_session() -> NativeBattleSession {
         )
         .expect("sample order preview is valid");
 
-    NativeBattleSession { battle, controls }
+    NativeBattleSession {
+        battle,
+        controls,
+        player_side,
+        input: DesktopInputState::default(),
+    }
 }
 
 #[cfg(test)]
@@ -536,5 +678,13 @@ mod tests {
     #[test]
     fn frame_scheduler_is_bounded_to_about_sixty_hz() {
         assert_eq!(FRAME_INTERVAL, Duration::from_millis(16));
+    }
+
+    #[test]
+    fn browser_input_is_used_only_for_overlay_platforms() {
+        assert_eq!(
+            browser_input_enabled(),
+            cfg!(any(target_os = "windows", target_os = "macos"))
+        );
     }
 }
