@@ -8,10 +8,12 @@ Campaign is not the application shell. Medieval opens on a simple mode menu so t
 
 The first single-player target remains deliberately compact: a two-faction, six-province campaign that can be finished in roughly 30–60 minutes. Every campaign slice must improve that loop before the campaign expands outward.
 
+The current shipping and acceptance target is desktop. Android/iOS packaging, mobile-specific input, touch-layout acceptance, and mobile performance work are deferred until mobile becomes an explicit product priority. Active CI should not build or validate mobile in the meantime.
+
 ## Ownership boundaries
 
 - **`medieval-core` owns truth:** campaign state, adjacency, movement legality, economy, recruitment rules, combat resolution, AI decisions, seeded randomness, victory conditions, serialization versions, and future tactical simulation state.
-- **Tauri owns platform integration:** application lifecycle, constrained local save-file access, native packaging, and later mobile/desktop integrations.
+- **Tauri owns platform integration:** application lifecycle, constrained local save-file access, desktop packaging, and later platform integrations. Mobile remains a deferred target rather than part of the active acceptance surface.
 - **GitHub Pages is a Three.js demo/projection surface:** browser rendering, selection, camera/view state, accessibility, menu/navigation state, and translating gestures into explicit player intents may live there. It must not silently reimplement game rules, simulation, or trust decisions.
 - **The production desktop renderer is Rust + `wgpu`:** tactical rendering, GPU resource management, batching/instancing, and frame scheduling stay on the Rust side so desktop performance does not depend on the browser or Three.js demo.
 - **Future real-time battles remain Rust-owned:** unit state, formation rules, morale, pathing, collision/combat outcomes, and deterministic simulation ticks. A renderer may project the simulation but cannot become the authority.
@@ -23,7 +25,7 @@ The first single-player target remains deliberately compact: a two-faction, six-
 ### 0. Foundation — complete
 
 - Rust workspace with platform-independent `medieval-core`.
-- Tauri 2 shell suitable for desktop and mobile targets.
+- Tauri 2 shell with desktop as the active product target.
 - Tiny campaign bootstrap with factions, provinces, armies, and event log.
 - First Rust-owned state transition: end turn.
 - Minimal campaign UI that only projects Rust state.
@@ -85,15 +87,15 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 **Exit:** a complete single-player campaign can be won or lost.
 
-### 5. Save/load and platform acceptance — complete
+### 5. Save/load and desktop platform acceptance — complete
 
 - Versioned Rust serialization for campaign saves.
 - Tauri file persistence with a constrained capability surface.
 - Autosave at turn boundaries plus explicit manual save/load.
-- Desktop keyboard/mouse acceptance and mobile touch-layout acceptance.
-- Package smoke tests for Linux, Windows, macOS, Android, and iOS where runners/devices are available.
+- Desktop keyboard/mouse acceptance.
+- Package smoke tests for Linux, Windows, and macOS.
 
-**Exit:** the campaign MVP is durable enough to play across sessions and package on target platforms.
+**Exit:** the campaign MVP is durable enough to play across sessions and package on the supported desktop targets.
 
 ## Tactical battle track
 
@@ -131,6 +133,20 @@ See [`ONLINE-BATTLE.md`](ONLINE-BATTLE.md) for the full contract.
 
 After the tactical handoff is proven, add depth incrementally: more factions and provinces, buildings, commanders/traits, diplomacy, agents, religion, rebellions, naval transport, historical events, and larger campaign maps.
 
+## Deferred mobile track
+
+Mobile remains possible because the authoritative core is platform-independent, but it is not part of the active roadmap or acceptance surface. Re-open this track only when mobile becomes a deliberate product priority.
+
+Deferred work includes:
+
+- Android and iOS packaging/distribution.
+- Mobile-specific touch and gesture controls.
+- Small-screen layout acceptance and accessibility tuning.
+- Mobile GPU/performance profiling and power constraints.
+- Store-specific release and signing workflows.
+
+Until that track is reactivated, CI should not build Android/iOS packages or require mobile-specific layout/input checks.
+
 ## Explicit non-goals for the campaign MVP
 
 - Full Europe/North Africa/Middle East campaign map.
@@ -138,6 +154,7 @@ After the tactical handoff is proven, add depth incrementally: more factions and
 - Real-time tactical battles inside campaign slices 1–5.
 - Sieges, naval battles, diplomacy, agents, dynasties, religion, or crusades.
 - Shipping Online Battle before the deterministic tactical kernel exists.
+- Mobile packaging and mobile-specific input/layout acceptance until the deferred mobile track is explicitly reactivated.
 - Historical-accuracy content pass beyond a coherent medieval-inspired sandbox.
 
 These are valuable later, but none should delay a small complete strategy loop.
