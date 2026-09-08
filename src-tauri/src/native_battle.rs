@@ -11,8 +11,12 @@ use std::{
 use medieval_core::{
     BattlePoint, BattleSide, FlatBattlefield, Formation, TacticalBattle, TacticalUnit,
 };
-use medieval_renderer::{BattleRenderSnapshot, GpuBattleRenderer, RenderViewState};
+use medieval_renderer::{BattleRenderSnapshot, GpuBattleRenderer};
 use tauri::{Manager, State, Window, WindowEvent};
+
+mod controls;
+
+use controls::{TacticalControlRequest, TacticalControls};
 
 const BATTLE_WINDOW_LABEL: &str = "tactical-battle";
 const FRAME_INTERVAL: Duration = Duration::from_millis(16);
@@ -24,12 +28,13 @@ const CLEAR_COLOR: wgpu::Color = wgpu::Color {
 };
 
 type SharedRenderer = Arc<Mutex<Option<NativeSurfaceRenderer>>>;
+type SharedSession = Arc<Mutex<NativeBattleSession>>;
 type SharedError = Arc<Mutex<Option<String>>>;
 
 pub struct NativeBattleState {
     window: Window,
     renderer: SharedRenderer,
-    snapshot: BattleRenderSnapshot,
+    session: SharedSession,
     running: Arc<AtomicBool>,
     initializing: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
@@ -40,6 +45,17 @@ impl Drop for NativeBattleState {
     fn drop(&mut self) {
         self.running.store(false, Ordering::Release);
         self.shutdown.store(true, Ordering::Release);
+    }
+}
+
+struct NativeBattleSession {
+    battle: TacticalBattle,
+    controls: TacticalControls,
+}
+
+impl NativeBattleSession {
+    fn snapshot(&self) -> BattleRenderSnapshot {
+        BattleRenderSnapshot::project(&self.battle, &self.controls.render_view(&self.battle))
     }
 }
 
@@ -97,7 +113,11 @@ impl NativeSurfaceRenderer {
         })
     }
 
-    fn render_frame(&mut self, window: &Window) -> Result<(), String> {
+    fn render_frame(
+        &mut self,
+        window: &Window,
+        snapshot: &BattleRenderSnapshot,
+    ) -> Result<(), String> {
         let size = window
             .inner_size()
             .map_err(|error| format!("could not read tactical battle window size: {error}"))?;
@@ -105,6 +125,12 @@ impl NativeSurfaceRenderer {
             return Ok(());
         }
         self.resize(size.width, size.height);
+
+        if self.snapshot != *snapshot {
+            self.renderer
+                .upload_snapshot(&self.device, &self.queue, snapshot);
+            self.snapshot = snapshot.clone();
+        }
 
         match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => {
@@ -186,11 +212,11 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
         .visible(false)
         .build()?;
     let renderer = Arc::new(Mutex::new(None));
+    let session = Arc::new(Mutex::new(sample_session()));
     let running = Arc::new(AtomicBool::new(false));
     let initializing = Arc::new(AtomicBool::new(false));
     let shutdown = Arc::new(AtomicBool::new(false));
     let last_error = Arc::new(Mutex::new(None));
-    let snapshot = sample_snapshot();
 
     let main_window = app
         .get_webview_window("main")
@@ -214,6 +240,7 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     spawn_frame_scheduler(
         window.clone(),
         Arc::clone(&renderer),
+        Arc::clone(&session),
         Arc::clone(&running),
         Arc::clone(&shutdown),
         Arc::clone(&last_error),
@@ -222,7 +249,7 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     assert!(app.manage(NativeBattleState {
         window,
         renderer,
-        snapshot,
+        session,
         running,
         initializing,
         shutdown,
@@ -246,6 +273,21 @@ pub async fn open_native_battle_renderer(
         .map_err(|error| format!("could not focus tactical battle window: {error}"))?;
     state.running.store(true, Ordering::Release);
     Ok(())
+}
+
+#[tauri::command]
+pub fn control_native_battle(
+    state: State<'_, NativeBattleState>,
+    request: TacticalControlRequest,
+) -> Result<(), String> {
+    let mut session = state
+        .session
+        .lock()
+        .map_err(|_| "native tactical session lock was poisoned".to_owned())?;
+    let NativeBattleSession { battle, controls } = &mut *session;
+    controls
+        .apply_request(battle, request)
+        .map_err(|error| error.to_string())
 }
 
 fn ensure_renderer_initialized(state: &NativeBattleState) -> Result<(), String> {
@@ -272,7 +314,11 @@ fn initialize_renderer_on_main_thread(state: &NativeBattleState) -> Result<(), S
     let (sender, receiver) = mpsc::sync_channel(1);
     let window = state.window.clone();
     let renderer = Arc::clone(&state.renderer);
-    let snapshot = state.snapshot.clone();
+    let snapshot = state
+        .session
+        .lock()
+        .map_err(|_| "native tactical session lock was poisoned".to_owned())?
+        .snapshot();
     let last_error = Arc::clone(&state.last_error);
 
     state
@@ -319,6 +365,7 @@ fn install_close_handler(window: &Window, running: Arc<AtomicBool>) {
 fn spawn_frame_scheduler(
     window: Window,
     renderer: SharedRenderer,
+    session: SharedSession,
     running: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
     last_error: SharedError,
@@ -331,20 +378,26 @@ fn spawn_frame_scheduler(
                 if running.load(Ordering::Acquire) && !frame_queued.swap(true, Ordering::AcqRel) {
                     let queued = Arc::clone(&frame_queued);
                     let frame_renderer = Arc::clone(&renderer);
+                    let frame_session = Arc::clone(&session);
                     let frame_running = Arc::clone(&running);
                     let frame_last_error = Arc::clone(&last_error);
                     let frame_window = window.clone();
                     let schedule_result = window.run_on_main_thread(move || {
-                        let render_result = frame_renderer
-                            .lock()
-                            .map_err(|_| "native renderer lock was poisoned".to_owned())
-                            .and_then(|mut renderer| {
-                                let renderer = renderer.as_mut().ok_or_else(|| {
-                                    "native renderer disappeared while frames were active"
-                                        .to_owned()
-                                })?;
-                                renderer.render_frame(&frame_window)
-                            });
+                        let render_result: Result<(), String> = (|| {
+                            let snapshot = frame_session
+                                .lock()
+                                .map_err(|_| {
+                                    "native tactical session lock was poisoned".to_owned()
+                                })?
+                                .snapshot();
+                            let mut renderer = frame_renderer
+                                .lock()
+                                .map_err(|_| "native renderer lock was poisoned".to_owned())?;
+                            let renderer = renderer.as_mut().ok_or_else(|| {
+                                "native renderer disappeared while frames were active".to_owned()
+                            })?;
+                            renderer.render_frame(&frame_window, &snapshot)
+                        })();
 
                         if let Err(error) = render_result {
                             frame_running.store(false, Ordering::Release);
@@ -374,7 +427,7 @@ fn spawn_frame_scheduler(
         .expect("failed to start Medieval tactical frame scheduler");
 }
 
-fn sample_snapshot() -> BattleRenderSnapshot {
+fn sample_session() -> NativeBattleSession {
     let battlefield = FlatBattlefield::new(100_000, 100_000);
     let battle = TacticalBattle::new(
         battlefield,
@@ -398,10 +451,34 @@ fn sample_snapshot() -> BattleRenderSnapshot {
         ],
     )
     .expect("native renderer sample battle is valid");
-    let view = RenderViewState::fit(battlefield)
-        .with_selected("attacker-spears")
-        .with_order_preview("attacker-spears");
-    BattleRenderSnapshot::project(&battle, &view)
+    let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
+    controls
+        .apply_request(
+            &mut battle.clone(),
+            TacticalControlRequest {
+                kind: "selectReplace".to_owned(),
+                unit_ids: Some(vec!["attacker-spears".to_owned()]),
+                ..TacticalControlRequest::default()
+            },
+        )
+        .expect("sample attacker is controllable");
+    controls
+        .apply_request(
+            &mut battle.clone(),
+            TacticalControlRequest {
+                kind: "setOrderPreview".to_owned(),
+                active: Some(true),
+                ..TacticalControlRequest::default()
+            },
+        )
+        .expect("sample order preview is valid");
+
+    NativeBattleSession { battle, controls }
+}
+
+#[cfg(test)]
+fn sample_snapshot() -> BattleRenderSnapshot {
+    sample_session().snapshot()
 }
 
 #[cfg(test)]
@@ -409,7 +486,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn native_preview_snapshot_is_projected_from_medieval_core() {
+    fn native_preview_snapshot_is_projected_from_medieval_core_and_controls() {
         let snapshot = sample_snapshot();
 
         assert_eq!(snapshot.tick, 0);
@@ -418,6 +495,42 @@ mod tests {
         assert!(snapshot.units[0].selected);
         assert!(snapshot.units[0].order_preview);
         assert_eq!(snapshot.units[1].unit_id, "defender-spears");
+    }
+
+    #[test]
+    fn native_session_reprojects_changed_rust_control_state() {
+        let mut session = sample_session();
+        let battle_before = session.battle.clone();
+        let before = session.snapshot();
+
+        session
+            .controls
+            .apply_request(
+                &mut session.battle,
+                TacticalControlRequest {
+                    kind: "clearSelection".to_owned(),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
+        session
+            .controls
+            .apply_request(
+                &mut session.battle,
+                TacticalControlRequest {
+                    kind: "panCamera".to_owned(),
+                    delta_x_mm: Some(5_000.0),
+                    delta_y_mm: Some(0.0),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
+        let after = session.snapshot();
+
+        assert_eq!(session.battle, battle_before);
+        assert_ne!(before.camera, after.camera);
+        assert!(before.units[0].selected);
+        assert!(!after.units[0].selected);
     }
 
     #[test]

@@ -8,13 +8,16 @@ Campaign is not the application shell. Medieval opens on a simple mode menu so t
 
 The first single-player target remains deliberately compact: a two-faction, six-province campaign that can be finished in roughly 30–60 minutes. Every campaign slice must improve that loop before the campaign expands outward.
 
+The current shipping and acceptance target is desktop. Android/iOS packaging, mobile-specific input, touch-layout acceptance, and mobile performance work are deferred until mobile becomes an explicit product priority. Active CI should not build or validate mobile in the meantime.
+
 ## Ownership boundaries
 
 - **`medieval-core` owns truth:** campaign state, adjacency, movement legality, economy, recruitment rules, combat resolution, AI decisions, seeded randomness, victory conditions, serialization versions, and future tactical simulation state.
-- **Tauri owns platform integration:** application lifecycle, constrained local save-file access, native packaging, and later mobile/desktop integrations.
+- **Tauri owns platform integration:** application lifecycle, constrained local save-file access, desktop packaging, and later platform integrations. Mobile remains a deferred target rather than part of the active acceptance surface.
 - **GitHub Pages is a Three.js demo/projection surface:** browser rendering, selection, camera/view state, accessibility, menu/navigation state, and translating gestures into explicit player intents may live there. It must not silently reimplement game rules, simulation, or trust decisions.
 - **The production desktop renderer is Rust + `wgpu`:** tactical rendering, GPU resource management, batching/instancing, and frame scheduling stay on the Rust side so desktop performance does not depend on the browser or Three.js demo.
 - **Future real-time battles remain Rust-owned:** unit state, formation rules, morale, pathing, collision/combat outcomes, and deterministic simulation ticks. A renderer may project the simulation but cannot become the authority.
+- **RTS controls stay Medieval-local until a second real consumer exists:** camera, selection, control groups, and semantic tactical commands may be shaped for Medieval now. Extract shared gaming primitives only after another project proves which parts are genuinely common.
 - **`multiplayer-setup-service` owns rendezvous only:** lobby capabilities, targeted opaque WebRTC signaling, resilience helpers, TURN policy hooks, and optional peer-content coordination. It never owns Medieval gameplay truth or asset authority.
 
 ## MVP vertical slices
@@ -22,7 +25,7 @@ The first single-player target remains deliberately compact: a two-faction, six-
 ### 0. Foundation — complete
 
 - Rust workspace with platform-independent `medieval-core`.
-- Tauri 2 shell suitable for desktop and mobile targets.
+- Tauri 2 shell with desktop as the active product target.
 - Tiny campaign bootstrap with factions, provinces, armies, and event log.
 - First Rust-owned state transition: end turn.
 - Minimal campaign UI that only projects Rust state.
@@ -84,29 +87,32 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 **Exit:** a complete single-player campaign can be won or lost.
 
-### 5. Save/load and platform acceptance — complete
+### 5. Save/load and desktop platform acceptance — complete
 
 - Versioned Rust serialization for campaign saves.
 - Tauri file persistence with a constrained capability surface.
 - Autosave at turn boundaries plus explicit manual save/load.
-- Desktop keyboard/mouse acceptance and mobile touch-layout acceptance.
-- Package smoke tests for Linux, Windows, macOS, Android, and iOS where runners/devices are available.
+- Desktop keyboard/mouse acceptance.
+- Package smoke tests for Linux, Windows, and macOS.
 
-**Exit:** the campaign MVP is durable enough to play across sessions and package on target platforms.
+**Exit:** the campaign MVP is durable enough to play across sessions and package on the supported desktop targets.
 
 ## Tactical battle track
 
 A real Online Battle depends on this deterministic battle foundation. It does **not** need to wait for the full campaign handoff.
 
-The production renderer foundation now projects immutable `medieval-core` tactical snapshots through `medieval-renderer` into renderer-owned camera/view metadata and a batched `wgpu` instance stream. The native integration slice hosts that renderer in a dedicated desktop Tauri window with lazy GPU initialization, bounded main-thread frame scheduling, resize and lost-surface recovery, and explicit cleanup when the application window is destroyed. The next production-renderer slice is to replace the fixed preview snapshot with live Rust-owned tactical snapshots and view intents; the browser remains a separate projection surface.
+The production renderer projects immutable `medieval-core` tactical snapshots through `medieval-renderer` into renderer-owned camera/view metadata and a batched `wgpu` instance stream. The native integration hosts that renderer in a dedicated desktop Tauri window with lazy GPU initialization, bounded main-thread frame scheduling, resize and lost-surface recovery, and explicit cleanup when the application window is destroyed. The native shell now keeps a Rust-owned tactical session and reprojects its latest battle/control state before rendering instead of retaining one frozen preview snapshot.
+
+Medieval also now has a deliberately local RTS control model in Rust. It owns bounded camera pan/zoom, deterministic replace/add/toggle selection, control groups, order-preview state, and semantic move/engage/stop operations. Multi-unit commands are applied transactionally to a cloned battle first, so any `medieval-core` rejection leaves the authoritative battle unchanged. These controls are not a shared `game-controls` abstraction yet; extraction waits for a second consumer.
 
 1. **Battle simulation kernel — complete:** flat test battlefield, fixed-step clock, units, formations, movement orders.
 2. **Morale and combat — complete:** frontage, fatigue, simultaneous casualties, morale shocks, routs, pursuit.
-3. **Production desktop renderer — current:** Rust + `wgpu` battlefield projection, camera, selection, order previews, GPU batching/instancing, and native Tauri window/surface/frame lifecycle are in place; next feed live tactical snapshots and view intents through that boundary.
-4. **GitHub Pages demo renderer:** Three.js projection of the same authoritative battle state/contracts for browser dogfood and public demos; no duplicate simulation truth.
-5. **Terrain:** height, forests, rivers, chokepoints, deployment zones.
-6. **Sieges:** walls, gates, towers, capture points, pathing constraints.
-7. **Campaign handoff:** campaign army composition seeds tactical battle; tactical outcome returns casualties and control changes.
+3. **Production desktop renderer — complete foundation:** Rust + `wgpu` battlefield projection, camera, selection, order previews, GPU batching/instancing, native Tauri window/surface/frame lifecycle, and session-backed snapshot refresh are in place.
+4. **Medieval RTS controls — current:** Rust-local camera, selection, control groups, order previews, and atomic move/engage/stop command semantics are in place. Next bind desktop keyboard/mouse input to these semantics without moving tactical legality out of `medieval-core`.
+5. **GitHub Pages demo renderer:** Three.js projection of the same authoritative battle state/contracts for browser dogfood and public demos; no duplicate simulation truth.
+6. **Terrain:** height, forests, rivers, chokepoints, deployment zones.
+7. **Sieges:** walls, gates, towers, capture points, pathing constraints.
+8. **Campaign handoff:** campaign army composition seeds tactical battle; tactical outcome returns casualties and control changes.
 
 ## Online Battle track
 
@@ -127,6 +133,20 @@ See [`ONLINE-BATTLE.md`](ONLINE-BATTLE.md) for the full contract.
 
 After the tactical handoff is proven, add depth incrementally: more factions and provinces, buildings, commanders/traits, diplomacy, agents, religion, rebellions, naval transport, historical events, and larger campaign maps.
 
+## Deferred mobile track
+
+Mobile remains possible because the authoritative core is platform-independent, but it is not part of the active roadmap or acceptance surface. Re-open this track only when mobile becomes a deliberate product priority.
+
+Deferred work includes:
+
+- Android and iOS packaging/distribution.
+- Mobile-specific touch and gesture controls.
+- Small-screen layout acceptance and accessibility tuning.
+- Mobile GPU/performance profiling and power constraints.
+- Store-specific release and signing workflows.
+
+Until that track is reactivated, CI should not build Android/iOS packages or require mobile-specific layout/input checks.
+
 ## Explicit non-goals for the campaign MVP
 
 - Full Europe/North Africa/Middle East campaign map.
@@ -134,6 +154,7 @@ After the tactical handoff is proven, add depth incrementally: more factions and
 - Real-time tactical battles inside campaign slices 1–5.
 - Sieges, naval battles, diplomacy, agents, dynasties, religion, or crusades.
 - Shipping Online Battle before the deterministic tactical kernel exists.
+- Mobile packaging and mobile-specific input/layout acceptance until the deferred mobile track is explicitly reactivated.
 - Historical-accuracy content pass beyond a coherent medieval-inspired sandbox.
 
 These are valuable later, but none should delay a small complete strategy loop.

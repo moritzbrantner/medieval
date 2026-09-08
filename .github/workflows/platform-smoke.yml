@@ -45,12 +45,12 @@ jobs:
         run: cargo build --package medieval --release
 
   browser-input-contract:
-    name: desktop and mobile input contract
+    name: desktop input contract
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Verify semantic controls, keyboard focus, and responsive touch targets
+      - name: Verify semantic controls and keyboard focus
         run: node --test web-tests/persistence-contract.test.mjs
