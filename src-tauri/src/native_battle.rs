@@ -19,7 +19,9 @@ mod controls;
 mod input;
 
 use controls::{TacticalControlRequest, TacticalControls};
-use input::{DesktopInputState, install_browser_input_listener};
+use input::DesktopInputState;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use input::install_browser_input_listener;
 
 const BATTLE_WINDOW_LABEL: &str = "tactical-battle";
 const FRAME_INTERVAL: Duration = Duration::from_millis(16);
