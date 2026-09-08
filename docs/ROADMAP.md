@@ -15,6 +15,7 @@ The first single-player target remains deliberately compact: a two-faction, six-
 - **GitHub Pages is a Three.js demo/projection surface:** browser rendering, selection, camera/view state, accessibility, menu/navigation state, and translating gestures into explicit player intents may live there. It must not silently reimplement game rules, simulation, or trust decisions.
 - **The production desktop renderer is Rust + `wgpu`:** tactical rendering, GPU resource management, batching/instancing, and frame scheduling stay on the Rust side so desktop performance does not depend on the browser or Three.js demo.
 - **Future real-time battles remain Rust-owned:** unit state, formation rules, morale, pathing, collision/combat outcomes, and deterministic simulation ticks. A renderer may project the simulation but cannot become the authority.
+- **RTS controls stay Medieval-local until a second real consumer exists:** camera, selection, control groups, and semantic tactical commands may be shaped for Medieval now. Extract shared gaming primitives only after another project proves which parts are genuinely common.
 - **`multiplayer-setup-service` owns rendezvous only:** lobby capabilities, targeted opaque WebRTC signaling, resilience helpers, TURN policy hooks, and optional peer-content coordination. It never owns Medieval gameplay truth or asset authority.
 
 ## MVP vertical slices
@@ -98,15 +99,18 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 A real Online Battle depends on this deterministic battle foundation. It does **not** need to wait for the full campaign handoff.
 
-The production renderer foundation now projects immutable `medieval-core` tactical snapshots through `medieval-renderer` into renderer-owned camera/view metadata and a batched `wgpu` instance stream. The native integration slice hosts that renderer in a dedicated desktop Tauri window with lazy GPU initialization, bounded main-thread frame scheduling, resize and lost-surface recovery, and explicit cleanup when the application window is destroyed. The next production-renderer slice is to replace the fixed preview snapshot with live Rust-owned tactical snapshots and view intents; the browser remains a separate projection surface.
+The production renderer projects immutable `medieval-core` tactical snapshots through `medieval-renderer` into renderer-owned camera/view metadata and a batched `wgpu` instance stream. The native integration hosts that renderer in a dedicated desktop Tauri window with lazy GPU initialization, bounded main-thread frame scheduling, resize and lost-surface recovery, and explicit cleanup when the application window is destroyed. The native shell now keeps a Rust-owned tactical session and reprojects its latest battle/control state before rendering instead of retaining one frozen preview snapshot.
+
+Medieval also now has a deliberately local RTS control model in Rust. It owns bounded camera pan/zoom, deterministic replace/add/toggle selection, control groups, order-preview state, and semantic move/engage/stop operations. Multi-unit commands are applied transactionally to a cloned battle first, so any `medieval-core` rejection leaves the authoritative battle unchanged. These controls are not a shared `game-controls` abstraction yet; extraction waits for a second consumer.
 
 1. **Battle simulation kernel — complete:** flat test battlefield, fixed-step clock, units, formations, movement orders.
 2. **Morale and combat — complete:** frontage, fatigue, simultaneous casualties, morale shocks, routs, pursuit.
-3. **Production desktop renderer — current:** Rust + `wgpu` battlefield projection, camera, selection, order previews, GPU batching/instancing, and native Tauri window/surface/frame lifecycle are in place; next feed live tactical snapshots and view intents through that boundary.
-4. **GitHub Pages demo renderer:** Three.js projection of the same authoritative battle state/contracts for browser dogfood and public demos; no duplicate simulation truth.
-5. **Terrain:** height, forests, rivers, chokepoints, deployment zones.
-6. **Sieges:** walls, gates, towers, capture points, pathing constraints.
-7. **Campaign handoff:** campaign army composition seeds tactical battle; tactical outcome returns casualties and control changes.
+3. **Production desktop renderer — complete foundation:** Rust + `wgpu` battlefield projection, camera, selection, order previews, GPU batching/instancing, native Tauri window/surface/frame lifecycle, and session-backed snapshot refresh are in place.
+4. **Medieval RTS controls — current:** Rust-local camera, selection, control groups, order previews, and atomic move/engage/stop command semantics are in place. Next bind desktop keyboard/mouse input to these semantics without moving tactical legality out of `medieval-core`.
+5. **GitHub Pages demo renderer:** Three.js projection of the same authoritative battle state/contracts for browser dogfood and public demos; no duplicate simulation truth.
+6. **Terrain:** height, forests, rivers, chokepoints, deployment zones.
+7. **Sieges:** walls, gates, towers, capture points, pathing constraints.
+8. **Campaign handoff:** campaign army composition seeds tactical battle; tactical outcome returns casualties and control changes.
 
 ## Online Battle track
 
