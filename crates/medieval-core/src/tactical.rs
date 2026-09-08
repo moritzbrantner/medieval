@@ -327,7 +327,10 @@ impl TacticalBattle {
         for _ in 0..ticks {
             self.advance_movement_phase();
             self.tick = self.tick.saturating_add(1);
-            if self.tick % u64::from(TACTICAL_TICKS_PER_SECOND) == 0 {
+            if self
+                .tick
+                .is_multiple_of(u64::from(TACTICAL_TICKS_PER_SECOND))
+            {
                 self.resolve_combat_pulse();
             }
             self.clear_invalid_engagement_targets();
@@ -369,17 +372,16 @@ impl TacticalBattle {
             .as_deref()
             .and_then(|target_id| snapshot.iter().find(|target| target.id == target_id))
             .filter(|target| target.state != TacticalUnitState::Destroyed);
-        if let Some(target) = target {
-            if target.state == TacticalUnitState::Routed
-                && point_distance_squared(unit.position, target.position)
-                    > square_u32(PURSUIT_DISTANCE_MM)
-            {
-                self.units[index].engagement_target = None;
-                self.units[index].fatigue = self.units[index]
-                    .fatigue
-                    .saturating_sub(IDLE_FATIGUE_RECOVERY_PER_TICK);
-                return;
-            }
+        if let Some(target) = target
+            && target.state == TacticalUnitState::Routed
+            && point_distance_squared(unit.position, target.position)
+                > square_u32(PURSUIT_DISTANCE_MM)
+        {
+            self.units[index].engagement_target = None;
+            self.units[index].fatigue = self.units[index]
+                .fatigue
+                .saturating_sub(IDLE_FATIGUE_RECOVERY_PER_TICK);
+            return;
         }
 
         let destination = unit
