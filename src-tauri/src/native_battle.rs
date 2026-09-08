@@ -192,6 +192,24 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     let last_error = Arc::new(Mutex::new(None));
     let snapshot = sample_snapshot();
 
+    let main_window = app
+        .get_webview_window("main")
+        .expect("configured Medieval main window must exist during setup");
+    let shutdown_window = window.clone();
+    let shutdown_renderer = Arc::clone(&renderer);
+    let shutdown_running = Arc::clone(&running);
+    let shutdown_flag = Arc::clone(&shutdown);
+    main_window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Destroyed) {
+            shutdown_running.store(false, Ordering::Release);
+            shutdown_flag.store(true, Ordering::Release);
+            if let Ok(mut renderer) = shutdown_renderer.lock() {
+                *renderer = None;
+            }
+            let _ = shutdown_window.destroy();
+        }
+    });
+
     install_close_handler(&window, Arc::clone(&running));
     spawn_frame_scheduler(
         window.clone(),
