@@ -16,7 +16,7 @@ use tauri::{Manager, State, Window, WindowEvent};
 
 mod controls;
 
-use controls::{SelectionMode, TacticalControls};
+use controls::{SelectionMode, TacticalControlRequest, TacticalControls};
 
 const BATTLE_WINDOW_LABEL: &str = "tactical-battle";
 const FRAME_INTERVAL: Duration = Duration::from_millis(16);
@@ -275,6 +275,21 @@ pub async fn open_native_battle_renderer(
     Ok(())
 }
 
+#[tauri::command]
+pub fn control_native_battle(
+    state: State<'_, NativeBattleState>,
+    request: TacticalControlRequest,
+) -> Result<(), String> {
+    let mut session = state
+        .session
+        .lock()
+        .map_err(|_| "native tactical session lock was poisoned".to_owned())?;
+    let NativeBattleSession { battle, controls } = &mut *session;
+    controls
+        .apply_request(battle, request)
+        .map_err(|error| error.to_string())
+}
+
 fn ensure_renderer_initialized(state: &NativeBattleState) -> Result<(), String> {
     if state
         .renderer
@@ -438,13 +453,30 @@ fn sample_session() -> NativeBattleSession {
     .expect("native renderer sample battle is valid");
     let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
     controls
-        .select_units(&battle, ["attacker-spears"], SelectionMode::Replace)
+        .apply_request(
+            &mut battle.clone(),
+            TacticalControlRequest {
+                kind: "selectReplace".to_owned(),
+                unit_ids: Some(vec!["attacker-spears".to_owned()]),
+                ..TacticalControlRequest::default()
+            },
+        )
         .expect("sample attacker is controllable");
-    controls.set_order_preview(true);
+    controls
+        .apply_request(
+            &mut battle.clone(),
+            TacticalControlRequest {
+                kind: "setOrderPreview".to_owned(),
+                active: Some(true),
+                ..TacticalControlRequest::default()
+            },
+        )
+        .expect("sample order preview is valid");
 
     NativeBattleSession { battle, controls }
 }
 
+#[cfg(test)]
 fn sample_snapshot() -> BattleRenderSnapshot {
     sample_session().snapshot()
 }
@@ -471,10 +503,27 @@ mod tests {
         let battle_before = session.battle.clone();
         let before = session.snapshot();
 
-        session.controls.clear_selection();
         session
             .controls
-            .pan_camera(&session.battle, 5_000.0, 0.0)
+            .apply_request(
+                &mut session.battle,
+                TacticalControlRequest {
+                    kind: "clearSelection".to_owned(),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
+        session
+            .controls
+            .apply_request(
+                &mut session.battle,
+                TacticalControlRequest {
+                    kind: "panCamera".to_owned(),
+                    delta_x_mm: Some(5_000.0),
+                    delta_y_mm: Some(0.0),
+                    ..TacticalControlRequest::default()
+                },
+            )
             .unwrap();
         let after = session.snapshot();
 
