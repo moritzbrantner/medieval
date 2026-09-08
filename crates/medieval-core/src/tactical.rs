@@ -77,7 +77,11 @@ impl Formation {
             Self::Line { files } => files,
             Self::Column { files } => files.saturating_add(1) / 2,
         };
-        frontage.min(soldiers)
+        if frontage < soldiers {
+            frontage
+        } else {
+            soldiers
+        }
     }
 }
 
