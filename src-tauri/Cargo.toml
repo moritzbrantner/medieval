@@ -18,7 +18,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 medieval-core = { path = "../crates/medieval-core" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["unstable"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 medieval-renderer = { path = "../crates/medieval-renderer" }
+wgpu = "30.0.1"
