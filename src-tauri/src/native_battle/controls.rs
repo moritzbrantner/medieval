@@ -32,16 +32,23 @@ impl fmt::Display for TacticalControlError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidCameraDelta => write!(formatter, "camera pan must be finite"),
-            Self::InvalidZoomFactor => write!(formatter, "camera zoom factor must be finite and positive"),
+            Self::InvalidZoomFactor => {
+                write!(formatter, "camera zoom factor must be finite and positive")
+            }
             Self::InvalidControlGroup(group) => {
                 write!(formatter, "control group {group} must be between 0 and 9")
             }
             Self::UnknownUnit(unit_id) => write!(formatter, "unknown tactical unit {unit_id}"),
             Self::UncontrollableUnit(unit_id) => {
-                write!(formatter, "tactical unit {unit_id} is not controllable by this player")
+                write!(
+                    formatter,
+                    "tactical unit {unit_id} is not controllable by this player"
+                )
             }
             Self::NoUnitsSelected => write!(formatter, "no tactical units are selected"),
-            Self::RuleRejected(error) => write!(formatter, "tactical rules rejected the command: {error}"),
+            Self::RuleRejected(error) => {
+                write!(formatter, "tactical rules rejected the command: {error}")
+            }
         }
     }
 }
@@ -89,10 +96,10 @@ impl TacticalControls {
         }
 
         let battlefield = battle.battlefield();
-        self.camera.center_x_mm = (self.camera.center_x_mm + delta_x_mm)
-            .clamp(0.0, battlefield.width_mm as f32);
-        self.camera.center_y_mm = (self.camera.center_y_mm + delta_y_mm)
-            .clamp(0.0, battlefield.depth_mm as f32);
+        self.camera.center_x_mm =
+            (self.camera.center_x_mm + delta_x_mm).clamp(0.0, battlefield.width_mm as f32);
+        self.camera.center_y_mm =
+            (self.camera.center_y_mm + delta_y_mm).clamp(0.0, battlefield.depth_mm as f32);
         Ok(())
     }
 
@@ -313,9 +320,10 @@ impl TacticalControls {
     }
 
     fn is_controllable(battle: &TacticalBattle, player_side: BattleSide, unit_id: &str) -> bool {
-        battle.units().iter().any(|unit| {
-            unit.id() == unit_id && unit.side() == player_side && !unit.is_destroyed()
-        })
+        battle
+            .units()
+            .iter()
+            .any(|unit| unit.id() == unit_id && unit.side() == player_side && !unit.is_destroyed())
     }
 }
 
@@ -386,7 +394,9 @@ mod tests {
         let battle = sample_battle();
         let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
 
-        controls.pan_camera(&battle, 1_000_000.0, -1_000_000.0).unwrap();
+        controls
+            .pan_camera(&battle, 1_000_000.0, -1_000_000.0)
+            .unwrap();
         assert_eq!(controls.camera().center_x_mm, 100_000.0);
         assert_eq!(controls.camera().center_y_mm, 0.0);
 
