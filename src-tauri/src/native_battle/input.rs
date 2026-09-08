@@ -880,8 +880,8 @@ mod tests {
     #[test]
     fn viewport_coordinates_round_trip_to_fitted_battlefield_space() {
         let session = session();
-        let center = viewport_to_world(&session.battle, &session.controls, pointer(500.0, 500.0))
-            .unwrap();
+        let center =
+            viewport_to_world(&session.battle, &session.controls, pointer(500.0, 500.0)).unwrap();
         let top_left =
             viewport_to_world(&session.battle, &session.controls, pointer(0.0, 0.0)).unwrap();
 
