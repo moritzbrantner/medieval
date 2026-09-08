@@ -510,10 +510,7 @@ mod tests {
             let speed = unit(&battle, "attacker-spears").speed_mm_per_tick();
             battle.advance_ticks(1);
             let after = unit(&battle, "attacker-spears").position();
-            assert!(
-                point_distance_squared(before, after)
-                    <= u128::from(speed) * u128::from(speed)
-            );
+            assert!(point_distance_squared(before, after) <= u128::from(speed) * u128::from(speed));
             if unit(&battle, "attacker-spears").destination().is_none() {
                 break;
             }
@@ -550,9 +547,7 @@ mod tests {
         battle.advance_ticks(1);
         let after = unit(&battle, "scouts").position();
 
-        assert!(
-            point_distance_squared(before, after) <= u128::from(speed) * u128::from(speed)
-        );
+        assert!(point_distance_squared(before, after) <= u128::from(speed) * u128::from(speed));
     }
 
     #[test]
