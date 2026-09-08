@@ -233,9 +233,7 @@ impl TacticalControls {
                 self.clear_selection();
                 Ok(())
             }
-            TacticalControlIntent::AssignControlGroup { group } => {
-                self.assign_control_group(group)
-            }
+            TacticalControlIntent::AssignControlGroup { group } => self.assign_control_group(group),
             TacticalControlIntent::RecallControlGroup { group, additive } => {
                 self.recall_control_group(battle, group, additive)
             }
@@ -394,10 +392,7 @@ impl TacticalControls {
         Ok(())
     }
 
-    fn stop_selected(
-        &mut self,
-        battle: &mut TacticalBattle,
-    ) -> Result<(), TacticalControlError> {
+    fn stop_selected(&mut self, battle: &mut TacticalBattle) -> Result<(), TacticalControlError> {
         self.sync_with_battle(battle);
         self.ensure_selection()?;
 
@@ -554,7 +549,10 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(controls.selected_unit_ids().collect::<Vec<_>>(), vec!["attacker-a"]);
+        assert_eq!(
+            controls.selected_unit_ids().collect::<Vec<_>>(),
+            vec!["attacker-a"]
+        );
         assert_eq!(controls.camera().center_x_mm, 55_000.0);
     }
 
