@@ -77,7 +77,9 @@ impl NativeSurfaceRenderer {
             .map_err(|error| format!("could not create tactical wgpu device: {error}"))?;
         let config = surface
             .get_default_config(&adapter, width, height)
-            .ok_or_else(|| "selected adapter cannot present to the tactical battle window".to_owned())?;
+            .ok_or_else(|| {
+                "selected adapter cannot present to the tactical battle window".to_owned()
+            })?;
         surface.configure(&device, &config);
 
         let mut renderer = GpuBattleRenderer::new(&device, config.format);
@@ -258,10 +260,8 @@ fn initialize_renderer_on_main_thread(state: &NativeBattleState) -> Result<(), S
     state
         .window
         .run_on_main_thread(move || {
-            let result = tauri::async_runtime::block_on(NativeSurfaceRenderer::new(
-                window,
-                snapshot,
-            ));
+            let result =
+                tauri::async_runtime::block_on(NativeSurfaceRenderer::new(window, snapshot));
             match result {
                 Ok(surface_renderer) => {
                     if let Ok(mut guard) = renderer.lock() {
@@ -310,9 +310,7 @@ fn spawn_frame_scheduler(
         .name("medieval-tactical-frames".to_owned())
         .spawn(move || {
             while !shutdown.load(Ordering::Acquire) {
-                if running.load(Ordering::Acquire)
-                    && !frame_queued.swap(true, Ordering::AcqRel)
-                {
+                if running.load(Ordering::Acquire) && !frame_queued.swap(true, Ordering::AcqRel) {
                     let queued = Arc::clone(&frame_queued);
                     let renderer = Arc::clone(&renderer);
                     let running = Arc::clone(&running);
@@ -324,7 +322,8 @@ fn spawn_frame_scheduler(
                             .map_err(|_| "native renderer lock was poisoned".to_owned())
                             .and_then(|mut renderer| {
                                 let renderer = renderer.as_mut().ok_or_else(|| {
-                                    "native renderer disappeared while frames were active".to_owned()
+                                    "native renderer disappeared while frames were active"
+                                        .to_owned()
                                 })?;
                                 renderer.render_frame(&frame_window)
                             });
