@@ -462,7 +462,7 @@ impl TacticalControls {
                 .iter()
                 .find(|unit| unit.id() == unit_id)
                 .ok_or_else(|| TacticalControlError::UnknownUnit(unit_id.to_owned()))?;
-            if unit.side() != self.player_side || unit.is_destroyed() {
+            if unit.side() != self.player_side || unit.is_routed() || unit.is_destroyed() {
                 return Err(TacticalControlError::UncontrollableUnit(unit_id.to_owned()));
             }
             requested.insert(unit_id.to_owned());
@@ -487,17 +487,19 @@ impl TacticalControls {
     }
 
     fn is_controllable(battle: &TacticalBattle, player_side: BattleSide, unit_id: &str) -> bool {
-        battle
-            .units()
-            .iter()
-            .any(|unit| unit.id() == unit_id && unit.side() == player_side && !unit.is_destroyed())
+        battle.units().iter().any(|unit| {
+            unit.id() == unit_id
+                && unit.side() == player_side
+                && !unit.is_routed()
+                && !unit.is_destroyed()
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use medieval_core::{FlatBattlefield, Formation, TacticalUnit};
+    use medieval_core::{FlatBattlefield, Formation, TACTICAL_TICKS_PER_SECOND, TacticalUnit};
 
     fn unit(id: &str, side: BattleSide, x_mm: u32) -> TacticalUnit {
         TacticalUnit::new(
@@ -517,6 +519,39 @@ mod tests {
                 unit("attacker-a", BattleSide::Attacker, 20_000),
                 unit("attacker-b", BattleSide::Attacker, 30_000),
                 unit("defender", BattleSide::Defender, 70_000),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn routing_battle() -> TacticalBattle {
+        TacticalBattle::new(
+            FlatBattlefield::new(100_000, 100_000),
+            vec![
+                TacticalUnit::new(
+                    "attacker-formed",
+                    BattleSide::Attacker,
+                    80,
+                    BattlePoint::new(20_000, 20_000),
+                    Formation::Line { files: 20 },
+                    1_000,
+                ),
+                TacticalUnit::new(
+                    "attacker-routed",
+                    BattleSide::Attacker,
+                    80,
+                    BattlePoint::new(49_500, 50_000),
+                    Formation::Line { files: 1 },
+                    1_000,
+                ),
+                TacticalUnit::new(
+                    "defender-strong",
+                    BattleSide::Defender,
+                    80,
+                    BattlePoint::new(50_500, 50_000),
+                    Formation::Line { files: 80 },
+                    1_000,
+                ),
             ],
         )
         .unwrap()
@@ -866,6 +901,99 @@ mod tests {
                 )
                 .unwrap_err(),
             TacticalControlError::InvalidControlGroup(10)
+        );
+    }
+
+    #[test]
+    fn routed_units_are_pruned_from_groups_and_rejected_by_selection() {
+        let mut battle = routing_battle();
+        let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "selectReplace".to_owned(),
+                    unit_ids: Some(vec![
+                        "attacker-formed".to_owned(),
+                        "attacker-routed".to_owned(),
+                    ]),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "assignControlGroup".to_owned(),
+                    group: Some(1),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
+
+        battle
+            .issue_engagement_order("defender-strong", "attacker-routed")
+            .unwrap();
+        battle.advance_ticks(6 * TACTICAL_TICKS_PER_SECOND);
+        assert!(
+            battle
+                .units()
+                .iter()
+                .find(|unit| unit.id() == "attacker-routed")
+                .unwrap()
+                .is_routed()
+        );
+
+        controls.clear_selection();
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "recallControlGroup".to_owned(),
+                    group: Some(1),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            controls.selected_unit_ids().collect::<Vec<_>>(),
+            vec!["attacker-formed"]
+        );
+        assert_eq!(
+            controls
+                .apply_request(
+                    &mut battle,
+                    TacticalControlRequest {
+                        kind: "selectAdd".to_owned(),
+                        unit_ids: Some(vec!["attacker-routed".to_owned()]),
+                        ..TacticalControlRequest::default()
+                    },
+                )
+                .unwrap_err(),
+            TacticalControlError::UncontrollableUnit("attacker-routed".to_owned())
+        );
+
+        let destination = BattlePoint::new(40_000, 40_000);
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "moveSelected".to_owned(),
+                    x_mm: Some(destination.x_mm),
+                    y_mm: Some(destination.y_mm),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            battle
+                .units()
+                .iter()
+                .find(|unit| unit.id() == "attacker-formed")
+                .unwrap()
+                .destination(),
+            Some(destination)
         );
     }
 
