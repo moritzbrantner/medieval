@@ -1,0 +1,10 @@
+[package]
+name = "medieval-renderer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+medieval-core = { path = "../medieval-core" }
+wgpu = "30.0.1"

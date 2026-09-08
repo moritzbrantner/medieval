@@ -98,11 +98,11 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 A real Online Battle depends on this deterministic battle foundation. It does **not** need to wait for the full campaign handoff.
 
-The current slice is the battle simulation kernel only: a flat bounded field, fixed simulation ticks, unit/formation state, and explicit movement orders owned by `medieval-core`.
+The current slice is the first production renderer foundation: `medieval-renderer` projects immutable `medieval-core` tactical snapshots into renderer-owned camera/view metadata and a batched `wgpu` instance stream. Native Tauri surface/window/frame-loop integration follows as a separate renderer slice.
 
-1. **Battle simulation kernel — current:** flat test battlefield, fixed-step clock, units, formations, movement orders.
-2. **Morale and combat:** frontage, fatigue, casualties, morale shocks, routs, pursuit.
-3. **Production desktop renderer:** Rust + `wgpu` battlefield projection with camera, selection, order previews, GPU batching/instancing, and native frame scheduling.
+1. **Battle simulation kernel — complete:** flat test battlefield, fixed-step clock, units, formations, movement orders.
+2. **Morale and combat — complete:** frontage, fatigue, simultaneous casualties, morale shocks, routs, pursuit.
+3. **Production desktop renderer — current:** Rust + `wgpu` battlefield projection with camera, selection, order previews, GPU batching/instancing, then native frame scheduling.
 4. **GitHub Pages demo renderer:** Three.js projection of the same authoritative battle state/contracts for browser dogfood and public demos; no duplicate simulation truth.
 5. **Terrain:** height, forests, rivers, chokepoints, deployment zones.
 6. **Sieges:** walls, gates, towers, capture points, pathing constraints.

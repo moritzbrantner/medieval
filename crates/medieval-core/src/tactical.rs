@@ -208,11 +208,30 @@ impl TacticalUnit {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", from = "TacticalBattleWire")]
 pub struct TacticalBattle {
     tick: u64,
     battlefield: FlatBattlefield,
     units: Vec<TacticalUnit>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TacticalBattleWire {
+    tick: u64,
+    battlefield: FlatBattlefield,
+    units: Vec<TacticalUnit>,
+}
+
+impl From<TacticalBattleWire> for TacticalBattle {
+    fn from(mut wire: TacticalBattleWire) -> Self {
+        wire.units.sort_by(|left, right| left.id.cmp(&right.id));
+        Self {
+            tick: wire.tick,
+            battlefield: wire.battlefield,
+            units: wire.units,
+        }
+    }
 }
 
 impl TacticalBattle {
@@ -480,8 +499,28 @@ impl TacticalBattle {
             pairs.insert(pair);
         }
 
+        let formed_contacts = pairs
+            .iter()
+            .filter(|(left_id, right_id)| {
+                let left = snapshot.iter().find(|unit| unit.id == *left_id).unwrap();
+                let right = snapshot.iter().find(|unit| unit.id == *right_id).unwrap();
+                left.state == TacticalUnitState::Formed
+                    && right.state == TacticalUnitState::Formed
+                    && point_distance_squared(left.position, right.position)
+                        <= square_u32(COMBAT_CONTACT_DISTANCE_MM)
+            })
+            .fold(
+                BTreeMap::<String, u16>::new(),
+                |mut contacts, (left, right)| {
+                    *contacts.entry(left.clone()).or_default() += 1;
+                    *contacts.entry(right.clone()).or_default() += 1;
+                    contacts
+                },
+            );
+
         let mut casualties: BTreeMap<String, u32> = BTreeMap::new();
         let mut engaged_units = BTreeSet::new();
+        let mut contacts_assigned = BTreeMap::<String, u16>::new();
         for (left_id, right_id) in pairs {
             let left = snapshot.iter().find(|unit| unit.id == left_id).unwrap();
             let right = snapshot.iter().find(|unit| unit.id == right_id).unwrap();
@@ -491,8 +530,18 @@ impl TacticalBattle {
                 (TacticalUnitState::Formed, TacticalUnitState::Formed)
                     if distance_squared <= square_u32(COMBAT_CONTACT_DISTANCE_MM) =>
                 {
-                    let left_losses = melee_casualties(right, left);
-                    let right_losses = melee_casualties(left, right);
+                    let left_frontage = allocated_frontage(
+                        left,
+                        formed_contacts[&left.id],
+                        contacts_assigned.entry(left.id.clone()).or_default(),
+                    );
+                    let right_frontage = allocated_frontage(
+                        right,
+                        formed_contacts[&right.id],
+                        contacts_assigned.entry(right.id.clone()).or_default(),
+                    );
+                    let left_losses = melee_casualties(right, left, right_frontage);
+                    let right_losses = melee_casualties(left, right, left_frontage);
                     *casualties.entry(left.id.clone()).or_default() += u32::from(left_losses);
                     *casualties.entry(right.id.clone()).or_default() += u32::from(right_losses);
                     engaged_units.insert(left.id.clone());
@@ -664,11 +713,22 @@ impl fmt::Display for TacticalError {
 
 impl std::error::Error for TacticalError {}
 
-fn melee_casualties(attacker: &TacticalUnit, defender: &TacticalUnit) -> u16 {
-    if attacker.state != TacticalUnitState::Formed || defender.soldiers == 0 {
+fn allocated_frontage(attacker: &TacticalUnit, contacts: u16, assigned: &mut u16) -> u16 {
+    let frontage = attacker.frontage_slots();
+    let allocation = if contacts == 0 || *assigned >= contacts {
+        0
+    } else {
+        frontage / contacts + u16::from(*assigned < frontage % contacts)
+    };
+    *assigned = assigned.saturating_add(1);
+    allocation
+}
+
+fn melee_casualties(attacker: &TacticalUnit, defender: &TacticalUnit, frontage: u16) -> u16 {
+    if attacker.state != TacticalUnitState::Formed || defender.soldiers == 0 || frontage == 0 {
         return 0;
     }
-    let frontage = u32::from(attacker.frontage_slots());
+    let frontage = u32::from(frontage);
     let fatigue_factor = 1_000_u32.saturating_sub(u32::from(attacker.fatigue) / 2);
     let morale_factor = 750_u32.saturating_add(u32::from(attacker.morale) / 4);
     let effective_frontage = frontage
@@ -945,6 +1005,24 @@ mod tests {
     }
 
     #[test]
+    fn deserialization_restores_canonical_order_for_unit_lookup() {
+        let battle = sample_battle();
+        let mut encoded = serde_json::to_value(&battle).unwrap();
+        encoded["units"].as_array_mut().unwrap().reverse();
+
+        let mut decoded: TacticalBattle = serde_json::from_value(encoded).unwrap();
+        decoded
+            .issue_engagement_order("attacker-spears", "defender-spears")
+            .unwrap();
+
+        assert_eq!(decoded.units()[0].id(), "attacker-spears");
+        assert_eq!(
+            unit(&decoded, "attacker-spears").engagement_target(),
+            Some("defender-spears")
+        );
+    }
+
+    #[test]
     fn movement_never_exceeds_speed_and_arrives_exactly() {
         let mut battle = sample_battle();
         let destination = BattlePoint::new(90_000, 150_000);
@@ -1038,6 +1116,49 @@ mod tests {
         line.advance_ticks(TACTICAL_TICKS_PER_SECOND);
         column.advance_ticks(TACTICAL_TICKS_PER_SECOND);
         assert!(unit(&line, "defender").soldiers() < unit(&column, "defender").soldiers());
+    }
+
+    #[test]
+    fn simultaneous_opponents_share_one_frontage_budget() {
+        let attacker = sample_unit(
+            "attacker",
+            BattleSide::Attacker,
+            BattlePoint::new(25_000, 25_000),
+            Formation::Line { files: 40 },
+        );
+        let first_defender = sample_unit(
+            "defender-a",
+            BattleSide::Defender,
+            BattlePoint::new(24_000, 25_000),
+            Formation::Line { files: 20 },
+        );
+        let second_defender = sample_unit(
+            "defender-b",
+            BattleSide::Defender,
+            BattlePoint::new(26_000, 25_000),
+            Formation::Line { files: 20 },
+        );
+        let battlefield = FlatBattlefield::new(50_000, 50_000);
+        let mut single =
+            TacticalBattle::new(battlefield, vec![attacker.clone(), first_defender.clone()])
+                .unwrap();
+        let mut surrounded =
+            TacticalBattle::new(battlefield, vec![attacker, first_defender, second_defender])
+                .unwrap();
+        engage(&mut single, "attacker", "defender-a");
+        engage(&mut surrounded, "attacker", "defender-a");
+        engage(&mut surrounded, "defender-b", "attacker");
+
+        single.advance_ticks(TACTICAL_TICKS_PER_SECOND);
+        surrounded.advance_ticks(TACTICAL_TICKS_PER_SECOND);
+
+        let single_losses = 80 - unit(&single, "defender-a").soldiers();
+        let combined_losses = 160
+            - unit(&surrounded, "defender-a").soldiers()
+            - unit(&surrounded, "defender-b").soldiers();
+        assert!(combined_losses <= single_losses);
+        assert!(unit(&surrounded, "defender-a").soldiers() < 80);
+        assert!(unit(&surrounded, "defender-b").soldiers() < 80);
     }
 
     #[test]

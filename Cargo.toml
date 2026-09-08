@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/medieval-core", "src-tauri"]
+members = ["crates/medieval-core", "crates/medieval-renderer", "src-tauri"]
 resolver = "2"
 
 [workspace.package]
