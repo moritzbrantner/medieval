@@ -1,8 +1,23 @@
-use std::{collections::HashSet, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashSet},
+    fmt,
+};
 
 use serde::{Deserialize, Serialize};
 
 pub const TACTICAL_TICKS_PER_SECOND: u32 = 20;
+pub const MAX_TACTICAL_FATIGUE: u16 = 1_000;
+pub const MAX_TACTICAL_MORALE: u16 = 1_000;
+pub const ROUT_MORALE_THRESHOLD: u16 = 250;
+pub const COMBAT_CONTACT_DISTANCE_MM: u32 = 1_500;
+pub const PURSUIT_DISTANCE_MM: u32 = 6_000;
+
+const MOVEMENT_FATIGUE_PER_TICK: u16 = 1;
+const ROUT_FATIGUE_PER_TICK: u16 = 2;
+const IDLE_FATIGUE_RECOVERY_PER_TICK: u16 = 1;
+const COMBAT_FATIGUE_PER_PULSE: u16 = 30;
+const PURSUIT_CASUALTY_DIVISOR: u32 = 4;
+const MELEE_CASUALTY_DIVISOR: u32 = 8;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +71,22 @@ impl Formation {
             Self::Line { files } | Self::Column { files } => files,
         }
     }
+
+    const fn frontage_slots(self, soldiers: u16) -> u16 {
+        let frontage = match self {
+            Self::Line { files } => files,
+            Self::Column { files } => files.saturating_add(1) / 2,
+        };
+        frontage.min(soldiers)
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum TacticalUnitState {
+    Formed,
+    Routed,
+    Destroyed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +106,10 @@ pub struct TacticalUnit {
     formation: Formation,
     speed_mm_per_tick: u32,
     destination: Option<BattlePoint>,
+    engagement_target: Option<String>,
+    fatigue: u16,
+    morale: u16,
+    state: TacticalUnitState,
 }
 
 impl TacticalUnit {
@@ -95,6 +130,10 @@ impl TacticalUnit {
             formation,
             speed_mm_per_tick,
             destination: None,
+            engagement_target: None,
+            fatigue: 0,
+            morale: MAX_TACTICAL_MORALE,
+            state: TacticalUnitState::Formed,
         }
     }
 
@@ -124,6 +163,11 @@ impl TacticalUnit {
     }
 
     #[must_use]
+    pub const fn frontage_slots(&self) -> u16 {
+        self.formation.frontage_slots(self.soldiers)
+    }
+
+    #[must_use]
     pub const fn speed_mm_per_tick(&self) -> u32 {
         self.speed_mm_per_tick
     }
@@ -131,6 +175,31 @@ impl TacticalUnit {
     #[must_use]
     pub const fn destination(&self) -> Option<BattlePoint> {
         self.destination
+    }
+
+    #[must_use]
+    pub fn engagement_target(&self) -> Option<&str> {
+        self.engagement_target.as_deref()
+    }
+
+    #[must_use]
+    pub const fn fatigue(&self) -> u16 {
+        self.fatigue
+    }
+
+    #[must_use]
+    pub const fn morale(&self) -> u16 {
+        self.morale
+    }
+
+    #[must_use]
+    pub const fn is_routed(&self) -> bool {
+        matches!(self.state, TacticalUnitState::Routed)
+    }
+
+    #[must_use]
+    pub const fn is_destroyed(&self) -> bool {
+        matches!(self.state, TacticalUnitState::Destroyed)
     }
 }
 
@@ -145,7 +214,7 @@ pub struct TacticalBattle {
 impl TacticalBattle {
     pub fn new(
         battlefield: FlatBattlefield,
-        units: Vec<TacticalUnit>,
+        mut units: Vec<TacticalUnit>,
     ) -> Result<Self, TacticalError> {
         if battlefield.width_mm == 0 || battlefield.depth_mm == 0 {
             return Err(TacticalError::InvalidBattlefield {
@@ -162,6 +231,9 @@ impl TacticalBattle {
             if !unit_ids.insert(unit.id.clone()) {
                 return Err(TacticalError::DuplicateUnitId(unit.id.clone()));
             }
+            if unit.soldiers == 0 {
+                return Err(TacticalError::ZeroSoldiers(unit.id.clone()));
+            }
             if unit.formation.files() == 0 {
                 return Err(TacticalError::InvalidFormation(unit.id.clone()));
             }
@@ -176,6 +248,7 @@ impl TacticalBattle {
             }
         }
 
+        units.sort_by(|left, right| left.id.cmp(&right.id));
         Ok(Self {
             tick: 0,
             battlefield,
@@ -200,10 +273,9 @@ impl TacticalBattle {
 
     pub fn issue_move_order(&mut self, order: MovementOrder) -> Result<(), TacticalError> {
         let unit_index = self
-            .units
-            .iter()
-            .position(|unit| unit.id == order.unit_id)
+            .unit_index(&order.unit_id)
             .ok_or_else(|| TacticalError::UnitNotFound(order.unit_id.clone()))?;
+        self.ensure_can_receive_orders(unit_index)?;
 
         if !self.battlefield.contains(order.destination) {
             return Err(TacticalError::DestinationOutOfBounds {
@@ -213,16 +285,289 @@ impl TacticalBattle {
         }
 
         let unit = &mut self.units[unit_index];
+        unit.engagement_target = None;
         unit.destination = (unit.position != order.destination).then_some(order.destination);
+        Ok(())
+    }
+
+    pub fn issue_engagement_order(
+        &mut self,
+        unit_id: &str,
+        target_unit_id: &str,
+    ) -> Result<(), TacticalError> {
+        let unit_index = self
+            .unit_index(unit_id)
+            .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
+        self.ensure_can_receive_orders(unit_index)?;
+
+        let target_index = self
+            .unit_index(target_unit_id)
+            .ok_or_else(|| TacticalError::UnitNotFound(target_unit_id.to_owned()))?;
+        if self.units[unit_index].side == self.units[target_index].side {
+            return Err(TacticalError::FriendlyEngagement {
+                unit_id: unit_id.to_owned(),
+                target_unit_id: target_unit_id.to_owned(),
+            });
+        }
+        if self.units[target_index].state == TacticalUnitState::Destroyed {
+            return Err(TacticalError::TargetDestroyed(target_unit_id.to_owned()));
+        }
+
+        let unit = &mut self.units[unit_index];
+        unit.destination = None;
+        unit.engagement_target = Some(target_unit_id.to_owned());
         Ok(())
     }
 
     pub fn advance_ticks(&mut self, ticks: u32) {
         for _ in 0..ticks {
-            for unit in &mut self.units {
-                advance_unit(unit);
-            }
+            self.advance_movement_phase();
             self.tick = self.tick.saturating_add(1);
+            if self.tick % u64::from(TACTICAL_TICKS_PER_SECOND) == 0 {
+                self.resolve_combat_pulse();
+            }
+            self.clear_invalid_engagement_targets();
+        }
+    }
+
+    fn unit_index(&self, unit_id: &str) -> Option<usize> {
+        self.units
+            .binary_search_by(|unit| unit.id.as_str().cmp(unit_id))
+            .ok()
+    }
+
+    fn ensure_can_receive_orders(&self, unit_index: usize) -> Result<(), TacticalError> {
+        let unit = &self.units[unit_index];
+        if unit.state == TacticalUnitState::Formed {
+            Ok(())
+        } else {
+            Err(TacticalError::UnitCannotReceiveOrders {
+                unit_id: unit.id.clone(),
+            })
+        }
+    }
+
+    fn advance_movement_phase(&mut self) {
+        let snapshot = self.units.clone();
+        for index in 0..self.units.len() {
+            match snapshot[index].state {
+                TacticalUnitState::Formed => self.advance_formed_unit(index, &snapshot),
+                TacticalUnitState::Routed => self.advance_routed_unit(index, &snapshot),
+                TacticalUnitState::Destroyed => {}
+            }
+        }
+    }
+
+    fn advance_formed_unit(&mut self, index: usize, snapshot: &[TacticalUnit]) {
+        let unit = &snapshot[index];
+        let target = unit
+            .engagement_target
+            .as_deref()
+            .and_then(|target_id| snapshot.iter().find(|target| target.id == target_id))
+            .filter(|target| target.state != TacticalUnitState::Destroyed);
+        if let Some(target) = target {
+            if target.state == TacticalUnitState::Routed
+                && point_distance_squared(unit.position, target.position)
+                    > square_u32(PURSUIT_DISTANCE_MM)
+            {
+                self.units[index].engagement_target = None;
+                self.units[index].fatigue = self.units[index]
+                    .fatigue
+                    .saturating_sub(IDLE_FATIGUE_RECOVERY_PER_TICK);
+                return;
+            }
+        }
+
+        let destination = unit
+            .destination
+            .or_else(|| target.map(|target| target.position));
+        let Some(destination) = destination else {
+            self.units[index].fatigue = self.units[index]
+                .fatigue
+                .saturating_sub(IDLE_FATIGUE_RECOVERY_PER_TICK);
+            return;
+        };
+
+        if unit.engagement_target.is_some()
+            && point_distance_squared(unit.position, destination)
+                <= square_u32(COMBAT_CONTACT_DISTANCE_MM)
+        {
+            self.units[index].fatigue = self.units[index]
+                .fatigue
+                .saturating_sub(IDLE_FATIGUE_RECOVERY_PER_TICK);
+            return;
+        }
+
+        let movement_speed = if target.is_some_and(|target| target.state == TacticalUnitState::Routed)
+        {
+            unit.speed_mm_per_tick.saturating_mul(2)
+        } else {
+            unit.speed_mm_per_tick
+        };
+        let next = move_point_toward(unit.position, destination, movement_speed);
+        self.units[index].position = next;
+        if self.units[index].destination == Some(destination) && next == destination {
+            self.units[index].destination = None;
+        }
+        if next != unit.position {
+            self.units[index].fatigue = self.units[index]
+                .fatigue
+                .saturating_add(MOVEMENT_FATIGUE_PER_TICK)
+                .min(MAX_TACTICAL_FATIGUE);
+        }
+    }
+
+    fn advance_routed_unit(&mut self, index: usize, snapshot: &[TacticalUnit]) {
+        let unit = &snapshot[index];
+        let nearest_enemy = snapshot
+            .iter()
+            .filter(|candidate| {
+                candidate.side != unit.side && candidate.state == TacticalUnitState::Formed
+            })
+            .min_by(|left, right| {
+                point_distance_squared(unit.position, left.position)
+                    .cmp(&point_distance_squared(unit.position, right.position))
+                    .then_with(|| left.id.cmp(&right.id))
+            });
+
+        let Some(enemy) = nearest_enemy else {
+            return;
+        };
+        let route_speed = unit.speed_mm_per_tick.saturating_mul(2);
+        let next = move_point_away(
+            unit.position,
+            enemy.position,
+            route_speed,
+            self.battlefield,
+            unit.side,
+        );
+        self.units[index].position = next;
+        if next != unit.position {
+            self.units[index].fatigue = self.units[index]
+                .fatigue
+                .saturating_add(ROUT_FATIGUE_PER_TICK)
+                .min(MAX_TACTICAL_FATIGUE);
+        }
+    }
+
+    fn resolve_combat_pulse(&mut self) {
+        let snapshot = self.units.clone();
+        let mut pairs = BTreeSet::new();
+        for unit in &snapshot {
+            if unit.state != TacticalUnitState::Formed {
+                continue;
+            }
+            let Some(target_id) = unit.engagement_target.as_deref() else {
+                continue;
+            };
+            let Some(target) = snapshot.iter().find(|target| target.id == target_id) else {
+                continue;
+            };
+            if target.state == TacticalUnitState::Destroyed || target.side == unit.side {
+                continue;
+            }
+            let pair = if unit.id < target.id {
+                (unit.id.clone(), target.id.clone())
+            } else {
+                (target.id.clone(), unit.id.clone())
+            };
+            pairs.insert(pair);
+        }
+
+        let mut casualties: BTreeMap<String, u32> = BTreeMap::new();
+        let mut engaged_units = BTreeSet::new();
+        for (left_id, right_id) in pairs {
+            let left = snapshot.iter().find(|unit| unit.id == left_id).unwrap();
+            let right = snapshot.iter().find(|unit| unit.id == right_id).unwrap();
+            let distance_squared = point_distance_squared(left.position, right.position);
+
+            match (left.state, right.state) {
+                (TacticalUnitState::Formed, TacticalUnitState::Formed)
+                    if distance_squared <= square_u32(COMBAT_CONTACT_DISTANCE_MM) =>
+                {
+                    let left_losses = melee_casualties(right, left);
+                    let right_losses = melee_casualties(left, right);
+                    *casualties.entry(left.id.clone()).or_default() += u32::from(left_losses);
+                    *casualties.entry(right.id.clone()).or_default() += u32::from(right_losses);
+                    engaged_units.insert(left.id.clone());
+                    engaged_units.insert(right.id.clone());
+                }
+                (TacticalUnitState::Formed, TacticalUnitState::Routed)
+                    if left.engagement_target.as_deref() == Some(right.id.as_str())
+                        && distance_squared <= square_u32(PURSUIT_DISTANCE_MM) =>
+                {
+                    *casualties.entry(right.id.clone()).or_default() +=
+                        u32::from(pursuit_casualties(left));
+                    engaged_units.insert(left.id.clone());
+                }
+                (TacticalUnitState::Routed, TacticalUnitState::Formed)
+                    if right.engagement_target.as_deref() == Some(left.id.as_str())
+                        && distance_squared <= square_u32(PURSUIT_DISTANCE_MM) =>
+                {
+                    *casualties.entry(left.id.clone()).or_default() +=
+                        u32::from(pursuit_casualties(right));
+                    engaged_units.insert(right.id.clone());
+                }
+                _ => {}
+            }
+        }
+
+        for unit_id in engaged_units {
+            if let Some(index) = self.unit_index(&unit_id) {
+                self.units[index].fatigue = self.units[index]
+                    .fatigue
+                    .saturating_add(COMBAT_FATIGUE_PER_PULSE)
+                    .min(MAX_TACTICAL_FATIGUE);
+            }
+        }
+
+        for (unit_id, requested_losses) in casualties {
+            let Some(index) = self.unit_index(&unit_id) else {
+                continue;
+            };
+            let before = self.units[index].soldiers;
+            if before == 0 || self.units[index].state == TacticalUnitState::Destroyed {
+                continue;
+            }
+            let applied = u16::try_from(requested_losses.min(u32::from(before))).unwrap();
+            self.units[index].soldiers -= applied;
+            if self.units[index].soldiers == 0 {
+                self.units[index].morale = 0;
+                self.units[index].state = TacticalUnitState::Destroyed;
+                self.units[index].destination = None;
+                self.units[index].engagement_target = None;
+                continue;
+            }
+
+            if self.units[index].state == TacticalUnitState::Formed {
+                let shock = casualty_morale_shock(before, applied);
+                self.units[index].morale = self.units[index].morale.saturating_sub(shock);
+                if self.units[index].morale <= ROUT_MORALE_THRESHOLD {
+                    self.units[index].state = TacticalUnitState::Routed;
+                    self.units[index].destination = None;
+                    self.units[index].engagement_target = None;
+                }
+            }
+        }
+    }
+
+    fn clear_invalid_engagement_targets(&mut self) {
+        let states: BTreeMap<String, TacticalUnitState> = self
+            .units
+            .iter()
+            .map(|unit| (unit.id.clone(), unit.state))
+            .collect();
+        for unit in &mut self.units {
+            if unit.state != TacticalUnitState::Formed {
+                unit.engagement_target = None;
+                continue;
+            }
+            let Some(target_id) = unit.engagement_target.as_deref() else {
+                continue;
+            };
+            if states.get(target_id) == Some(&TacticalUnitState::Destroyed) {
+                unit.engagement_target = None;
+            }
         }
     }
 }
@@ -235,6 +580,7 @@ pub enum TacticalError {
     },
     EmptyUnitId,
     DuplicateUnitId(String),
+    ZeroSoldiers(String),
     InvalidFormation(String),
     ZeroMovementSpeed(String),
     UnitOutOfBounds {
@@ -242,10 +588,18 @@ pub enum TacticalError {
         position: BattlePoint,
     },
     UnitNotFound(String),
+    UnitCannotReceiveOrders {
+        unit_id: String,
+    },
     DestinationOutOfBounds {
         unit_id: String,
         destination: BattlePoint,
     },
+    FriendlyEngagement {
+        unit_id: String,
+        target_unit_id: String,
+    },
+    TargetDestroyed(String),
 }
 
 impl fmt::Display for TacticalError {
@@ -259,15 +613,16 @@ impl fmt::Display for TacticalError {
             Self::DuplicateUnitId(unit_id) => {
                 write!(formatter, "tactical unit ID {unit_id} is duplicated")
             }
+            Self::ZeroSoldiers(unit_id) => {
+                write!(formatter, "tactical unit {unit_id} must contain soldiers")
+            }
             Self::InvalidFormation(unit_id) => {
                 write!(formatter, "tactical unit {unit_id} has an empty formation")
             }
-            Self::ZeroMovementSpeed(unit_id) => {
-                write!(
-                    formatter,
-                    "tactical unit {unit_id} must have a positive movement speed"
-                )
-            }
+            Self::ZeroMovementSpeed(unit_id) => write!(
+                formatter,
+                "tactical unit {unit_id} must have a positive movement speed"
+            ),
             Self::UnitOutOfBounds { unit_id, position } => write!(
                 formatter,
                 "tactical unit {unit_id} starts outside the battlefield at ({}, {}) mm",
@@ -275,6 +630,9 @@ impl fmt::Display for TacticalError {
             ),
             Self::UnitNotFound(unit_id) => {
                 write!(formatter, "tactical unit {unit_id} does not exist")
+            }
+            Self::UnitCannotReceiveOrders { unit_id } => {
+                write!(formatter, "tactical unit {unit_id} cannot receive orders")
             }
             Self::DestinationOutOfBounds {
                 unit_id,
@@ -284,36 +642,99 @@ impl fmt::Display for TacticalError {
                 "movement order for {unit_id} leaves the battlefield at ({}, {}) mm",
                 destination.x_mm, destination.y_mm
             ),
+            Self::FriendlyEngagement {
+                unit_id,
+                target_unit_id,
+            } => write!(
+                formatter,
+                "tactical unit {unit_id} cannot engage friendly unit {target_unit_id}"
+            ),
+            Self::TargetDestroyed(unit_id) => {
+                write!(formatter, "tactical unit {unit_id} is already destroyed")
+            }
         }
     }
 }
 
 impl std::error::Error for TacticalError {}
 
-fn advance_unit(unit: &mut TacticalUnit) {
-    let Some(destination) = unit.destination else {
-        return;
-    };
-
-    if unit.position == destination {
-        unit.destination = None;
-        return;
+fn melee_casualties(attacker: &TacticalUnit, defender: &TacticalUnit) -> u16 {
+    if attacker.state != TacticalUnitState::Formed || defender.soldiers == 0 {
+        return 0;
     }
+    let frontage = u32::from(attacker.frontage_slots());
+    let fatigue_factor = 1_000_u32.saturating_sub(u32::from(attacker.fatigue) / 2);
+    let morale_factor = 750_u32.saturating_add(u32::from(attacker.morale) / 4);
+    let effective_frontage = frontage
+        .saturating_mul(fatigue_factor)
+        .saturating_mul(morale_factor)
+        / 1_000_000;
+    let losses = (effective_frontage / MELEE_CASUALTY_DIVISOR).max(1);
+    u16::try_from(losses.min(u32::from(defender.soldiers))).unwrap()
+}
 
-    let dx = i64::from(destination.x_mm) - i64::from(unit.position.x_mm);
-    let dy = i64::from(destination.y_mm) - i64::from(unit.position.y_mm);
+fn pursuit_casualties(pursuer: &TacticalUnit) -> u16 {
+    let frontage = u32::from(pursuer.frontage_slots());
+    let fatigue_factor = 1_000_u32.saturating_sub(u32::from(pursuer.fatigue) / 2);
+    let effective_frontage = frontage.saturating_mul(fatigue_factor) / 1_000;
+    u16::try_from((effective_frontage / PURSUIT_CASUALTY_DIVISOR).max(1)).unwrap()
+}
+
+fn casualty_morale_shock(before: u16, casualties: u16) -> u16 {
+    if before == 0 || casualties == 0 {
+        return 0;
+    }
+    let casualty_ratio_milli = u32::from(casualties) * 1_000 / u32::from(before);
+    let shock = u32::from(casualties) * 8 + casualty_ratio_milli / 2;
+    u16::try_from(shock.min(u32::from(MAX_TACTICAL_MORALE))).unwrap()
+}
+
+fn move_point_toward(current: BattlePoint, destination: BattlePoint, speed_mm: u32) -> BattlePoint {
+    if current == destination {
+        return destination;
+    }
+    let dx = i64::from(destination.x_mm) - i64::from(current.x_mm);
+    let dy = i64::from(destination.y_mm) - i64::from(current.y_mm);
     let distance_squared = squared_components(dx, dy);
-    let speed = u128::from(unit.speed_mm_per_tick);
-
+    let speed = u128::from(speed_mm);
     if distance_squared <= speed * speed {
-        unit.position = destination;
-        unit.destination = None;
-        return;
+        return destination;
     }
 
-    let distance = integer_sqrt_ceil(distance_squared);
+    let (step_x, step_y) = step_vector(dx, dy, speed_mm);
+    BattlePoint::new(
+        u32::try_from(i64::from(current.x_mm) + step_x)
+            .expect("movement x remains between current position and target"),
+        u32::try_from(i64::from(current.y_mm) + step_y)
+            .expect("movement y remains between current position and target"),
+    )
+}
+
+fn move_point_away(
+    current: BattlePoint,
+    enemy: BattlePoint,
+    speed_mm: u32,
+    battlefield: FlatBattlefield,
+    side: BattleSide,
+) -> BattlePoint {
+    let mut dx = i64::from(current.x_mm) - i64::from(enemy.x_mm);
+    let dy = i64::from(current.y_mm) - i64::from(enemy.y_mm);
+    if dx == 0 && dy == 0 {
+        dx = match side {
+            BattleSide::Attacker => -1,
+            BattleSide::Defender => 1,
+        };
+    }
+    let (step_x, step_y) = step_vector(dx, dy, speed_mm);
+    let x = (i64::from(current.x_mm) + step_x).clamp(0, i64::from(battlefield.width_mm));
+    let y = (i64::from(current.y_mm) + step_y).clamp(0, i64::from(battlefield.depth_mm));
+    BattlePoint::new(u32::try_from(x).unwrap(), u32::try_from(y).unwrap())
+}
+
+fn step_vector(dx: i64, dy: i64, speed_mm: u32) -> (i64, i64) {
+    let distance = integer_sqrt_ceil(squared_components(dx, dy));
     let divisor = i128::try_from(distance).expect("movement distance must fit in i128");
-    let speed = i128::from(unit.speed_mm_per_tick);
+    let speed = i128::from(speed_mm);
     let mut step_x =
         i64::try_from(i128::from(dx) * speed / divisor).expect("movement x step must fit in i64");
     let mut step_y =
@@ -326,13 +747,19 @@ fn advance_unit(unit: &mut TacticalUnit) {
             step_y = dy.signum();
         }
     }
+    (step_x, step_y)
+}
 
-    let next_x = i64::from(unit.position.x_mm) + step_x;
-    let next_y = i64::from(unit.position.y_mm) + step_y;
-    unit.position = BattlePoint::new(
-        u32::try_from(next_x).expect("movement x remains between current position and target"),
-        u32::try_from(next_y).expect("movement y remains between current position and target"),
-    );
+fn point_distance_squared(left: BattlePoint, right: BattlePoint) -> u128 {
+    squared_components(
+        i64::from(right.x_mm) - i64::from(left.x_mm),
+        i64::from(right.y_mm) - i64::from(left.y_mm),
+    )
+}
+
+const fn square_u32(value: u32) -> u128 {
+    let value = value as u128;
+    value * value
 }
 
 fn squared_components(dx: i64, dy: i64) -> u128 {
@@ -349,7 +776,6 @@ fn integer_sqrt_ceil(value: u128) -> u128 {
     let mut low = 1_u128;
     let mut high = value;
     let mut floor = 1_u128;
-
     while low <= high {
         let mid = low + (high - low) / 2;
         if mid <= value / mid {
@@ -401,15 +827,40 @@ mod tests {
         .unwrap()
     }
 
-    fn unit<'a>(battle: &'a TacticalBattle, id: &str) -> &'a TacticalUnit {
-        battle.units().iter().find(|unit| unit.id() == id).unwrap()
+    fn contact_battle(
+        attacker_formation: Formation,
+        defender_formation: Formation,
+    ) -> TacticalBattle {
+        TacticalBattle::new(
+            FlatBattlefield::new(50_000, 50_000),
+            vec![
+                sample_unit(
+                    "attacker",
+                    BattleSide::Attacker,
+                    BattlePoint::new(24_500, 25_000),
+                    attacker_formation,
+                ),
+                sample_unit(
+                    "defender",
+                    BattleSide::Defender,
+                    BattlePoint::new(25_500, 25_000),
+                    defender_formation,
+                ),
+            ],
+        )
+        .unwrap()
     }
 
-    fn point_distance_squared(left: BattlePoint, right: BattlePoint) -> u128 {
-        squared_components(
-            i64::from(right.x_mm) - i64::from(left.x_mm),
-            i64::from(right.y_mm) - i64::from(left.y_mm),
-        )
+    fn unit<'a>(battle: &'a TacticalBattle, id: &str) -> &'a TacticalUnit {
+        battle
+            .units()
+            .iter()
+            .find(|unit| unit.id() == id)
+            .unwrap()
+    }
+
+    fn engage(battle: &mut TacticalBattle, attacker: &str, defender: &str) {
+        battle.issue_engagement_order(attacker, defender).unwrap();
     }
 
     #[test]
@@ -452,7 +903,6 @@ mod tests {
     fn rejected_orders_do_not_mutate_authoritative_state() {
         let mut battle = sample_battle();
         let before = battle.clone();
-
         assert!(matches!(
             battle.issue_move_order(MovementOrder {
                 unit_id: "missing".into(),
@@ -480,12 +930,10 @@ mod tests {
             unit_id: "attacker-spears".into(),
             destination: BattlePoint::new(120_000, 140_000),
         };
-
         first.issue_move_order(order.clone()).unwrap();
         second.issue_move_order(order).unwrap();
         first.advance_ticks(TACTICAL_TICKS_PER_SECOND * 7);
         second.advance_ticks(TACTICAL_TICKS_PER_SECOND * 7);
-
         assert_eq!(first.tick(), 140);
         assert_eq!(first, second);
 
@@ -510,15 +958,12 @@ mod tests {
             let speed = unit(&battle, "attacker-spears").speed_mm_per_tick();
             battle.advance_ticks(1);
             let after = unit(&battle, "attacker-spears").position();
-            assert!(point_distance_squared(before, after) <= u128::from(speed) * u128::from(speed));
+            assert!(point_distance_squared(before, after) <= square_u32(speed));
             if unit(&battle, "attacker-spears").destination().is_none() {
                 break;
             }
         }
-
-        let attacker = unit(&battle, "attacker-spears");
-        assert_eq!(attacker.position(), destination);
-        assert_eq!(attacker.destination(), None);
+        assert_eq!(unit(&battle, "attacker-spears").position(), destination);
     }
 
     #[test]
@@ -542,12 +987,155 @@ mod tests {
                 destination: BattlePoint::new(u32::MAX, u32::MAX),
             })
             .unwrap();
-
         let before = unit(&battle, "scouts").position();
         battle.advance_ticks(1);
         let after = unit(&battle, "scouts").position();
+        assert!(point_distance_squared(before, after) <= square_u32(speed));
+    }
 
-        assert!(point_distance_squared(before, after) <= u128::from(speed) * u128::from(speed));
+    #[test]
+    fn storage_order_is_normalized_and_combat_is_order_independent() {
+        let attacker = sample_unit(
+            "attacker",
+            BattleSide::Attacker,
+            BattlePoint::new(10_000, 10_000),
+            Formation::Line { files: 20 },
+        );
+        let defender = sample_unit(
+            "defender",
+            BattleSide::Defender,
+            BattlePoint::new(11_000, 10_000),
+            Formation::Line { files: 20 },
+        );
+        let mut first = TacticalBattle::new(
+            FlatBattlefield::new(50_000, 50_000),
+            vec![attacker.clone(), defender.clone()],
+        )
+        .unwrap();
+        let mut second = TacticalBattle::new(
+            FlatBattlefield::new(50_000, 50_000),
+            vec![defender, attacker],
+        )
+        .unwrap();
+        engage(&mut first, "attacker", "defender");
+        engage(&mut second, "attacker", "defender");
+        first.advance_ticks(TACTICAL_TICKS_PER_SECOND * 5);
+        second.advance_ticks(TACTICAL_TICKS_PER_SECOND * 5);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn line_frontage_inflicts_more_losses_than_column_frontage() {
+        let mut line = contact_battle(
+            Formation::Line { files: 24 },
+            Formation::Line { files: 20 },
+        );
+        let mut column = contact_battle(
+            Formation::Column { files: 24 },
+            Formation::Line { files: 20 },
+        );
+        engage(&mut line, "attacker", "defender");
+        engage(&mut column, "attacker", "defender");
+        line.advance_ticks(TACTICAL_TICKS_PER_SECOND);
+        column.advance_ticks(TACTICAL_TICKS_PER_SECOND);
+        assert!(unit(&line, "defender").soldiers() < unit(&column, "defender").soldiers());
+    }
+
+    #[test]
+    fn fatigue_rises_and_reduces_melee_effectiveness() {
+        let mut fresh = contact_battle(
+            Formation::Line { files: 40 },
+            Formation::Line { files: 20 },
+        );
+        let mut tired = fresh.clone();
+        let tired_index = tired.unit_index("attacker").unwrap();
+        tired.units[tired_index].fatigue = 800;
+        engage(&mut fresh, "attacker", "defender");
+        engage(&mut tired, "attacker", "defender");
+        fresh.advance_ticks(TACTICAL_TICKS_PER_SECOND);
+        tired.advance_ticks(TACTICAL_TICKS_PER_SECOND);
+        assert!(unit(&fresh, "defender").soldiers() < unit(&tired, "defender").soldiers());
+        assert!(unit(&fresh, "attacker").fatigue() > 0);
+    }
+
+    #[test]
+    fn casualties_apply_morale_shocks_and_eventually_route_units() {
+        let mut battle = contact_battle(
+            Formation::Line { files: 60 },
+            Formation::Column { files: 4 },
+        );
+        engage(&mut battle, "attacker", "defender");
+        for _ in 0..60 {
+            battle.advance_ticks(TACTICAL_TICKS_PER_SECOND);
+            if unit(&battle, "defender").is_routed()
+                || unit(&battle, "defender").is_destroyed()
+            {
+                break;
+            }
+        }
+        let defender = unit(&battle, "defender");
+        assert!(defender.soldiers() < 80);
+        assert!(defender.morale() < MAX_TACTICAL_MORALE);
+        assert!(defender.is_routed() || defender.is_destroyed());
+    }
+
+    #[test]
+    fn routed_units_reject_orders_and_move_away_from_enemy() {
+        let mut battle = contact_battle(
+            Formation::Line { files: 20 },
+            Formation::Line { files: 20 },
+        );
+        let defender_index = battle.unit_index("defender").unwrap();
+        battle.units[defender_index].state = TacticalUnitState::Routed;
+        battle.units[defender_index].morale = ROUT_MORALE_THRESHOLD;
+        let before = battle.units[defender_index].position;
+        assert!(matches!(
+            battle.issue_move_order(MovementOrder {
+                unit_id: "defender".into(),
+                destination: BattlePoint::new(40_000, 40_000),
+            }),
+            Err(TacticalError::UnitCannotReceiveOrders { .. })
+        ));
+        battle.advance_ticks(1);
+        let after = unit(&battle, "defender").position();
+        assert!(
+            point_distance_squared(after, BattlePoint::new(24_500, 25_000))
+                > point_distance_squared(before, BattlePoint::new(24_500, 25_000))
+        );
+    }
+
+    #[test]
+    fn pursuit_causes_bounded_losses_while_routed_target_is_close() {
+        let mut battle = contact_battle(
+            Formation::Line { files: 24 },
+            Formation::Line { files: 20 },
+        );
+        engage(&mut battle, "attacker", "defender");
+        let defender_index = battle.unit_index("defender").unwrap();
+        battle.units[defender_index].state = TacticalUnitState::Routed;
+        battle.units[defender_index].morale = ROUT_MORALE_THRESHOLD;
+        let before = battle.units[defender_index].soldiers;
+        battle.advance_ticks(TACTICAL_TICKS_PER_SECOND);
+        let after = unit(&battle, "defender").soldiers();
+        assert!(after < before);
+        assert!(before - after <= unit(&battle, "attacker").frontage_slots());
+    }
+
+    #[test]
+    fn zero_soldiers_destroy_unit_without_underflow_or_resurrection() {
+        let mut battle = contact_battle(
+            Formation::Line { files: 80 },
+            Formation::Column { files: 2 },
+        );
+        let defender_index = battle.unit_index("defender").unwrap();
+        battle.units[defender_index].soldiers = 1;
+        engage(&mut battle, "attacker", "defender");
+        battle.advance_ticks(TACTICAL_TICKS_PER_SECOND);
+        let defender = unit(&battle, "defender");
+        assert_eq!(defender.soldiers(), 0);
+        assert!(defender.is_destroyed());
+        battle.advance_ticks(TACTICAL_TICKS_PER_SECOND * 5);
+        assert_eq!(unit(&battle, "defender").soldiers(), 0);
     }
 
     #[test]
@@ -561,7 +1149,6 @@ mod tests {
             })
             .unwrap();
         battle.advance_ticks(10);
-
         let after = unit(&battle, "attacker-spears");
         assert_eq!(after.id(), before.id());
         assert_eq!(after.side(), before.side());
