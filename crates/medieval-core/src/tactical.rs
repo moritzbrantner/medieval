@@ -398,12 +398,12 @@ impl TacticalBattle {
             return;
         }
 
-        let movement_speed = if target.is_some_and(|target| target.state == TacticalUnitState::Routed)
-        {
-            unit.speed_mm_per_tick.saturating_mul(2)
-        } else {
-            unit.speed_mm_per_tick
-        };
+        let movement_speed =
+            if target.is_some_and(|target| target.state == TacticalUnitState::Routed) {
+                unit.speed_mm_per_tick.saturating_mul(2)
+            } else {
+                unit.speed_mm_per_tick
+            };
         let next = move_point_toward(unit.position, destination, movement_speed);
         self.units[index].position = next;
         if self.units[index].destination == Some(destination) && next == destination {
@@ -852,11 +852,7 @@ mod tests {
     }
 
     fn unit<'a>(battle: &'a TacticalBattle, id: &str) -> &'a TacticalUnit {
-        battle
-            .units()
-            .iter()
-            .find(|unit| unit.id() == id)
-            .unwrap()
+        battle.units().iter().find(|unit| unit.id() == id).unwrap()
     }
 
     fn engage(battle: &mut TacticalBattle, attacker: &str, defender: &str) {
@@ -1026,10 +1022,7 @@ mod tests {
 
     #[test]
     fn line_frontage_inflicts_more_losses_than_column_frontage() {
-        let mut line = contact_battle(
-            Formation::Line { files: 24 },
-            Formation::Line { files: 20 },
-        );
+        let mut line = contact_battle(Formation::Line { files: 24 }, Formation::Line { files: 20 });
         let mut column = contact_battle(
             Formation::Column { files: 24 },
             Formation::Line { files: 20 },
@@ -1043,10 +1036,8 @@ mod tests {
 
     #[test]
     fn fatigue_rises_and_reduces_melee_effectiveness() {
-        let mut fresh = contact_battle(
-            Formation::Line { files: 40 },
-            Formation::Line { files: 20 },
-        );
+        let mut fresh =
+            contact_battle(Formation::Line { files: 40 }, Formation::Line { files: 20 });
         let mut tired = fresh.clone();
         let tired_index = tired.unit_index("attacker").unwrap();
         tired.units[tired_index].fatigue = 800;
@@ -1067,9 +1058,7 @@ mod tests {
         engage(&mut battle, "attacker", "defender");
         for _ in 0..60 {
             battle.advance_ticks(TACTICAL_TICKS_PER_SECOND);
-            if unit(&battle, "defender").is_routed()
-                || unit(&battle, "defender").is_destroyed()
-            {
+            if unit(&battle, "defender").is_routed() || unit(&battle, "defender").is_destroyed() {
                 break;
             }
         }
@@ -1081,10 +1070,8 @@ mod tests {
 
     #[test]
     fn routed_units_reject_orders_and_move_away_from_enemy() {
-        let mut battle = contact_battle(
-            Formation::Line { files: 20 },
-            Formation::Line { files: 20 },
-        );
+        let mut battle =
+            contact_battle(Formation::Line { files: 20 }, Formation::Line { files: 20 });
         let defender_index = battle.unit_index("defender").unwrap();
         battle.units[defender_index].state = TacticalUnitState::Routed;
         battle.units[defender_index].morale = ROUT_MORALE_THRESHOLD;
@@ -1106,10 +1093,8 @@ mod tests {
 
     #[test]
     fn pursuit_causes_bounded_losses_while_routed_target_is_close() {
-        let mut battle = contact_battle(
-            Formation::Line { files: 24 },
-            Formation::Line { files: 20 },
-        );
+        let mut battle =
+            contact_battle(Formation::Line { files: 24 }, Formation::Line { files: 20 });
         engage(&mut battle, "attacker", "defender");
         let defender_index = battle.unit_index("defender").unwrap();
         battle.units[defender_index].state = TacticalUnitState::Routed;
