@@ -371,7 +371,9 @@ fn spawn_frame_scheduler(
                         let render_result: Result<(), String> = (|| {
                             let snapshot = frame_session
                                 .lock()
-                                .map_err(|_| "native tactical session lock was poisoned".to_owned())?
+                                .map_err(|_| {
+                                    "native tactical session lock was poisoned".to_owned()
+                                })?
                                 .snapshot();
                             let mut renderer = frame_renderer
                                 .lock()
