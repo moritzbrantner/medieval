@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn destroyed_units_leave_the_active_instance_batch() {
         let mut battle = TacticalBattle::new(
-            FlatBattlefield::new(20_000, 20_000),
+            FlatBattlefield::new(20_000, 100_000),
             vec![
                 unit(
                     "attacker",
@@ -524,7 +524,7 @@ mod tests {
     #[test]
     fn routed_state_is_reflected_in_render_metadata() {
         let mut battle = TacticalBattle::new(
-            FlatBattlefield::new(30_000, 30_000),
+            FlatBattlefield::new(30_000, 100_000),
             vec![
                 unit(
                     "attacker",
