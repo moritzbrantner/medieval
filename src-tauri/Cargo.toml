@@ -22,4 +22,5 @@ tauri = { version = "2", features = ["unstable"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 medieval-renderer = { path = "../crates/medieval-renderer" }
+serde = { version = "1", features = ["derive"] }
 wgpu = "30.0.1"
