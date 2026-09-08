@@ -509,11 +509,14 @@ impl TacticalBattle {
                     && point_distance_squared(left.position, right.position)
                         <= square_u32(COMBAT_CONTACT_DISTANCE_MM)
             })
-            .fold(BTreeMap::<String, u16>::new(), |mut contacts, (left, right)| {
-                *contacts.entry(left.clone()).or_default() += 1;
-                *contacts.entry(right.clone()).or_default() += 1;
-                contacts
-            });
+            .fold(
+                BTreeMap::<String, u16>::new(),
+                |mut contacts, (left, right)| {
+                    *contacts.entry(left.clone()).or_default() += 1;
+                    *contacts.entry(right.clone()).or_default() += 1;
+                    contacts
+                },
+            );
 
         let mut casualties: BTreeMap<String, u32> = BTreeMap::new();
         let mut engaged_units = BTreeSet::new();
@@ -721,11 +724,7 @@ fn allocated_frontage(attacker: &TacticalUnit, contacts: u16, assigned: &mut u16
     allocation
 }
 
-fn melee_casualties(
-    attacker: &TacticalUnit,
-    defender: &TacticalUnit,
-    frontage: u16,
-) -> u16 {
+fn melee_casualties(attacker: &TacticalUnit, defender: &TacticalUnit, frontage: u16) -> u16 {
     if attacker.state != TacticalUnitState::Formed || defender.soldiers == 0 || frontage == 0 {
         return 0;
     }
@@ -1140,16 +1139,12 @@ mod tests {
             Formation::Line { files: 20 },
         );
         let battlefield = FlatBattlefield::new(50_000, 50_000);
-        let mut single = TacticalBattle::new(
-            battlefield,
-            vec![attacker.clone(), first_defender.clone()],
-        )
-        .unwrap();
-        let mut surrounded = TacticalBattle::new(
-            battlefield,
-            vec![attacker, first_defender, second_defender],
-        )
-        .unwrap();
+        let mut single =
+            TacticalBattle::new(battlefield, vec![attacker.clone(), first_defender.clone()])
+                .unwrap();
+        let mut surrounded =
+            TacticalBattle::new(battlefield, vec![attacker, first_defender, second_defender])
+                .unwrap();
         engage(&mut single, "attacker", "defender-a");
         engage(&mut surrounded, "attacker", "defender-a");
         engage(&mut surrounded, "defender-b", "attacker");
