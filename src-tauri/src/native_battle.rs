@@ -216,7 +216,7 @@ impl NativeSurfaceRenderer {
     }
 }
 
-pub fn install(app: &tauri::App) -> tauri::Result<()> {
+pub fn install(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let main_window = app
         .get_webview_window("main")
         .expect("configured Medieval main window must exist during setup");
@@ -234,21 +234,19 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
     let shutdown_flag = Arc::clone(&shutdown);
     let overlay_main = main_window.clone();
     let overlay_window = window.clone();
-    main_window.on_window_event(move |event| {
-        match event {
-            WindowEvent::Destroyed => {
-                shutdown_running.store(false, Ordering::Release);
-                shutdown_flag.store(true, Ordering::Release);
-                if let Ok(mut renderer) = shutdown_renderer.lock() {
-                    *renderer = None;
-                }
-                let _ = shutdown_window.destroy();
+    main_window.on_window_event(move |event| match event {
+        WindowEvent::Destroyed => {
+            shutdown_running.store(false, Ordering::Release);
+            shutdown_flag.store(true, Ordering::Release);
+            if let Ok(mut renderer) = shutdown_renderer.lock() {
+                *renderer = None;
             }
-            WindowEvent::Resized(_) | WindowEvent::Moved(_) => {
-                let _ = sync_browser_input_window(&overlay_main, &overlay_window);
-            }
-            _ => {}
+            let _ = shutdown_window.destroy();
         }
+        WindowEvent::Resized(_) | WindowEvent::Moved(_) => {
+            let _ = sync_browser_input_window(&overlay_main, &overlay_window);
+        }
+        _ => {}
     });
 
     install_close_handler(&window, Arc::clone(&running));
@@ -260,7 +258,7 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
         Arc::clone(&running),
         Arc::clone(&last_error),
     )
-    .map_err(tauri::Error::AssetNotFound)?;
+    .map_err(std::io::Error::other)?;
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
@@ -272,8 +270,7 @@ pub fn install(app: &tauri::App) -> tauri::Result<()> {
             Arc::clone(&running),
             Arc::clone(&last_error),
         );
-        sync_browser_input_window(&main_window, &window)
-            .map_err(tauri::Error::AssetNotFound)?;
+        sync_browser_input_window(&main_window, &window).map_err(std::io::Error::other)?;
     }
 
     spawn_frame_scheduler(
@@ -338,9 +335,9 @@ fn build_battle_window(app: &tauri::App, _main_window: &WebviewWindow) -> tauri:
 
 #[cfg(target_os = "windows")]
 fn sync_browser_input_window(main_window: &WebviewWindow, window: &Window) -> Result<(), String> {
-    let size = main_window
-        .inner_size()
-        .map_err(|error| format!("could not read main window size for tactical overlay: {error}"))?;
+    let size = main_window.inner_size().map_err(|error| {
+        format!("could not read main window size for tactical overlay: {error}")
+    })?;
     window
         .set_position(tauri::PhysicalPosition::new(0, 0))
         .map_err(|error| format!("could not position tactical child window: {error}"))?;
@@ -351,12 +348,12 @@ fn sync_browser_input_window(main_window: &WebviewWindow, window: &Window) -> Re
 
 #[cfg(target_os = "macos")]
 fn sync_browser_input_window(main_window: &WebviewWindow, window: &Window) -> Result<(), String> {
-    let position = main_window
-        .inner_position()
-        .map_err(|error| format!("could not read main window position for tactical overlay: {error}"))?;
-    let size = main_window
-        .inner_size()
-        .map_err(|error| format!("could not read main window size for tactical overlay: {error}"))?;
+    let position = main_window.inner_position().map_err(|error| {
+        format!("could not read main window position for tactical overlay: {error}")
+    })?;
+    let size = main_window.inner_size().map_err(|error| {
+        format!("could not read main window size for tactical overlay: {error}")
+    })?;
     window
         .set_position(position)
         .map_err(|error| format!("could not position tactical child window: {error}"))?;
