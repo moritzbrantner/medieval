@@ -32,8 +32,8 @@ impl Camera2d {
     }
 
     fn sanitized_zoom(self) -> f32 {
-        if self.zoom.is_finite() && self.zoom >= MIN_CAMERA_ZOOM {
-            self.zoom
+        if self.zoom.is_finite() && self.zoom > 0.0 {
+            self.zoom.max(MIN_CAMERA_ZOOM)
         } else {
             1.0
         }
@@ -593,6 +593,18 @@ mod tests {
             zoomed_snapshot.units[0].clip_half_extent[0]
                 > fit_snapshot.units[0].clip_half_extent[0]
         );
+    }
+
+    #[test]
+    fn finite_zoom_below_minimum_clamps_without_jumping_to_default() {
+        let mut camera = Camera2d::fit(FlatBattlefield::new(10_000, 10_000));
+        camera.zoom = MIN_CAMERA_ZOOM - 0.001;
+        assert_eq!(camera.sanitized_zoom(), MIN_CAMERA_ZOOM);
+
+        camera.zoom = 0.0;
+        assert_eq!(camera.sanitized_zoom(), 1.0);
+        camera.zoom = f32::NAN;
+        assert_eq!(camera.sanitized_zoom(), 1.0);
     }
 
     #[test]
