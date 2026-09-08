@@ -5,6 +5,7 @@ use std::{
 
 use medieval_core::{BattlePoint, BattleSide, MovementOrder, TacticalBattle};
 use medieval_renderer::{Camera2d, RenderViewState};
+use serde::Deserialize;
 
 const MIN_CAMERA_ZOOM: f32 = 0.05;
 const MAX_CAMERA_ZOOM: f32 = 20.0;
@@ -17,6 +18,117 @@ pub enum SelectionMode {
     Toggle,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TacticalControlRequest {
+    pub kind: String,
+    pub unit_ids: Option<Vec<String>>,
+    pub group: Option<u8>,
+    pub additive: Option<bool>,
+    pub active: Option<bool>,
+    pub delta_x_mm: Option<f32>,
+    pub delta_y_mm: Option<f32>,
+    pub factor: Option<f32>,
+    pub x_mm: Option<u32>,
+    pub y_mm: Option<u32>,
+    pub target_unit_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum TacticalControlIntent {
+    FitCamera,
+    PanCamera {
+        delta_x_mm: f32,
+        delta_y_mm: f32,
+    },
+    ZoomCamera {
+        factor: f32,
+    },
+    SelectUnits {
+        unit_ids: Vec<String>,
+        mode: SelectionMode,
+    },
+    ClearSelection,
+    AssignControlGroup {
+        group: u8,
+    },
+    RecallControlGroup {
+        group: u8,
+        additive: bool,
+    },
+    SetOrderPreview {
+        active: bool,
+    },
+    MoveSelected {
+        destination: BattlePoint,
+    },
+    EngageSelected {
+        target_unit_id: String,
+    },
+    StopSelected,
+}
+
+impl TacticalControlRequest {
+    fn into_intent(self) -> Result<TacticalControlIntent, TacticalControlError> {
+        let kind = self.kind;
+        match kind.as_str() {
+            "fitCamera" => Ok(TacticalControlIntent::FitCamera),
+            "panCamera" => Ok(TacticalControlIntent::PanCamera {
+                delta_x_mm: required(self.delta_x_mm, &kind, "deltaXMm")?,
+                delta_y_mm: required(self.delta_y_mm, &kind, "deltaYMm")?,
+            }),
+            "zoomCamera" => Ok(TacticalControlIntent::ZoomCamera {
+                factor: required(self.factor, &kind, "factor")?,
+            }),
+            "selectReplace" => Ok(TacticalControlIntent::SelectUnits {
+                unit_ids: required(self.unit_ids, &kind, "unitIds")?,
+                mode: SelectionMode::Replace,
+            }),
+            "selectAdd" => Ok(TacticalControlIntent::SelectUnits {
+                unit_ids: required(self.unit_ids, &kind, "unitIds")?,
+                mode: SelectionMode::Add,
+            }),
+            "selectToggle" => Ok(TacticalControlIntent::SelectUnits {
+                unit_ids: required(self.unit_ids, &kind, "unitIds")?,
+                mode: SelectionMode::Toggle,
+            }),
+            "clearSelection" => Ok(TacticalControlIntent::ClearSelection),
+            "assignControlGroup" => Ok(TacticalControlIntent::AssignControlGroup {
+                group: required(self.group, &kind, "group")?,
+            }),
+            "recallControlGroup" => Ok(TacticalControlIntent::RecallControlGroup {
+                group: required(self.group, &kind, "group")?,
+                additive: self.additive.unwrap_or(false),
+            }),
+            "setOrderPreview" => Ok(TacticalControlIntent::SetOrderPreview {
+                active: required(self.active, &kind, "active")?,
+            }),
+            "moveSelected" => Ok(TacticalControlIntent::MoveSelected {
+                destination: BattlePoint::new(
+                    required(self.x_mm, &kind, "xMm")?,
+                    required(self.y_mm, &kind, "yMm")?,
+                ),
+            }),
+            "engageSelected" => Ok(TacticalControlIntent::EngageSelected {
+                target_unit_id: required(self.target_unit_id, &kind, "targetUnitId")?,
+            }),
+            "stopSelected" => Ok(TacticalControlIntent::StopSelected),
+            _ => Err(TacticalControlError::UnknownIntent(kind)),
+        }
+    }
+}
+
+fn required<T>(
+    value: Option<T>,
+    intent: &str,
+    argument: &'static str,
+) -> Result<T, TacticalControlError> {
+    value.ok_or_else(|| TacticalControlError::MissingArgument {
+        intent: intent.to_owned(),
+        argument,
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TacticalControlError {
     InvalidCameraDelta,
@@ -26,6 +138,11 @@ pub enum TacticalControlError {
     UncontrollableUnit(String),
     NoUnitsSelected,
     RuleRejected(String),
+    MissingArgument {
+        intent: String,
+        argument: &'static str,
+    },
+    UnknownIntent(String),
 }
 
 impl fmt::Display for TacticalControlError {
@@ -49,6 +166,10 @@ impl fmt::Display for TacticalControlError {
             Self::RuleRejected(error) => {
                 write!(formatter, "tactical rules rejected the command: {error}")
             }
+            Self::MissingArgument { intent, argument } => {
+                write!(formatter, "tactical control {intent} requires {argument}")
+            }
+            Self::UnknownIntent(intent) => write!(formatter, "unknown tactical control {intent}"),
         }
     }
 }
@@ -76,16 +197,67 @@ impl TacticalControls {
         }
     }
 
+    #[cfg(test)]
     #[must_use]
     pub const fn camera(&self) -> Camera2d {
         self.camera
     }
 
-    pub fn fit_camera(&mut self, battle: &TacticalBattle) {
+    pub fn apply_request(
+        &mut self,
+        battle: &mut TacticalBattle,
+        request: TacticalControlRequest,
+    ) -> Result<(), TacticalControlError> {
+        self.apply_intent(battle, request.into_intent()?)
+    }
+
+    fn apply_intent(
+        &mut self,
+        battle: &mut TacticalBattle,
+        intent: TacticalControlIntent,
+    ) -> Result<(), TacticalControlError> {
+        match intent {
+            TacticalControlIntent::FitCamera => {
+                self.fit_camera(battle);
+                Ok(())
+            }
+            TacticalControlIntent::PanCamera {
+                delta_x_mm,
+                delta_y_mm,
+            } => self.pan_camera(battle, delta_x_mm, delta_y_mm),
+            TacticalControlIntent::ZoomCamera { factor } => self.zoom_camera(factor),
+            TacticalControlIntent::SelectUnits { unit_ids, mode } => {
+                self.select_units(battle, unit_ids, mode)
+            }
+            TacticalControlIntent::ClearSelection => {
+                self.clear_selection();
+                Ok(())
+            }
+            TacticalControlIntent::AssignControlGroup { group } => {
+                self.assign_control_group(group)
+            }
+            TacticalControlIntent::RecallControlGroup { group, additive } => {
+                self.recall_control_group(battle, group, additive)
+            }
+            TacticalControlIntent::SetOrderPreview { active } => {
+                self.set_order_preview(active);
+                Ok(())
+            }
+            TacticalControlIntent::MoveSelected { destination } => {
+                self.move_selected(battle, destination)
+            }
+            TacticalControlIntent::EngageSelected { target_unit_id } => {
+                self.engage_selected(battle, &target_unit_id)
+            }
+            TacticalControlIntent::StopSelected => self.stop_selected(battle),
+        }
+    }
+
+    fn fit_camera(&mut self, battle: &TacticalBattle) {
         self.camera = Camera2d::fit(battle.battlefield());
     }
 
-    pub fn pan_camera(
+    fn pan_camera(
         &mut self,
         battle: &TacticalBattle,
         delta_x_mm: f32,
@@ -103,7 +275,7 @@ impl TacticalControls {
         Ok(())
     }
 
-    pub fn zoom_camera(&mut self, factor: f32) -> Result<(), TacticalControlError> {
+    fn zoom_camera(&mut self, factor: f32) -> Result<(), TacticalControlError> {
         if !factor.is_finite() || factor <= 0.0 {
             return Err(TacticalControlError::InvalidZoomFactor);
         }
@@ -112,7 +284,7 @@ impl TacticalControls {
         Ok(())
     }
 
-    pub fn select_units<I, S>(
+    fn select_units<I, S>(
         &mut self,
         battle: &TacticalBattle,
         unit_ids: I,
@@ -140,19 +312,19 @@ impl TacticalControls {
         Ok(())
     }
 
-    pub fn clear_selection(&mut self) {
+    fn clear_selection(&mut self) {
         self.selected_units.clear();
         self.order_preview = false;
     }
 
-    pub fn assign_control_group(&mut self, group: u8) -> Result<(), TacticalControlError> {
+    fn assign_control_group(&mut self, group: u8) -> Result<(), TacticalControlError> {
         Self::validate_control_group(group)?;
         self.control_groups
             .insert(group, self.selected_units.clone());
         Ok(())
     }
 
-    pub fn recall_control_group(
+    fn recall_control_group(
         &mut self,
         battle: &TacticalBattle,
         group: u8,
@@ -179,11 +351,11 @@ impl TacticalControls {
         Ok(())
     }
 
-    pub fn set_order_preview(&mut self, active: bool) {
+    fn set_order_preview(&mut self, active: bool) {
         self.order_preview = active && !self.selected_units.is_empty();
     }
 
-    pub fn move_selected(
+    fn move_selected(
         &mut self,
         battle: &mut TacticalBattle,
         destination: BattlePoint,
@@ -204,7 +376,7 @@ impl TacticalControls {
         Ok(())
     }
 
-    pub fn engage_selected(
+    fn engage_selected(
         &mut self,
         battle: &mut TacticalBattle,
         target_unit_id: &str,
@@ -222,7 +394,7 @@ impl TacticalControls {
         Ok(())
     }
 
-    pub fn stop_selected(
+    fn stop_selected(
         &mut self,
         battle: &mut TacticalBattle,
     ) -> Result<(), TacticalControlError> {
@@ -248,7 +420,7 @@ impl TacticalControls {
         Ok(())
     }
 
-    pub fn sync_with_battle(&mut self, battle: &TacticalBattle) {
+    fn sync_with_battle(&mut self, battle: &TacticalBattle) {
         let player_side = self.player_side;
         self.selected_units
             .retain(|unit_id| Self::is_controllable(battle, player_side, unit_id));
@@ -273,7 +445,7 @@ impl TacticalControls {
         view
     }
 
-    #[must_use]
+    #[cfg(test)]
     pub fn selected_unit_ids(&self) -> impl Iterator<Item = &str> {
         self.selected_units.iter().map(String::as_str)
     }
@@ -356,15 +528,94 @@ mod tests {
     }
 
     #[test]
-    fn selection_modes_are_deterministic_and_invalid_selection_is_atomic() {
-        let battle = sample_battle();
+    fn request_dispatch_supports_selection_and_camera_intents() {
+        let mut battle = sample_battle();
         let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
 
         controls
-            .select_units(&battle, ["attacker-a"], SelectionMode::Replace)
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "selectReplace".to_owned(),
+                    unit_ids: Some(vec!["attacker-a".to_owned()]),
+                    ..TacticalControlRequest::default()
+                },
+            )
             .unwrap();
         controls
-            .select_units(&battle, ["attacker-b"], SelectionMode::Add)
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "panCamera".to_owned(),
+                    delta_x_mm: Some(5_000.0),
+                    delta_y_mm: Some(0.0),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
+
+        assert_eq!(controls.selected_unit_ids().collect::<Vec<_>>(), vec!["attacker-a"]);
+        assert_eq!(controls.camera().center_x_mm, 55_000.0);
+    }
+
+    #[test]
+    fn request_dispatch_rejects_missing_and_unknown_intents() {
+        let mut battle = sample_battle();
+        let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
+
+        assert_eq!(
+            controls
+                .apply_request(
+                    &mut battle,
+                    TacticalControlRequest {
+                        kind: "zoomCamera".to_owned(),
+                        ..TacticalControlRequest::default()
+                    },
+                )
+                .unwrap_err(),
+            TacticalControlError::MissingArgument {
+                intent: "zoomCamera".to_owned(),
+                argument: "factor",
+            }
+        );
+        assert_eq!(
+            controls
+                .apply_request(
+                    &mut battle,
+                    TacticalControlRequest {
+                        kind: "teleport".to_owned(),
+                        ..TacticalControlRequest::default()
+                    },
+                )
+                .unwrap_err(),
+            TacticalControlError::UnknownIntent("teleport".to_owned())
+        );
+    }
+
+    #[test]
+    fn selection_modes_are_deterministic_and_invalid_selection_is_atomic() {
+        let mut battle = sample_battle();
+        let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
+
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "selectReplace".to_owned(),
+                    unit_ids: Some(vec!["attacker-a".to_owned()]),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "selectAdd".to_owned(),
+                    unit_ids: Some(vec!["attacker-b".to_owned()]),
+                    ..TacticalControlRequest::default()
+                },
+            )
             .unwrap();
         assert_eq!(
             controls.selected_unit_ids().collect::<Vec<_>>(),
@@ -372,7 +623,14 @@ mod tests {
         );
 
         controls
-            .select_units(&battle, ["attacker-a"], SelectionMode::Toggle)
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "selectToggle".to_owned(),
+                    unit_ids: Some(vec!["attacker-a".to_owned()]),
+                    ..TacticalControlRequest::default()
+                },
+            )
             .unwrap();
         assert_eq!(
             controls.selected_unit_ids().collect::<Vec<_>>(),
@@ -382,7 +640,14 @@ mod tests {
         let before = controls.clone();
         assert_eq!(
             controls
-                .select_units(&battle, ["defender"], SelectionMode::Add)
+                .apply_request(
+                    &mut battle,
+                    TacticalControlRequest {
+                        kind: "selectAdd".to_owned(),
+                        unit_ids: Some(vec!["defender".to_owned()]),
+                        ..TacticalControlRequest::default()
+                    },
+                )
                 .unwrap_err(),
             TacticalControlError::UncontrollableUnit("defender".to_owned())
         );
@@ -391,20 +656,46 @@ mod tests {
 
     #[test]
     fn camera_pan_and_zoom_are_bounded_and_reject_non_finite_input() {
-        let battle = sample_battle();
+        let mut battle = sample_battle();
         let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
 
         controls
-            .pan_camera(&battle, 1_000_000.0, -1_000_000.0)
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "panCamera".to_owned(),
+                    delta_x_mm: Some(1_000_000.0),
+                    delta_y_mm: Some(-1_000_000.0),
+                    ..TacticalControlRequest::default()
+                },
+            )
             .unwrap();
         assert_eq!(controls.camera().center_x_mm, 100_000.0);
         assert_eq!(controls.camera().center_y_mm, 0.0);
 
-        controls.zoom_camera(100.0).unwrap();
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "zoomCamera".to_owned(),
+                    factor: Some(100.0),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
         assert_eq!(controls.camera().zoom, MAX_CAMERA_ZOOM);
         let before = controls.camera();
         assert_eq!(
-            controls.zoom_camera(f32::NAN).unwrap_err(),
+            controls
+                .apply_request(
+                    &mut battle,
+                    TacticalControlRequest {
+                        kind: "zoomCamera".to_owned(),
+                        factor: Some(f32::NAN),
+                        ..TacticalControlRequest::default()
+                    },
+                )
+                .unwrap_err(),
             TacticalControlError::InvalidZoomFactor
         );
         assert_eq!(controls.camera(), before);
@@ -415,15 +706,28 @@ mod tests {
         let mut battle = sample_battle();
         let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
         controls
-            .select_units(
-                &battle,
-                ["attacker-a", "attacker-b"],
-                SelectionMode::Replace,
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "selectReplace".to_owned(),
+                    unit_ids: Some(vec!["attacker-a".to_owned(), "attacker-b".to_owned()]),
+                    ..TacticalControlRequest::default()
+                },
             )
             .unwrap();
 
         let destination = BattlePoint::new(60_000, 60_000);
-        controls.move_selected(&mut battle, destination).unwrap();
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "moveSelected".to_owned(),
+                    x_mm: Some(destination.x_mm),
+                    y_mm: Some(destination.y_mm),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
         for unit_id in ["attacker-a", "attacker-b"] {
             let unit = battle
                 .units()
@@ -436,7 +740,15 @@ mod tests {
         let before = battle.clone();
         assert!(
             controls
-                .move_selected(&mut battle, BattlePoint::new(100_001, 50_000))
+                .apply_request(
+                    &mut battle,
+                    TacticalControlRequest {
+                        kind: "moveSelected".to_owned(),
+                        x_mm: Some(100_001),
+                        y_mm: Some(50_000),
+                        ..TacticalControlRequest::default()
+                    },
+                )
                 .is_err()
         );
         assert_eq!(battle, before);
@@ -447,14 +759,26 @@ mod tests {
         let mut battle = sample_battle();
         let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
         controls
-            .select_units(
-                &battle,
-                ["attacker-a", "attacker-b"],
-                SelectionMode::Replace,
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "selectReplace".to_owned(),
+                    unit_ids: Some(vec!["attacker-a".to_owned(), "attacker-b".to_owned()]),
+                    ..TacticalControlRequest::default()
+                },
             )
             .unwrap();
 
-        controls.engage_selected(&mut battle, "defender").unwrap();
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "engageSelected".to_owned(),
+                    target_unit_id: Some("defender".to_owned()),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
         for unit_id in ["attacker-a", "attacker-b"] {
             let unit = battle
                 .units()
@@ -464,7 +788,15 @@ mod tests {
             assert_eq!(unit.engagement_target(), Some("defender"));
         }
 
-        controls.stop_selected(&mut battle).unwrap();
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "stopSelected".to_owned(),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
         for unit_id in ["attacker-a", "attacker-b"] {
             let unit = battle
                 .units()
@@ -478,38 +810,92 @@ mod tests {
 
     #[test]
     fn control_groups_recall_sorted_live_units() {
-        let battle = sample_battle();
+        let mut battle = sample_battle();
         let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
         controls
-            .select_units(
-                &battle,
-                ["attacker-b", "attacker-a"],
-                SelectionMode::Replace,
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "selectReplace".to_owned(),
+                    unit_ids: Some(vec!["attacker-b".to_owned(), "attacker-a".to_owned()]),
+                    ..TacticalControlRequest::default()
+                },
             )
             .unwrap();
-        controls.assign_control_group(1).unwrap();
-        controls.clear_selection();
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "assignControlGroup".to_owned(),
+                    group: Some(1),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "clearSelection".to_owned(),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
 
-        controls.recall_control_group(&battle, 1, false).unwrap();
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "recallControlGroup".to_owned(),
+                    group: Some(1),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
         assert_eq!(
             controls.selected_unit_ids().collect::<Vec<_>>(),
             vec!["attacker-a", "attacker-b"]
         );
         assert_eq!(
-            controls.assign_control_group(10).unwrap_err(),
+            controls
+                .apply_request(
+                    &mut battle,
+                    TacticalControlRequest {
+                        kind: "assignControlGroup".to_owned(),
+                        group: Some(10),
+                        ..TacticalControlRequest::default()
+                    },
+                )
+                .unwrap_err(),
             TacticalControlError::InvalidControlGroup(10)
         );
     }
 
     #[test]
     fn render_view_projects_selection_and_order_preview_without_mutating_battle() {
-        let battle = sample_battle();
+        let mut battle = sample_battle();
         let before = battle.clone();
         let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
         controls
-            .select_units(&battle, ["attacker-a"], SelectionMode::Replace)
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "selectReplace".to_owned(),
+                    unit_ids: Some(vec!["attacker-a".to_owned()]),
+                    ..TacticalControlRequest::default()
+                },
+            )
             .unwrap();
-        controls.set_order_preview(true);
+        controls
+            .apply_request(
+                &mut battle,
+                TacticalControlRequest {
+                    kind: "setOrderPreview".to_owned(),
+                    active: Some(true),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
 
         let snapshot = medieval_renderer::BattleRenderSnapshot::project(
             &battle,
