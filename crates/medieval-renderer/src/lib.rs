@@ -169,13 +169,17 @@ impl BattleRenderSnapshot {
                         BattleSide::Attacker => 0.0,
                         BattleSide::Defender => 1.0,
                     },
-                    f32::from(unit.routed),
-                    f32::from(unit.selected),
-                    f32::from(unit.order_preview),
+                    flag(unit.routed),
+                    flag(unit.selected),
+                    flag(unit.order_preview),
                 ],
             })
             .collect()
     }
+}
+
+const fn flag(value: bool) -> f32 {
+    if value { 1.0 } else { 0.0 }
 }
 
 fn project_rect(
@@ -244,7 +248,7 @@ impl GpuBattleRenderer {
             label: Some("Medieval tactical unit shader"),
             source: wgpu::ShaderSource::Wgsl(SHADER_SOURCE.into()),
         });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Medieval tactical pipeline layout"),
             bind_group_layouts: &[],
             immediate_size: 0,
@@ -268,7 +272,7 @@ impl GpuBattleRenderer {
         })];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Medieval tactical unit pipeline"),
-            layout: Some(&layout),
+            layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
@@ -317,7 +321,8 @@ impl GpuBattleRenderer {
         if !instances.is_empty() {
             queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
         }
-        self.instance_count = u32::try_from(instances.len()).expect("unit instance count fits in u32");
+        self.instance_count =
+            u32::try_from(instances.len()).expect("unit instance count fits in u32");
     }
 
     pub fn render(
@@ -467,7 +472,10 @@ mod tests {
         let moved_snapshot = BattleRenderSnapshot::project(&battle, &moved);
 
         assert_eq!(battle, before);
-        assert_ne!(fit_snapshot.units[0].clip_center, moved_snapshot.units[0].clip_center);
+        assert_ne!(
+            fit_snapshot.units[0].clip_center,
+            moved_snapshot.units[0].clip_center
+        );
         assert!(!fit_snapshot.units[1].selected);
         assert!(moved_snapshot.units[1].selected);
     }
@@ -498,14 +506,15 @@ mod tests {
             .issue_engagement_order("attacker", "defender")
             .unwrap();
         battle.advance_ticks(TACTICAL_TICKS_PER_SECOND);
-        assert!(battle.units().iter().any(|unit| {
-            unit.id() == "defender" && unit.is_destroyed()
-        }));
-
-        let snapshot = BattleRenderSnapshot::project(
-            &battle,
-            &RenderViewState::fit(battle.battlefield()),
+        assert!(
+            battle
+                .units()
+                .iter()
+                .any(|unit| { unit.id() == "defender" && unit.is_destroyed() })
         );
+
+        let snapshot =
+            BattleRenderSnapshot::project(&battle, &RenderViewState::fit(battle.battlefield()));
 
         assert_eq!(snapshot.units.len(), 1);
         assert_eq!(snapshot.units[0].unit_id, "attacker");
@@ -554,10 +563,8 @@ mod tests {
             .find(|unit| unit.id() == "defender")
             .unwrap();
         assert!(defender.is_routed() || defender.is_destroyed());
-        let snapshot = BattleRenderSnapshot::project(
-            &battle,
-            &RenderViewState::fit(battle.battlefield()),
-        );
+        let snapshot =
+            BattleRenderSnapshot::project(&battle, &RenderViewState::fit(battle.battlefield()));
         if !defender.is_destroyed() {
             let rendered = snapshot
                 .units
