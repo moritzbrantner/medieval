@@ -28,10 +28,7 @@ pub struct FlatBattlefield {
 impl FlatBattlefield {
     #[must_use]
     pub const fn new(width_mm: u32, depth_mm: u32) -> Self {
-        Self {
-            width_mm,
-            depth_mm,
-        }
+        Self { width_mm, depth_mm }
     }
 
     const fn contains(self, point: BattlePoint) -> bool {
@@ -254,10 +251,7 @@ pub enum TacticalError {
 impl fmt::Display for TacticalError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidBattlefield {
-                width_mm,
-                depth_mm,
-            } => write!(
+            Self::InvalidBattlefield { width_mm, depth_mm } => write!(
                 formatter,
                 "battlefield dimensions must be positive, got {width_mm}x{depth_mm} mm"
             ),
@@ -269,7 +263,10 @@ impl fmt::Display for TacticalError {
                 write!(formatter, "tactical unit {unit_id} has an empty formation")
             }
             Self::ZeroMovementSpeed(unit_id) => {
-                write!(formatter, "tactical unit {unit_id} must have a positive movement speed")
+                write!(
+                    formatter,
+                    "tactical unit {unit_id} must have a positive movement speed"
+                )
             }
             Self::UnitOutOfBounds { unit_id, position } => write!(
                 formatter,
@@ -306,21 +303,21 @@ fn advance_unit(unit: &mut TacticalUnit) {
     let dx = i64::from(destination.x_mm) - i64::from(unit.position.x_mm);
     let dy = i64::from(destination.y_mm) - i64::from(unit.position.y_mm);
     let distance_squared = squared_components(dx, dy);
-    let speed = u64::from(unit.speed_mm_per_tick);
+    let speed = u128::from(unit.speed_mm_per_tick);
 
-    if distance_squared <= speed.saturating_mul(speed) {
+    if distance_squared <= speed * speed {
         unit.position = destination;
         unit.destination = None;
         return;
     }
 
     let distance = integer_sqrt_ceil(distance_squared);
-    let divisor = i128::from(distance);
+    let divisor = i128::try_from(distance).expect("movement distance must fit in i128");
     let speed = i128::from(unit.speed_mm_per_tick);
-    let mut step_x = i64::try_from(i128::from(dx) * speed / divisor)
-        .expect("movement x step must fit in i64");
-    let mut step_y = i64::try_from(i128::from(dy) * speed / divisor)
-        .expect("movement y step must fit in i64");
+    let mut step_x =
+        i64::try_from(i128::from(dx) * speed / divisor).expect("movement x step must fit in i64");
+    let mut step_y =
+        i64::try_from(i128::from(dy) * speed / divisor).expect("movement y step must fit in i64");
 
     if step_x == 0 && step_y == 0 {
         if dx.unsigned_abs() >= dy.unsigned_abs() {
@@ -338,20 +335,20 @@ fn advance_unit(unit: &mut TacticalUnit) {
     );
 }
 
-fn squared_components(dx: i64, dy: i64) -> u64 {
-    let x = dx.unsigned_abs();
-    let y = dy.unsigned_abs();
-    x.saturating_mul(x).saturating_add(y.saturating_mul(y))
+fn squared_components(dx: i64, dy: i64) -> u128 {
+    let x = u128::from(dx.unsigned_abs());
+    let y = u128::from(dy.unsigned_abs());
+    x * x + y * y
 }
 
-fn integer_sqrt_ceil(value: u64) -> u64 {
+fn integer_sqrt_ceil(value: u128) -> u128 {
     if value < 2 {
         return value;
     }
 
-    let mut low = 1_u64;
-    let mut high = value.min(u64::from(u32::MAX));
-    let mut floor = 1_u64;
+    let mut low = 1_u128;
+    let mut high = value;
+    let mut floor = 1_u128;
 
     while low <= high {
         let mid = low + (high - low) / 2;
@@ -363,7 +360,7 @@ fn integer_sqrt_ceil(value: u64) -> u64 {
         }
     }
 
-    if floor.saturating_mul(floor) == value {
+    if floor * floor == value {
         floor
     } else {
         floor.saturating_add(1)
@@ -408,7 +405,7 @@ mod tests {
         battle.units().iter().find(|unit| unit.id() == id).unwrap()
     }
 
-    fn point_distance_squared(left: BattlePoint, right: BattlePoint) -> u64 {
+    fn point_distance_squared(left: BattlePoint, right: BattlePoint) -> u128 {
         squared_components(
             i64::from(right.x_mm) - i64::from(left.x_mm),
             i64::from(right.y_mm) - i64::from(left.y_mm),
@@ -515,7 +512,7 @@ mod tests {
             let after = unit(&battle, "attacker-spears").position();
             assert!(
                 point_distance_squared(before, after)
-                    <= u64::from(speed).saturating_mul(u64::from(speed))
+                    <= u128::from(speed) * u128::from(speed)
             );
             if unit(&battle, "attacker-spears").destination().is_none() {
                 break;
@@ -525,6 +522,37 @@ mod tests {
         let attacker = unit(&battle, "attacker-spears");
         assert_eq!(attacker.position(), destination);
         assert_eq!(attacker.destination(), None);
+    }
+
+    #[test]
+    fn extreme_diagonal_movement_still_respects_speed_bound() {
+        let speed = 1_000_000;
+        let mut battle = TacticalBattle::new(
+            FlatBattlefield::new(u32::MAX, u32::MAX),
+            vec![TacticalUnit::new(
+                "scouts",
+                BattleSide::Attacker,
+                20,
+                BattlePoint::new(0, 0),
+                Formation::Column { files: 4 },
+                speed,
+            )],
+        )
+        .unwrap();
+        battle
+            .issue_move_order(MovementOrder {
+                unit_id: "scouts".into(),
+                destination: BattlePoint::new(u32::MAX, u32::MAX),
+            })
+            .unwrap();
+
+        let before = unit(&battle, "scouts").position();
+        battle.advance_ticks(1);
+        let after = unit(&battle, "scouts").position();
+
+        assert!(
+            point_distance_squared(before, after) <= u128::from(speed) * u128::from(speed)
+        );
     }
 
     #[test]
