@@ -7,8 +7,8 @@ use medieval_core::{BattlePoint, BattleSide, TacticalBattle};
 use serde::Deserialize;
 use tauri::{Listener, Window};
 
-use super::{NativeBattleSession, SharedError, SharedSession};
 use super::controls::{TacticalControlError, TacticalControlRequest, TacticalControls};
+use super::{NativeBattleSession, SharedError, SharedSession};
 
 pub const BROWSER_INPUT_EVENT: &str = "medieval:tactical-input";
 
@@ -91,7 +91,10 @@ impl PointerSample {
             || width <= 0.0
             || height <= 0.0
         {
-            return Err("desktop tactical pointer coordinates must be finite with a positive viewport".to_owned());
+            return Err(
+                "desktop tactical pointer coordinates must be finite with a positive viewport"
+                    .to_owned(),
+            );
         }
         Ok(Self {
             x: x.clamp(0.0, width),
@@ -377,8 +380,8 @@ impl DesktopInputState {
     ) -> Result<(), String> {
         let (start_x, start_y) = start.normalized();
         let (end_x, end_y) = end.normalized();
-        let dragged = (end_x - start_x).abs().max((end_y - start_y).abs())
-            >= DRAG_THRESHOLD_NORMALIZED;
+        let dragged =
+            (end_x - start_x).abs().max((end_y - start_y).abs()) >= DRAG_THRESHOLD_NORMALIZED;
         let kind = selection_kind(modifiers);
 
         let unit_ids = if dragged {
@@ -477,7 +480,9 @@ fn digit_from_code(code: &str) -> Option<u8> {
     if suffix.len() != 1 {
         return None;
     }
-    suffix.as_bytes()[0].checked_sub(b'0').filter(|digit| *digit <= 9)
+    suffix.as_bytes()[0]
+        .checked_sub(b'0')
+        .filter(|digit| *digit <= 9)
 }
 
 fn viewport_to_world(
@@ -494,17 +499,13 @@ fn viewport_to_world(
     let clip_x = normalized_x * 2.0 - 1.0;
     let clip_y = 1.0 - normalized_y * 2.0;
     let zoom = f64::from(camera.zoom.max(0.05));
-    let world_x = f64::from(camera.center_x_mm)
-        + clip_x * (f64::from(battlefield.width_mm) / 2.0) / zoom;
-    let world_y = f64::from(camera.center_y_mm)
-        - clip_y * (f64::from(battlefield.depth_mm) / 2.0) / zoom;
+    let world_x =
+        f64::from(camera.center_x_mm) + clip_x * (f64::from(battlefield.width_mm) / 2.0) / zoom;
+    let world_y =
+        f64::from(camera.center_y_mm) - clip_y * (f64::from(battlefield.depth_mm) / 2.0) / zoom;
     Ok(BattlePoint::new(
-        world_x
-            .round()
-            .clamp(0.0, f64::from(battlefield.width_mm)) as u32,
-        world_y
-            .round()
-            .clamp(0.0, f64::from(battlefield.depth_mm)) as u32,
+        world_x.round().clamp(0.0, f64::from(battlefield.width_mm)) as u32,
+        world_y.round().clamp(0.0, f64::from(battlefield.depth_mm)) as u32,
     ))
 }
 
@@ -519,10 +520,9 @@ where
 {
     let battlefield = battle.battlefield();
     let zoom = f64::from(controls.render_view(battle).camera.zoom.max(0.05));
-    let radius = (f64::from(battlefield.width_mm.min(battlefield.depth_mm))
-        * CLICK_RADIUS_FRACTION
-        / zoom)
-        .clamp(MIN_CLICK_RADIUS_MM, MAX_CLICK_RADIUS_MM);
+    let radius =
+        (f64::from(battlefield.width_mm.min(battlefield.depth_mm)) * CLICK_RADIUS_FRACTION / zoom)
+            .clamp(MIN_CLICK_RADIUS_MM, MAX_CLICK_RADIUS_MM);
     let radius_squared = radius * radius;
     battle
         .units()
@@ -535,11 +535,7 @@ where
             let distance_squared = dx * dx + dy * dy;
             (distance_squared <= radius_squared).then_some((distance_squared, unit.id()))
         })
-        .min_by(|left, right| {
-            left.0
-                .total_cmp(&right.0)
-                .then_with(|| left.1.cmp(right.1))
-        })
+        .min_by(|left, right| left.0.total_cmp(&right.0).then_with(|| left.1.cmp(right.1)))
         .map(|(_, unit_id)| unit_id.to_owned())
 }
 
@@ -801,7 +797,10 @@ pub fn install_linux_input(
 }
 
 #[cfg(target_os = "linux")]
-fn apply_shared_input(session: &SharedSession, input: DesktopInput) -> Result<InputOutcome, String> {
+fn apply_shared_input(
+    session: &SharedSession,
+    input: DesktopInput,
+) -> Result<InputOutcome, String> {
     let mut session = session
         .lock()
         .map_err(|_| "native tactical session lock was poisoned".to_owned())?;
@@ -874,25 +873,17 @@ mod tests {
         }
     }
 
-    fn pointer(kind: PointerButton, x: f64, y: f64) -> PointerSample {
+    fn pointer(x: f64, y: f64) -> PointerSample {
         PointerSample::new(x, y, 1_000.0, 1_000.0).unwrap()
     }
 
     #[test]
     fn viewport_coordinates_round_trip_to_fitted_battlefield_space() {
         let session = session();
-        let center = viewport_to_world(
-            &session.battle,
-            &session.controls,
-            pointer(PointerButton::Primary, 500.0, 500.0),
-        )
-        .unwrap();
-        let top_left = viewport_to_world(
-            &session.battle,
-            &session.controls,
-            pointer(PointerButton::Primary, 0.0, 0.0),
-        )
-        .unwrap();
+        let center = viewport_to_world(&session.battle, &session.controls, pointer(500.0, 500.0))
+            .unwrap();
+        let top_left =
+            viewport_to_world(&session.battle, &session.controls, pointer(0.0, 0.0)).unwrap();
 
         assert_eq!(center, BattlePoint::new(50_000, 50_000));
         assert_eq!(top_left, BattlePoint::new(0, 0));
@@ -936,7 +927,14 @@ mod tests {
             &session.battle,
             &session.controls.render_view(&session.battle),
         );
-        assert!(snapshot.units.iter().find(|unit| unit.unit_id == "attacker-a").unwrap().selected);
+        assert!(
+            snapshot
+                .units
+                .iter()
+                .find(|unit| unit.unit_id == "attacker-a")
+                .unwrap()
+                .selected
+        );
 
         input
             .apply(
@@ -972,8 +970,22 @@ mod tests {
             &session.battle,
             &session.controls.render_view(&session.battle),
         );
-        assert!(snapshot.units.iter().find(|unit| unit.unit_id == "attacker-a").unwrap().selected);
-        assert!(snapshot.units.iter().find(|unit| unit.unit_id == "attacker-b").unwrap().selected);
+        assert!(
+            snapshot
+                .units
+                .iter()
+                .find(|unit| unit.unit_id == "attacker-a")
+                .unwrap()
+                .selected
+        );
+        assert!(
+            snapshot
+                .units
+                .iter()
+                .find(|unit| unit.unit_id == "attacker-b")
+                .unwrap()
+                .selected
+        );
     }
 
     #[test]
@@ -1091,7 +1103,14 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(session.controls.render_view(&session.battle).camera.center_x_mm > before.center_x_mm);
+        assert!(
+            session
+                .controls
+                .render_view(&session.battle)
+                .camera
+                .center_x_mm
+                > before.center_x_mm
+        );
 
         session
             .controls
@@ -1118,13 +1137,16 @@ mod tests {
                 },
             )
             .unwrap();
-        session.controls.apply_request(
-            &mut session.battle,
-            TacticalControlRequest {
-                kind: "clearSelection".to_owned(),
-                ..TacticalControlRequest::default()
-            },
-        ).unwrap();
+        session
+            .controls
+            .apply_request(
+                &mut session.battle,
+                TacticalControlRequest {
+                    kind: "clearSelection".to_owned(),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
         input
             .apply(
                 &mut session.battle,
@@ -1140,7 +1162,14 @@ mod tests {
             &session.battle,
             &session.controls.render_view(&session.battle),
         );
-        assert!(snapshot.units.iter().find(|unit| unit.unit_id == "attacker-a").unwrap().selected);
+        assert!(
+            snapshot
+                .units
+                .iter()
+                .find(|unit| unit.unit_id == "attacker-a")
+                .unwrap()
+                .selected
+        );
 
         assert!(
             input
@@ -1176,7 +1205,13 @@ mod tests {
             player_side,
             input,
         } = &mut session;
-        input.apply_browser(battle, controls, *player_side, first).unwrap();
-        assert!(input.apply_browser(battle, controls, *player_side, skipped).is_err());
+        input
+            .apply_browser(battle, controls, *player_side, first)
+            .unwrap();
+        assert!(
+            input
+                .apply_browser(battle, controls, *player_side, skipped)
+                .is_err()
+        );
     }
 }
