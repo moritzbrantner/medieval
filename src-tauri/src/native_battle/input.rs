@@ -637,7 +637,7 @@ pub fn install_linux_input(
     last_error: SharedError,
 ) -> Result<(), String> {
     use gdk::{EventMask, ModifierType, ScrollDirection, keys::constants};
-    use gtk::prelude::*;
+    use gtk::{glib::Propagation, prelude::*};
 
     let gtk_window = window
         .gtk_window()
@@ -706,9 +706,9 @@ pub fn install_linux_input(
                 },
             );
             finish_native_input(outcome, &key_window, &key_running, &key_error);
-            return gdk::EVENT_STOP;
+            return Propagation::Stop;
         }
-        gdk::EVENT_PROPAGATE
+        Propagation::Proceed
     });
 
     let press_session = Arc::clone(&session);
@@ -722,7 +722,7 @@ pub fn install_linux_input(
             _ => None,
         };
         let Some(button) = button else {
-            return gdk::EVENT_PROPAGATE;
+            return Propagation::Proceed;
         };
         let (x, y) = event.position();
         let input = DesktopInput::PointerDown {
@@ -735,7 +735,7 @@ pub fn install_linux_input(
         };
         let outcome = apply_shared_input(&press_session, input);
         finish_native_input(outcome, &press_window, &press_running, &press_error);
-        gdk::EVENT_STOP
+        Propagation::Stop
     });
 
     let release_session = Arc::clone(&session);
@@ -749,7 +749,7 @@ pub fn install_linux_input(
             _ => None,
         };
         let Some(button) = button else {
-            return gdk::EVENT_PROPAGATE;
+            return Propagation::Proceed;
         };
         let (x, y) = event.position();
         let input = DesktopInput::PointerUp {
@@ -762,7 +762,7 @@ pub fn install_linux_input(
         };
         let outcome = apply_shared_input(&release_session, input);
         finish_native_input(outcome, &release_window, &release_running, &release_error);
-        gdk::EVENT_STOP
+        Propagation::Stop
     });
 
     let scroll_session = session;
@@ -783,7 +783,7 @@ pub fn install_linux_input(
             .unwrap_or(0.0);
         let outcome = apply_shared_input(&scroll_session, DesktopInput::Wheel { delta_y });
         finish_native_input(outcome, &scroll_window, &scroll_running, &scroll_error);
-        gdk::EVENT_STOP
+        Propagation::Stop
     });
 
     fn modifiers_from_gdk(state: ModifierType) -> InputModifiers {
