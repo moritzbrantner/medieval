@@ -4,6 +4,7 @@ import test from "node:test";
 
 const index = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
 const script = await readFile(new URL("../web/main.js", import.meta.url), "utf8");
+const nativeBattleScript = await readFile(new URL("../web/native-battle.js", import.meta.url), "utf8");
 
 function occurrenceCount(haystack, needle) {
   return haystack.split(needle).length - 1;
@@ -28,6 +29,12 @@ test("online battle preview does not expose fake host or join controls", () => {
   assert.match(index, /<button type="button" disabled>Host battle<\/button>/);
   assert.match(index, /<button type="button" class="secondary" disabled>Join invite<\/button>/);
   assert.match(index, /The game will not pretend to be connected until that integration is implemented\./);
+});
+
+test("native renderer preview delegates to Tauri without duplicating battle rules", () => {
+  assert.match(index, /id="open-native-battle"/);
+  assert.match(nativeBattleScript, /invoke\("open_native_battle_renderer"\)/);
+  assert.doesNotMatch(nativeBattleScript, /TacticalBattle|advance_ticks|casualt|morale|frontage|formation/);
 });
 
 test("the future battle gate explicitly waits for verified content on both peers", () => {
