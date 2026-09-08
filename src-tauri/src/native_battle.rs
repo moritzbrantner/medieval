@@ -312,12 +312,12 @@ fn spawn_frame_scheduler(
             while !shutdown.load(Ordering::Acquire) {
                 if running.load(Ordering::Acquire) && !frame_queued.swap(true, Ordering::AcqRel) {
                     let queued = Arc::clone(&frame_queued);
-                    let renderer = Arc::clone(&renderer);
-                    let running = Arc::clone(&running);
-                    let last_error = Arc::clone(&last_error);
+                    let frame_renderer = Arc::clone(&renderer);
+                    let frame_running = Arc::clone(&running);
+                    let frame_last_error = Arc::clone(&last_error);
                     let frame_window = window.clone();
                     let schedule_result = window.run_on_main_thread(move || {
-                        let render_result = renderer
+                        let render_result = frame_renderer
                             .lock()
                             .map_err(|_| "native renderer lock was poisoned".to_owned())
                             .and_then(|mut renderer| {
@@ -329,11 +329,11 @@ fn spawn_frame_scheduler(
                             });
 
                         if let Err(error) = render_result {
-                            running.store(false, Ordering::Release);
-                            if let Ok(mut renderer) = renderer.lock() {
+                            frame_running.store(false, Ordering::Release);
+                            if let Ok(mut renderer) = frame_renderer.lock() {
                                 *renderer = None;
                             }
-                            if let Ok(mut last_error) = last_error.lock() {
+                            if let Ok(mut last_error) = frame_last_error.lock() {
                                 *last_error = Some(error);
                             }
                         }
