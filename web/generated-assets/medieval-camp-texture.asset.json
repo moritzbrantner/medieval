@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "assetId": "medieval.web.camp-texture",
+  "generator": {
+    "id": "builtin.procedural.svg-scatter",
+    "version": "1"
+  },
+  "randomness": {
+    "mode": "seeded",
+    "seed": "1066"
+  },
+  "inputs": {},
+  "models": {},
+  "parameters": {
+    "width": 96,
+    "height": 64,
+    "count": 12,
+    "minRadius": 2,
+    "maxRadius": 7,
+    "background": "#1c1a16",
+    "palette": ["#76664b", "#a88a5a", "#c5b48d"]
+  },
+  "output": {
+    "path": "medieval-camp-texture.svg"
+  },
+  "reproducibility": {
+    "expected": "exact"
+  }
+}

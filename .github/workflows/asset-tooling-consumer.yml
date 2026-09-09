@@ -1,0 +1,33 @@
+name: asset-tooling consumer
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  asset-contract:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout pinned asset-tooling
+        uses: actions/checkout@v4
+        with:
+          repository: moritzbrantner/asset-tooling
+          ref: a9184128839b9c411103e958703c2d1c03dfc9a8
+          path: .consumer-tools/asset-tooling
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Validate, generate, and replay-verify Medieval asset
+        run: |
+          spec="web/generated-assets/medieval-camp-texture.asset.json"
+          tool=".consumer-tools/asset-tooling/src/entry.js"
+          bun "$tool" validate "$spec"
+          bun "$tool" generate "$spec" --receipt .asset-tooling/medieval-camp-texture.receipt.json
+          bun "$tool" verify "$spec" --receipt .asset-tooling/medieval-camp-texture.receipt.json
+          test -s web/generated-assets/medieval-camp-texture.svg
