@@ -8,6 +8,8 @@
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="economy.css" />
     <link rel="stylesheet" href="battle.css" />
+    <link rel="stylesheet" href="opponent.css" />
+    <link rel="stylesheet" href="persistence.css" />
     <link rel="stylesheet" href="online-battle.css" />
   </head>
   <body>
@@ -49,6 +51,11 @@
           <section class="campaign-map" aria-label="Campaign provinces" id="campaign-map"></section>
 
           <aside class="sidebar">
+            <section id="campaign-outcome" class="campaign-outcome" hidden>
+              <p class="eyebrow">Campaign result</p>
+              <div id="campaign-outcome-detail"></div>
+            </section>
+
             <section>
               <p class="eyebrow">Province</p>
               <div id="province-detail" class="province-detail">Select a province on the map.</div>
@@ -75,6 +82,20 @@
               <p class="eyebrow">Chronicle</p>
               <ol id="chronicle" class="chronicle"></ol>
             </section>
+
+            <div class="campaign-reset">
+              <label for="player-faction">New campaign faction</label>
+              <select id="player-faction">
+                <option value="england">Kingdom of England</option>
+                <option value="france">Kingdom of France</option>
+              </select>
+            </div>
+
+            <div class="save-actions" aria-label="Campaign persistence">
+              <button id="save-campaign" class="secondary" type="button">Save</button>
+              <button id="load-campaign" class="secondary" type="button">Load</button>
+            </div>
+            <p id="save-status" class="save-status" aria-live="polite">Turns autosave after the opponent finishes.</p>
 
             <div class="actions">
               <button id="new-campaign" class="secondary" type="button">New campaign</button>
@@ -146,6 +167,13 @@
             <p id="battle-gate-note" class="availability-note">
               This slice stops at compatibility/readiness. No battle simulation traffic is sent.
             </p>
+
+            <div class="online-actions">
+              <button id="open-native-battle" type="button">Open local renderer preview</button>
+            </div>
+            <p id="native-battle-status" class="availability-note" aria-live="polite">
+              Desktop builds can project a fixed Rust-owned tactical snapshot through the native wgpu renderer.
+            </p>
           </section>
 
           <section class="online-panel sync-panel">
@@ -174,6 +202,7 @@
 
     <div id="error" class="error" hidden></div>
     <script src="main.js"></script>
+    <script src="native-battle.js"></script>
     <script type="module" src="online-battle.js"></script>
   </body>
 </html>
