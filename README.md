@@ -25,7 +25,7 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the implementation sequence.
 
 ## Development
 
-Prerequisites: a current stable Rust toolchain and the platform prerequisites for Tauri 2 on desktop.
+Prerequisites: rustup using the repository-pinned Rust toolchain in `rust-toolchain.toml`, plus the platform prerequisites for Tauri 2 on desktop.
 
 ```sh
 cargo install tauri-cli --version "^2.0.0" --locked
@@ -36,6 +36,6 @@ Validation:
 
 ```sh
 cargo fmt --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace
 ```
