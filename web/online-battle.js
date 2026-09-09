@@ -1,6 +1,8 @@
+import { GameCommands } from "./vendor/multiplayer-setup-service/game-commands.js";
 import { LobbySession } from "./vendor/multiplayer-setup-service/lobby-session.js";
 import {
   MEDIEVAL_BATTLE_PROTOCOL,
+  MEDIEVAL_READINESS_COMMAND,
   MEDIEVAL_RELEASE,
   ONLINE_BATTLE_STATES,
   buildInviteUrl,
@@ -45,6 +47,7 @@ const stateCopy = {
 };
 
 let session = null;
+let commands = null;
 let currentPeerId = null;
 let localReady = false;
 let readinessSendPending = false;
@@ -135,6 +138,8 @@ function updateStartGate() {
 
 function closeSession({ keepInviteCode = false } = {}) {
   intentionalClose = true;
+  commands?.close();
+  commands = null;
   session?.close();
   session = null;
   intentionalClose = false;
@@ -177,7 +182,8 @@ function beginReleaseCheck(current, peerId) {
       `Checking Medieval ${MEDIEVAL_RELEASE} against your friend before battle readiness is accepted.`,
     );
     try {
-      current.sendReliable(peerId, createReadinessMessage({ ready: true }));
+      if (!commands) throw new Error("Game command channel is not ready");
+      commands.send(peerId, MEDIEVAL_READINESS_COMMAND, createReadinessMessage({ ready: true }));
       localReady = true;
       readinessSendPending = false;
       if (peerReadiness?.recognized && !peerReadiness.compatible) {
@@ -199,7 +205,36 @@ function enterRecovery(detail) {
   setState("recovery", detail);
 }
 
-function wireSession(current) {
+function wireSession(current, currentCommands) {
+  currentCommands.handle(MEDIEVAL_READINESS_COMMAND, (message, { peerId }) => {
+    if (current !== session || currentCommands !== commands) return;
+    const readiness = inspectReadinessMessage(message);
+    if (!readiness.recognized) return;
+    if (currentPeerId && peerId !== currentPeerId) return;
+
+    currentPeerId = peerId;
+    peerReadiness = readiness;
+    renderPeerReadiness(readiness);
+
+    if (!readiness.compatible) {
+      startButton.disabled = true;
+      setState("failure", readiness.reason);
+      return;
+    }
+
+    setState("release-check", readiness.ready ? "Friend reports compatible readiness; checking the local gate." : "Friend is compatible but not ready.");
+    updateStartGate();
+  });
+
+  currentCommands.addEventListener("error", (event) => {
+    if (current !== session || currentCommands !== commands || intentionalClose) return;
+    if (currentState === "recovery") {
+      statusDetail.textContent = `Recovery is still in progress: ${event.detail.error.message}`;
+      return;
+    }
+    fail(event.detail.error);
+  });
+
   current.addEventListener("lobby", () => {
     lobbyCodeInput.value = current.displayCode;
     presentLobby(current.displayCode);
@@ -275,26 +310,6 @@ function wireSession(current) {
     }
   });
 
-  current.addEventListener("reliable", (event) => {
-    if (current !== session) return;
-    const readiness = inspectReadinessMessage(event.detail.data);
-    if (!readiness.recognized) return;
-    if (currentPeerId && event.detail.peerId !== currentPeerId) return;
-
-    currentPeerId = event.detail.peerId;
-    peerReadiness = readiness;
-    renderPeerReadiness(readiness);
-
-    if (!readiness.compatible) {
-      startButton.disabled = true;
-      setState("failure", readiness.reason);
-      return;
-    }
-
-    setState("release-check", readiness.ready ? "Friend reports compatible readiness; checking the local gate." : "Friend is compatible but not ready.");
-    updateStartGate();
-  });
-
   current.addEventListener("error", (event) => {
     if (current !== session || intentionalClose) return;
     if (currentState === "recovery") {
@@ -307,6 +322,8 @@ function wireSession(current) {
 
 function createSession() {
   intentionalClose = true;
+  commands?.close();
+  commands = null;
   session?.close();
   intentionalClose = false;
   resetReadiness();
@@ -317,8 +334,10 @@ function createSession() {
     iceServers: configuredIceServers("iceServers"),
     turnIceServers: configuredIceServers("turnIceServers"),
   });
+  const currentCommands = new GameCommands({ session: current });
   session = current;
-  wireSession(current);
+  commands = currentCommands;
+  wireSession(current, currentCommands);
   return current;
 }
 
@@ -390,6 +409,7 @@ for (const button of document.querySelectorAll("#online-view [data-back-to-menu]
 
 window.addEventListener("beforeunload", () => {
   intentionalClose = true;
+  commands?.close();
   session?.close();
 });
 
