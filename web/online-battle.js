@@ -15,6 +15,7 @@ import {
 
 const DEFAULT_SETUP_API = "http://127.0.0.1:8787";
 const stateSet = new Set(ONLINE_BATTLE_STATES);
+const commandChannels = new WeakMap();
 
 const hostButton = document.querySelector("#host-battle");
 const joinButton = document.querySelector("#join-battle");
@@ -136,8 +137,21 @@ function updateStartGate() {
   }
 }
 
+function discardSession(current) {
+  commandChannels.get(current)?.close();
+  commandChannels.delete(current);
+  current.close();
+  if (session === current) {
+    commands = null;
+    session = null;
+  }
+}
+
 function closeSession({ keepInviteCode = false } = {}) {
   intentionalClose = true;
+  if (session) {
+    commandChannels.delete(session);
+  }
   commands?.close();
   commands = null;
   session?.close();
@@ -236,6 +250,7 @@ function wireSession(current, currentCommands) {
   });
 
   current.addEventListener("lobby", () => {
+    if (current !== session) return;
     lobbyCodeInput.value = current.displayCode;
     presentLobby(current.displayCode);
     setState("connecting", `Private lobby ${current.displayCode} is active. Waiting for the direct peer link.`);
@@ -322,6 +337,9 @@ function wireSession(current, currentCommands) {
 
 function createSession() {
   intentionalClose = true;
+  if (session) {
+    commandChannels.delete(session);
+  }
   commands?.close();
   commands = null;
   session?.close();
@@ -335,6 +353,7 @@ function createSession() {
     turnIceServers: configuredIceServers("turnIceServers"),
   });
   const currentCommands = new GameCommands({ session: current });
+  commandChannels.set(current, currentCommands);
   session = current;
   commands = currentCommands;
   wireSession(current, currentCommands);
@@ -344,23 +363,39 @@ function createSession() {
 async function hostBattle() {
   setSetupControlsDisabled(true);
   setState("creating", "Creating a private lobby for exactly two participants.");
+  let current = null;
   try {
-    const current = createSession();
+    current = createSession();
     await current.host(2);
+    if (current !== session) discardSession(current);
   } catch (error) {
-    fail(error);
+    if (!current) {
+      fail(error);
+      return;
+    }
+    const active = current === session;
+    discardSession(current);
+    if (active) fail(error);
   }
 }
 
 async function joinBattle() {
   setSetupControlsDisabled(true);
   setState("joining", "Joining the private lobby with a new participant capability owned only by this client.");
+  let current = null;
   try {
     const code = normalizeLobbyCode(lobbyCodeInput.value);
-    const current = createSession();
+    current = createSession();
     await current.join(code);
+    if (current !== session) discardSession(current);
   } catch (error) {
-    fail(error);
+    if (!current) {
+      fail(error);
+      return;
+    }
+    const active = current === session;
+    discardSession(current);
+    if (active) fail(error);
   }
 }
 
