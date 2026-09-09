@@ -34,7 +34,16 @@ test("online battle preview does not expose fake host or join controls", () => {
 test("native renderer preview delegates to Tauri without duplicating battle rules", () => {
   assert.match(index, /id="open-native-battle"/);
   assert.match(nativeBattleScript, /invoke\("open_native_battle_renderer"\)/);
-  assert.doesNotMatch(nativeBattleScript, /TacticalBattle|advance_ticks|casualt|morale|frontage|formation/);
+  assert.match(nativeBattleScript, /medieval:tactical-input/);
+  assert.match(nativeBattleScript, /"keydown"/);
+  assert.match(nativeBattleScript, /"pointerdown"/);
+  assert.match(nativeBattleScript, /"pointerup"/);
+  assert.match(nativeBattleScript, /"wheel"/);
+  assert.match(nativeBattleScript, /sequence:\s*inputSequence/);
+  assert.doesNotMatch(
+    nativeBattleScript,
+    /TacticalBattle|advance_ticks|casualt|morale|frontage|formation|selectReplace|moveSelected|engageSelected|control_native_battle/,
+  );
 });
 
 test("the future battle gate explicitly waits for verified content on both peers", () => {
