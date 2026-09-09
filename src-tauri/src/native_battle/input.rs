@@ -5,11 +5,14 @@ use std::sync::{
 
 use medieval_core::{BattlePoint, BattleSide, TacticalBattle};
 use serde::Deserialize;
-use tauri::{Listener, Window};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use tauri::Listener;
+use tauri::Window;
 
 use super::controls::{TacticalControlError, TacticalControlRequest, TacticalControls};
 use super::{NativeBattleSession, SharedError, SharedSession};
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub const BROWSER_INPUT_EVENT: &str = "medieval:tactical-input";
 
 const CAMERA_PAN_FRACTION: f32 = 0.05;
@@ -28,6 +31,7 @@ pub struct InputModifiers {
     pub control: bool,
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserInputEnvelope {
@@ -119,6 +123,7 @@ struct PointerGesture {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DesktopInputState {
     pointer_gesture: Option<PointerGesture>,
+    #[cfg(any(target_os = "windows", target_os = "macos", test))]
     next_browser_sequence: u64,
 }
 
@@ -130,9 +135,13 @@ pub struct InputOutcome {
 impl DesktopInputState {
     pub fn reset_browser_sequence(&mut self) {
         self.pointer_gesture = None;
-        self.next_browser_sequence = 1;
+        #[cfg(any(target_os = "windows", target_os = "macos", test))]
+        {
+            self.next_browser_sequence = 1;
+        }
     }
 
+    #[cfg(any(target_os = "windows", target_os = "macos", test))]
     fn apply_browser(
         &mut self,
         battle: &mut TacticalBattle,
@@ -585,6 +594,7 @@ fn apply_control_ignoring_empty_selection(
     }
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub fn install_browser_input_listener(
     app: &tauri::App,
     window: Window,
