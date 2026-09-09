@@ -5,6 +5,8 @@ on:
     paths:
       - ".github/workflows/platform-smoke.yml"
       - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
       - "crates/**"
       - "src-tauri/**"
       - "web/**"
@@ -40,10 +42,10 @@ jobs:
             patchelf
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
 
       - name: Compile native application shell in release mode
-        run: cargo build --package medieval --release
+        run: cargo build --locked --package medieval --release
 
   browser-input-contract:
     name: desktop input contract
