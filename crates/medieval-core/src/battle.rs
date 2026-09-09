@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Army, CampaignError, CampaignState};
+use crate::{Army, CampaignError, CampaignState, UnitKind};
 
 const DEFENDER_MODIFIER_PERCENT: u32 = 8;
+const AI_ATTACK_SCORE: u64 = 1_000_000;
+const AI_REINFORCE_SCORE: u64 = 100_000;
+const AI_FRIENDLY_MOVE_SCORE: u64 = 10_000;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -211,7 +214,191 @@ impl CampaignState {
             ),
         });
 
+        if let Some(winner) = self.winner() {
+            self.log.push(format!(
+                "Turn {}: {} has won the campaign.",
+                self.turn,
+                self.faction_name(&winner)
+            ));
+        }
+
         Ok(report)
+    }
+
+    /// Configure a freshly-created campaign so the chosen faction receives the
+    /// first human turn without applying a synthetic economy tick.
+    pub fn select_player_faction(&mut self, faction_id: &str) -> Result<(), CampaignError> {
+        self.faction(faction_id)?;
+        self.active_faction = faction_id.to_owned();
+        for faction in &mut self.factions {
+            faction.last_economy_turn = (faction.id == faction_id).then_some(self.turn);
+        }
+        for army in &mut self.armies {
+            army.moved_this_turn = false;
+        }
+        self.pending_battle = None;
+        self.log.push(format!(
+            "Turn {}: {} is chosen as the player faction.",
+            self.turn,
+            self.faction_name(faction_id)
+        ));
+        Ok(())
+    }
+
+    /// Returns the authoritative winning faction, if the campaign is over.
+    /// A faction wins by controlling every province or by being the only
+    /// faction that still controls a province or fields an army.
+    #[must_use]
+    pub fn winner(&self) -> Option<String> {
+        self.factions
+            .iter()
+            .find(|faction| {
+                !self.provinces.is_empty()
+                    && self
+                        .provinces
+                        .iter()
+                        .all(|province| province.owner == faction.id)
+            })
+            .map(|faction| faction.id.clone())
+            .or_else(|| {
+                let living: Vec<&str> = self
+                    .factions
+                    .iter()
+                    .filter(|faction| {
+                        self.provinces
+                            .iter()
+                            .any(|province| province.owner == faction.id)
+                            || self.armies.iter().any(|army| army.owner == faction.id)
+                    })
+                    .map(|faction| faction.id.as_str())
+                    .collect();
+                (living.len() == 1).then(|| living[0].to_owned())
+            })
+    }
+
+    /// Play one complete deterministic AI faction turn using the same public
+    /// recruitment, movement, battle-resolution, and end-turn commands that a
+    /// human turn uses. The caller supplies the human faction only to identify
+    /// which active faction must never be automated.
+    pub fn play_ai_turn(&mut self, human_faction: &str, seed: u64) -> Result<(), CampaignError> {
+        self.faction(human_faction)?;
+        if self.active_faction == human_faction || self.winner().is_some() {
+            return Ok(());
+        }
+
+        let ai_faction = self.active_faction.clone();
+        self.log.push(format!(
+            "Turn {}: {} plans its deterministic opponent turn with seed {}.",
+            self.turn,
+            self.faction_name(&ai_faction),
+            seed
+        ));
+
+        self.ai_recruit(seed)?;
+        self.ai_move(seed)?;
+
+        if self.pending_battle.is_some() {
+            self.resolve_pending_battle(mix(seed, 0xB477_1E5E_DA7A_5EED))?;
+        }
+
+        if self.winner().is_none() {
+            self.end_turn()?;
+        }
+        Ok(())
+    }
+
+    fn ai_recruit(&mut self, seed: u64) -> Result<(), CampaignError> {
+        let faction_id = self.active_faction.clone();
+        let mut province_candidates: Vec<(u64, String)> = self
+            .provinces
+            .iter()
+            .filter(|province| province.owner == faction_id)
+            .map(|province| {
+                let frontier = province.neighbors.iter().any(|neighbor_id| {
+                    self.provinces
+                        .iter()
+                        .any(|neighbor| neighbor.id == *neighbor_id && neighbor.owner != faction_id)
+                });
+                let score = u64::from(frontier) * AI_REINFORCE_SCORE
+                    + u64::from(province.wealth).saturating_mul(100)
+                    + mix(seed, hash_text(&province.id)) % 100;
+                (score, province.id.clone())
+            })
+            .collect();
+        province_candidates
+            .sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+
+        for (_, province_id) in province_candidates {
+            let options: Vec<UnitKind> = self
+                .recruitment_options(&province_id)?
+                .into_iter()
+                .filter(|option| option.available)
+                .map(|option| option.unit)
+                .collect();
+            if options.is_empty() {
+                continue;
+            }
+
+            let option_index = usize::try_from(
+                mix(seed, hash_text(&province_id) ^ 0xA11C_E001) % options.len() as u64,
+            )
+            .unwrap_or(0);
+            self.queue_recruitment(&province_id, options[option_index])?;
+            break;
+        }
+        Ok(())
+    }
+
+    fn ai_move(&mut self, seed: u64) -> Result<(), CampaignError> {
+        let faction_id = self.active_faction.clone();
+        let mut army_ids: Vec<String> = self
+            .armies
+            .iter()
+            .filter(|army| army.owner == faction_id && !army.moved_this_turn)
+            .map(|army| army.id.clone())
+            .collect();
+        army_ids.sort();
+
+        let mut choices: Vec<(u64, String, String)> = Vec::new();
+        for army_id in army_ids {
+            for destination in self.legal_destinations(&army_id)? {
+                let province = self.province(&destination)?;
+                let hostile = province.owner != faction_id;
+                let friendly_frontier = !hostile
+                    && province.neighbors.iter().any(|neighbor_id| {
+                        self.provinces.iter().any(|neighbor| {
+                            neighbor.id == *neighbor_id && neighbor.owner != faction_id
+                        })
+                    });
+                let strategic_score = if hostile {
+                    AI_ATTACK_SCORE
+                } else if friendly_frontier {
+                    AI_REINFORCE_SCORE
+                } else {
+                    AI_FRIENDLY_MOVE_SCORE
+                };
+                let tie_break = mix(
+                    seed,
+                    hash_text(&format!("{army_id}:{destination}")) ^ 0xA11C_0A0E,
+                ) % 1_000;
+                let score =
+                    strategic_score + u64::from(province.wealth).saturating_mul(100) + tie_break;
+                choices.push((score, army_id.clone(), destination));
+            }
+        }
+
+        choices.sort_by(|left, right| {
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| left.1.cmp(&right.1))
+                .then_with(|| left.2.cmp(&right.2))
+        });
+
+        if let Some((_, army_id, destination)) = choices.first() {
+            self.move_army(army_id, destination)?;
+        }
+        Ok(())
     }
 }
 
@@ -264,6 +451,14 @@ fn rolled_score(strength: u64, seed: u64, salt: u64) -> u64 {
 fn casualty_percent(seed: u64, salt: u64, min: u32, max_exclusive: u32) -> u32 {
     let width = u64::from(max_exclusive.saturating_sub(min).max(1));
     min.saturating_add(u32::try_from(mix(seed, salt) % width).unwrap_or(0))
+}
+
+fn hash_text(text: &str) -> u64 {
+    text.as_bytes()
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01B3)
+        })
 }
 
 fn mix(seed: u64, salt: u64) -> u64 {
@@ -370,5 +565,162 @@ mod tests {
                 .iter()
                 .any(|army| army.owner == "france" && army.province == "paris")
         );
+    }
+
+    #[test]
+    fn player_can_choose_either_starting_faction_without_synthetic_income() {
+        let mut campaign = new_campaign();
+        campaign.select_player_faction("france").unwrap();
+
+        assert_eq!(campaign.active_faction, "france");
+        assert_eq!(campaign.turn, 1);
+        assert_eq!(campaign.year, 1087);
+        assert_eq!(campaign.faction("france").unwrap().treasury, 1_200);
+        assert_eq!(
+            campaign.faction("france").unwrap().last_economy_turn,
+            Some(1)
+        );
+        assert_eq!(campaign.faction("england").unwrap().last_economy_turn, None);
+    }
+
+    #[test]
+    fn choosing_an_unknown_player_faction_fails_closed() {
+        let mut campaign = new_campaign();
+        let before = campaign.clone();
+
+        assert!(matches!(
+            campaign.select_player_faction("vikings"),
+            Err(CampaignError::FactionNotFound(_))
+        ));
+        assert_eq!(campaign, before);
+    }
+
+    #[test]
+    fn winner_is_none_while_both_factions_remain_viable() {
+        assert_eq!(new_campaign().winner(), None);
+    }
+
+    #[test]
+    fn controlling_every_province_is_an_authoritative_win() {
+        let mut campaign = new_campaign();
+        for province in &mut campaign.provinces {
+            province.owner = "england".into();
+        }
+
+        assert_eq!(campaign.winner().as_deref(), Some("england"));
+    }
+
+    #[test]
+    fn eliminating_every_province_and_army_is_an_authoritative_loss() {
+        let mut campaign = new_campaign();
+        for province in &mut campaign.provinces {
+            province.owner = "france".into();
+        }
+        campaign.armies.retain(|army| army.owner != "england");
+
+        assert_eq!(campaign.winner().as_deref(), Some("france"));
+    }
+
+    #[test]
+    fn ai_turn_is_reproducible_for_same_state_and_seed() {
+        let mut base = new_campaign();
+        base.end_turn().unwrap();
+        let mut first = base.clone();
+        let mut second = base;
+
+        first.play_ai_turn("england", 81).unwrap();
+        second.play_ai_turn("england", 81).unwrap();
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn ai_uses_recruitment_rules_and_never_spends_below_zero() {
+        let mut campaign = new_campaign();
+        campaign.end_turn().unwrap();
+        let treasury_before = campaign.faction("france").unwrap().treasury;
+
+        campaign.play_ai_turn("england", 13).unwrap();
+
+        let france = campaign.faction("france").unwrap();
+        assert!(france.treasury <= treasury_before);
+        assert!(
+            campaign
+                .recruitment_queue
+                .iter()
+                .any(|order| order.faction_id == "france")
+        );
+    }
+
+    #[test]
+    fn ai_does_not_automate_the_human_faction() {
+        let mut campaign = new_campaign();
+        let before = campaign.clone();
+
+        campaign.play_ai_turn("england", 19).unwrap();
+
+        assert_eq!(campaign, before);
+    }
+
+    #[test]
+    fn ai_prefers_a_legal_attack_and_resolves_it_before_ending_turn() {
+        let mut campaign = new_campaign();
+        campaign.end_turn().unwrap();
+
+        campaign.play_ai_turn("england", 42).unwrap();
+
+        assert_eq!(campaign.active_faction, "england");
+        assert!(campaign.pending_battle.is_none());
+        assert_eq!(campaign.battle_reports.len(), 1);
+        assert_eq!(campaign.battle_reports[0].attacker_faction, "france");
+        assert_eq!(campaign.battle_reports[0].target_province, "normandy");
+    }
+
+    #[test]
+    fn ai_can_reinforce_a_friendly_frontier_when_no_attack_is_adjacent() {
+        let mut campaign = new_campaign();
+        campaign.active_faction = "france".into();
+        campaign.armies.retain(|army| army.owner != "england");
+        let france = campaign
+            .armies
+            .iter_mut()
+            .find(|army| army.id == "france-main")
+            .unwrap();
+        france.province = "flanders".into();
+        for province in &mut campaign.provinces {
+            province.owner = match province.id.as_str() {
+                "wessex" | "normandy" => "england".into(),
+                _ => "france".into(),
+            };
+        }
+
+        campaign.play_ai_turn("england", 7).unwrap();
+
+        let france = campaign
+            .armies
+            .iter()
+            .find(|army| army.id == "france-main")
+            .unwrap();
+        assert_eq!(france.province, "paris");
+        assert!(campaign.battle_reports.is_empty());
+        assert_eq!(campaign.active_faction, "england");
+    }
+
+    #[test]
+    fn ai_with_no_treasury_still_moves_legally_without_recruiting() {
+        let mut campaign = new_campaign();
+        campaign.end_turn().unwrap();
+        campaign.factions[1].treasury = 0;
+
+        campaign.play_ai_turn("england", 101).unwrap();
+
+        assert!(
+            campaign
+                .recruitment_queue
+                .iter()
+                .all(|order| order.faction_id != "france")
+        );
+        assert!(campaign.pending_battle.is_none());
+        assert_eq!(campaign.active_faction, "england");
     }
 }

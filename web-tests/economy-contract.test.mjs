@@ -15,7 +15,7 @@ test("recruitment options and rejection reasons come from Rust", () => {
     script,
     /requestId !== recruitmentRequestId \|\|\s*requestedProvinceId !== selectedProvinceId/,
   );
-  assert.match(script, /button\.disabled = !option\.available/);
+  assert.match(script, /button\.disabled = campaignBusy \|\| !option\.available/);
   assert.match(script, /reason\.textContent = option\.reason/);
   assert.doesNotMatch(script, /unitCosts|recruitmentCosts|costByUnit/);
 });

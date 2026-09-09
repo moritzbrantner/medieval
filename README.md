@@ -4,6 +4,8 @@ A Rust-first strategy game inspired by the campaign-and-battle structure of *Med
 
 The project starts deliberately small: a turn-based province campaign with armies, movement, recruitment, economy, and deterministic auto-resolved battles. Real-time tactical battles come only after the campaign loop is fun and stable.
 
+The current product and acceptance target is desktop. Android/iOS packaging, mobile-specific input, and mobile layout validation are explicitly deferred until mobile becomes a deliberate product priority.
+
 ## Architecture
 
 - `crates/medieval-core` — authoritative deterministic game rules and state transitions in Rust.
@@ -11,7 +13,7 @@ The project starts deliberately small: a turn-based province campaign with armie
 - `web` — presentation/input layer; it renders Rust-owned state and sends player intents back to Rust.
 - `docs/ROADMAP.md` — vertical MVP roadmap and explicit non-goals.
 
-The core crate stays UI- and platform-independent so it can be tested cheaply and reused by desktop/mobile shells or future multiplayer/server work.
+The core crate stays UI- and platform-independent so it can be tested cheaply and reused by the desktop shell today or future multiplayer/server/platform work later.
 
 ## MVP definition
 
@@ -23,7 +25,7 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the implementation sequence.
 
 ## Development
 
-Prerequisites: a current stable Rust toolchain and the platform prerequisites for Tauri 2.
+Prerequisites: a current stable Rust toolchain and the platform prerequisites for Tauri 2 on desktop.
 
 ```sh
 cargo install tauri-cli --version "^2.0.0" --locked
