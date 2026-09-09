@@ -1,6 +1,7 @@
 export const MEDIEVAL_RELEASE = "0.1.0";
 export const MEDIEVAL_BATTLE_PROTOCOL = 1;
 export const MEDIEVAL_READINESS_PROTOCOL = 1;
+export const MEDIEVAL_READINESS_COMMAND = "medieval.battle.ready";
 export const READINESS_MESSAGE_TYPE = "medieval-ready";
 
 export const ONLINE_BATTLE_STATES = Object.freeze([
