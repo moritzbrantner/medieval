@@ -4,6 +4,7 @@ import test from "node:test";
 
 const index = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
 const script = await readFile(new URL("../web/main.js", import.meta.url), "utf8");
+const nativeBattleScript = await readFile(new URL("../web/native-battle.js", import.meta.url), "utf8");
 
 function occurrenceCount(haystack, needle) {
   return haystack.split(needle).length - 1;
@@ -31,6 +32,13 @@ test("online battle exposes real lobby controls and a separate module", () => {
   assert.match(index, /id="start-battle"[^>]*disabled>Start battle<\/button>/);
   assert.match(index, /<script type="module" src="online-battle\.js"><\/script>/);
   assert.doesNotMatch(index, /Lobby controls are the next multiplayer implementation horizon/);
+});
+
+test("native renderer preview remains available beside multiplayer setup", () => {
+  assert.match(index, /id="open-native-battle"/);
+  assert.match(index, /<script src="native-battle\.js"><\/script>/);
+  assert.match(nativeBattleScript, /invoke\("open_native_battle_renderer"\)/);
+  assert.doesNotMatch(nativeBattleScript, /TacticalBattle|advance_ticks|casualt|morale|frontage|formation/);
 });
 
 test("the future asset gate remains explicitly separate from lobby readiness", () => {
