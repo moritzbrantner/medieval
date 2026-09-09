@@ -1,3 +1,5 @@
 /target
 /src-tauri/gen
+/web/generated-assets/medieval-camp-texture.svg
+/web/generated-assets/.asset-tooling/
 .DS_Store
