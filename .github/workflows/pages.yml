@@ -24,12 +24,21 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: Check portable Rust on wasm32
         run: cargo check --locked -p medieval-core -p medieval-renderer --target wasm32-unknown-unknown
-      - name: Build browser runtime
+      - name: Build campaign browser runtime
         run: cargo build --manifest-path web-wasm/Cargo.toml --target wasm32-unknown-unknown --release
+      - name: Build tactical browser runtime
+        run: cargo build --manifest-path web-battle-wasm/Cargo.toml --target wasm32-unknown-unknown --release
+      - name: Install wasm-bindgen CLI
+        run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
       - name: Stage Pages artifact
         run: |
           mkdir -p web/pkg
           cp web-wasm/target/wasm32-unknown-unknown/release/medieval_web_wasm.wasm web/pkg/medieval_web_wasm.wasm
+          wasm-bindgen web-battle-wasm/target/wasm32-unknown-unknown/release/medieval_web_battle.wasm \
+            --target web \
+            --out-dir web/pkg \
+            --out-name medieval_web_battle \
+            --no-typescript
           touch web/.nojekyll
       - name: Check browser JavaScript syntax
         run: find web -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | sort -z | xargs -0 -n1 node --check
