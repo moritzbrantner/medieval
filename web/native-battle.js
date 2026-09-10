@@ -30,6 +30,11 @@ let browserInputActive = false;
 let inputSequence = 0;
 let inputQueue = Promise.resolve();
 
+if (window.__MEDIEVAL_RUNTIME__ === "wasm" && nativeBattleButton) {
+  nativeBattleButton.textContent = "Open single-player battle sandbox";
+  nativeBattleStatus.textContent = "Run the Rust tactical simulation directly in this browser through WebGPU.";
+}
+
 function modifiers(event) {
   return {
     shift: event.shiftKey,
@@ -132,6 +137,11 @@ window.addEventListener(
 );
 
 nativeBattleButton?.addEventListener("click", async () => {
+  if (window.__MEDIEVAL_RUNTIME__ === "wasm") {
+    window.location.href = new URL("battle.html", window.location.href).href;
+    return;
+  }
+
   const invoke = window.__TAURI__?.core?.invoke;
   if (!invoke) {
     nativeBattleStatus.textContent = "The native renderer preview is available in the desktop app.";
