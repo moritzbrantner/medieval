@@ -1,4 +1,5 @@
 const nativeBattleButton = document.querySelector("#open-native-battle");
+const battleSandboxButton = document.querySelector("#open-battle-sandbox");
 const nativeBattleStatus = document.querySelector("#native-battle-status");
 
 const TACTICAL_INPUT_EVENT = "medieval:tactical-input";
@@ -29,6 +30,11 @@ const tacticalKeys = new Set([
 let browserInputActive = false;
 let inputSequence = 0;
 let inputQueue = Promise.resolve();
+
+if (window.__MEDIEVAL_RUNTIME__ === "wasm" && nativeBattleButton) {
+  nativeBattleButton.textContent = "Open single-player battle sandbox";
+  nativeBattleStatus.textContent = "Run the Rust tactical simulation directly in this browser through WebGPU.";
+}
 
 function modifiers(event) {
   return {
@@ -131,14 +137,20 @@ window.addEventListener(
   true,
 );
 
-nativeBattleButton?.addEventListener("click", async () => {
+async function openBattlePreview() {
+  if (window.__MEDIEVAL_RUNTIME__ === "wasm") {
+    window.location.href = new URL("battle.html", window.location.href).href;
+    return;
+  }
+
   const invoke = window.__TAURI__?.core?.invoke;
   if (!invoke) {
     nativeBattleStatus.textContent = "The native renderer preview is available in the desktop app.";
     return;
   }
 
-  nativeBattleButton.disabled = true;
+  if (nativeBattleButton) nativeBattleButton.disabled = true;
+  if (battleSandboxButton) battleSandboxButton.disabled = true;
   nativeBattleStatus.textContent = "Opening the Rust/wgpu tactical renderer…";
   try {
     const result = await invoke("open_native_battle_renderer");
@@ -152,6 +164,10 @@ nativeBattleButton?.addEventListener("click", async () => {
     browserInputActive = false;
     nativeBattleStatus.textContent = `Could not open native tactical renderer: ${String(error)}`;
   } finally {
-    nativeBattleButton.disabled = false;
+    if (nativeBattleButton) nativeBattleButton.disabled = false;
+    if (battleSandboxButton) battleSandboxButton.disabled = false;
   }
-});
+}
+
+nativeBattleButton?.addEventListener("click", openBattlePreview);
+battleSandboxButton?.addEventListener("click", openBattlePreview);

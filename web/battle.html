@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#15130f" />
+    <title>Medieval — Battle Sandbox</title>
+    <link rel="stylesheet" href="battle-sandbox.css" />
+  </head>
+  <body>
+    <main class="sandbox-shell">
+      <header class="sandbox-header">
+        <div>
+          <a class="back-link" href="index.html">← Medieval</a>
+          <p class="eyebrow">Single-player tactical sandbox</p>
+          <h1>Battle Sandbox</h1>
+        </div>
+        <div class="battle-state" aria-live="polite">
+          <strong id="battle-state">Loading Rust + WebGPU…</strong>
+          <span id="battle-selection">No units selected.</span>
+        </div>
+      </header>
+
+      <section class="sandbox-layout">
+        <div class="battlefield-frame">
+          <canvas
+            id="battle-canvas"
+            tabindex="0"
+            aria-label="Interactive tactical battlefield. Left click your units to select them and right click to issue orders."
+          ></canvas>
+          <div id="battle-error" class="battle-error" role="alert" hidden></div>
+        </div>
+
+        <aside class="sandbox-sidebar" aria-label="Battle sandbox controls">
+          <section>
+            <p class="eyebrow">Orders</p>
+            <div class="button-row">
+              <button id="pause-battle" type="button">Pause</button>
+              <button id="stop-units" type="button" class="secondary">Stop selected</button>
+            </div>
+            <div class="button-row">
+              <button id="fit-camera" type="button" class="secondary">Fit camera</button>
+              <button id="reset-battle" type="button" class="secondary">Reset battle</button>
+            </div>
+          </section>
+
+          <section class="instructions">
+            <p class="eyebrow">Controls</p>
+            <p><strong>Left click</strong> a player unit to select it. Hold <strong>Shift</strong> to add or remove a unit.</p>
+            <p><strong>Right click</strong> the field to move selected units, or an opponent unit to engage it.</p>
+            <p><strong>WASD / arrows</strong> pan. <strong>Mouse wheel / + / −</strong> zoom. <strong>Space</strong> stops selected units. <strong>0</strong> fits the camera. <strong>P</strong> pauses.</p>
+          </section>
+
+          <section>
+            <p class="eyebrow">Live units</p>
+            <div id="unit-list" class="unit-list" aria-live="polite"></div>
+          </section>
+
+          <p class="runtime-note">
+            Simulation, orders, casualties, morale, fatigue, routing, and rendering are Rust-owned. JavaScript only adapts browser input and updates this status panel.
+          </p>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module" src="battle-sandbox.js"></script>
+  </body>
+</html>
