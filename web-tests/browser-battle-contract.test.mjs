@@ -52,6 +52,15 @@ test("native and browser runtimes consume one tactical control implementation", 
   assert.match(browserControls, /include!\("\.\.\/\.\.\/shared\/tactical_controls\.rs"\)/);
 });
 
+test("browser snapshots reconcile autonomous routing before exposing selection", () => {
+  assert.match(browserControls, /fn reconcile_with_battle\([\s\S]*self\.sync_with_battle\(battle\)/);
+  const renderView = browserControls.slice(browserControls.indexOf("pub fn render_view"));
+  const reconcileIndex = renderView.indexOf("controls.reconcile_with_battle(battle);");
+  const renderIndex = renderView.indexOf("controls.render_view(battle)");
+  assert.ok(reconcileIndex >= 0, "browser render snapshots must reconcile the shared control state");
+  assert.ok(renderIndex > reconcileIndex, "selection must be reconciled before projection/status reads it");
+});
+
 test("Pages creates browser bindings from the tactical WASM artifact", () => {
   assert.match(pages, /web-battle-wasm\/Cargo\.toml/);
   assert.match(pages, /wasm-bindgen-cli --version 0\.2\.127 --locked/);
