@@ -1,0 +1,232 @@
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  color-scheme: dark;
+  font-family: Georgia, "Times New Roman", serif;
+  background: #15130f;
+  color: #eee5d1;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: radial-gradient(circle at top, #252016 0, #15130f 56%, #0d0c0a 100%);
+}
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  min-height: 42px;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid #887452;
+  border-radius: 4px;
+  background: #7c6339;
+  color: #fff7e6;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #28231a;
+}
+
+button:hover {
+  filter: brightness(1.08);
+}
+
+button:focus-visible,
+a:focus-visible,
+canvas:focus-visible {
+  outline: 2px solid #e0bd76;
+  outline-offset: 3px;
+}
+
+.sandbox-shell {
+  width: min(1600px, 100%);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+
+.sandbox-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 0.5rem 0 1rem;
+}
+
+.sandbox-header h1 {
+  margin: 0.2rem 0 0;
+  font-size: clamp(2rem, 5vw, 3.8rem);
+  font-weight: 500;
+}
+
+.eyebrow {
+  margin: 0 0 0.35rem;
+  color: #c9ad78;
+  font-family: system-ui, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.back-link {
+  color: #d9c7a5;
+  font-family: system-ui, sans-serif;
+  text-decoration: none;
+}
+
+.battle-state {
+  display: grid;
+  gap: 0.25rem;
+  max-width: 32rem;
+  text-align: right;
+  font-family: system-ui, sans-serif;
+  color: #cfc5b1;
+}
+
+.battle-state strong {
+  color: #f6ecd6;
+}
+
+.sandbox-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 1rem;
+  min-height: calc(100vh - 9rem);
+}
+
+.battlefield-frame {
+  position: relative;
+  min-height: 620px;
+  overflow: hidden;
+  border: 1px solid #5f523c;
+  border-radius: 6px;
+  background: #0e0c09;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.28);
+}
+
+#battle-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 620px;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.battle-error {
+  position: absolute;
+  inset: auto 1rem 1rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid #9b554a;
+  border-radius: 4px;
+  background: rgb(55 18 14 / 0.94);
+  color: #ffd9d1;
+  font-family: system-ui, sans-serif;
+}
+
+.sandbox-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1.3rem;
+  padding: 1rem;
+  border: 1px solid #514633;
+  border-radius: 6px;
+  background: rgb(25 22 17 / 0.9);
+  font-family: system-ui, sans-serif;
+}
+
+.sandbox-sidebar section {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #3d3528;
+}
+
+.button-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+  margin-top: 0.55rem;
+}
+
+.instructions p {
+  margin: 0.45rem 0;
+  color: #d1c6b3;
+  line-height: 1.45;
+}
+
+.unit-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.unit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.2rem 0.75rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid #332d23;
+}
+
+.unit-row:last-child {
+  border-bottom: 0;
+}
+
+.unit-row[data-selected="true"] strong {
+  color: #f4cd7c;
+}
+
+.unit-row[data-state="routed"],
+.unit-row[data-state="destroyed"] {
+  opacity: 0.55;
+}
+
+.unit-row small {
+  grid-column: 1 / -1;
+  color: #aaa08e;
+}
+
+.unit-side {
+  color: #b8ac98;
+  font-size: 0.8rem;
+  text-transform: capitalize;
+}
+
+.runtime-note {
+  margin: auto 0 0;
+  color: #958a78;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 900px) {
+  .sandbox-shell {
+    padding: 0.75rem;
+  }
+
+  .sandbox-header {
+    align-items: start;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .battle-state {
+    text-align: left;
+  }
+
+  .sandbox-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .battlefield-frame,
+  #battle-canvas {
+    min-height: 58vh;
+  }
+}
