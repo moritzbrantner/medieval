@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [html, script, wasmRust, nativeControls, browserControls, pages] = await Promise.all([
+const [html, index, script, launcher, wasmRust, nativeControls, browserControls, pages] = await Promise.all([
   readFile(new URL("../web/battle.html", import.meta.url), "utf8"),
+  readFile(new URL("../web/index.html", import.meta.url), "utf8"),
   readFile(new URL("../web/battle-sandbox.js", import.meta.url), "utf8"),
+  readFile(new URL("../web/native-battle.js", import.meta.url), "utf8"),
   readFile(new URL("../web-battle-wasm/src/lib.rs", import.meta.url), "utf8"),
   readFile(new URL("../src-tauri/src/native_battle/controls.rs", import.meta.url), "utf8"),
   readFile(new URL("../web-battle-wasm/src/controls.rs", import.meta.url), "utf8"),
@@ -12,6 +14,10 @@ const [html, script, wasmRust, nativeControls, browserControls, pages] = await P
 ]);
 
 test("Pages exposes a focused single-player tactical sandbox", () => {
+  assert.match(index, /id="open-battle-sandbox"/);
+  assert.match(index, />Battle Sandbox</);
+  assert.match(launcher, /battleSandboxButton\?\.addEventListener\("click", openBattlePreview\)/);
+  assert.match(launcher, /new URL\("battle\.html", window\.location\.href\)/);
   assert.match(html, /<canvas[\s\S]*id="battle-canvas"/);
   assert.match(html, /id="pause-battle"/);
   assert.match(html, /id="stop-units"/);
