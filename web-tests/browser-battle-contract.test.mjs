@@ -1,0 +1,55 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const [html, script, wasmRust, nativeControls, browserControls, pages] = await Promise.all([
+  readFile(new URL("../web/battle.html", import.meta.url), "utf8"),
+  readFile(new URL("../web/battle-sandbox.js", import.meta.url), "utf8"),
+  readFile(new URL("../web-battle-wasm/src/lib.rs", import.meta.url), "utf8"),
+  readFile(new URL("../src-tauri/src/native_battle/controls.rs", import.meta.url), "utf8"),
+  readFile(new URL("../web-battle-wasm/src/controls.rs", import.meta.url), "utf8"),
+  readFile(new URL("../.github/workflows/pages.yml", import.meta.url), "utf8"),
+]);
+
+test("Pages exposes a focused single-player tactical sandbox", () => {
+  assert.match(html, /<canvas[\s\S]*id="battle-canvas"/);
+  assert.match(html, /id="pause-battle"/);
+  assert.match(html, /id="stop-units"/);
+  assert.match(html, /id="fit-camera"/);
+  assert.match(html, /id="reset-battle"/);
+  assert.match(html, /type="module" src="battle-sandbox\.js"/);
+});
+
+test("browser input is adaptation only while tactical state remains Rust-owned", () => {
+  assert.match(script, /medieval_web_battle\.js/);
+  assert.match(script, /battle_sandbox_start/);
+  assert.match(script, /battle_sandbox_frame/);
+  assert.match(script, /battle_sandbox_pointer/);
+  assert.match(script, /battle_sandbox_control/);
+  assert.doesNotMatch(script, /advance_ticks|TacticalBattle|issue_move_order|issue_engagement_order/);
+  assert.doesNotMatch(script, /casualt(?:y|ies).*[-+*/]|morale.*[-+*/]|fatigue.*[-+*/]/i);
+});
+
+test("browser sandbox renders through wgpu and advances the real tactical core", () => {
+  assert.match(wasmRust, /SurfaceTarget::Canvas/);
+  assert.match(wasmRust, /GpuBattleRenderer/);
+  assert.match(wasmRust, /TACTICAL_TICKS_PER_SECOND/);
+  assert.match(wasmRust, /battle\.advance_ticks\(pending_ticks\)/);
+  assert.match(wasmRust, /TacticalControls/);
+  assert.match(wasmRust, /issue_engagement_order/);
+  assert.match(wasmRust, /battle_sandbox_start/);
+  assert.match(wasmRust, /battle_sandbox_pointer/);
+});
+
+test("native and browser runtimes consume one tactical control implementation", () => {
+  assert.match(nativeControls, /include!\("\.\.\/\.\.\/\.\.\/shared\/tactical_controls\.rs"\)/);
+  assert.match(browserControls, /include!\("\.\.\/\.\.\/shared\/tactical_controls\.rs"\)/);
+});
+
+test("Pages creates browser bindings from the tactical WASM artifact", () => {
+  assert.match(pages, /web-battle-wasm\/Cargo\.toml/);
+  assert.match(pages, /wasm-bindgen-cli --version 0\.2\.127 --locked/);
+  assert.match(pages, /medieval_web_battle\.wasm/);
+  assert.match(pages, /--target web/);
+  assert.match(pages, /--out-name medieval_web_battle/);
+});
