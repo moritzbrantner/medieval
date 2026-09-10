@@ -1,0 +1,56 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install Rust with WebAssembly target
+        uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Check portable Rust on wasm32
+        run: cargo check --locked -p medieval-core -p medieval-renderer --target wasm32-unknown-unknown
+      - name: Build browser runtime
+        run: cargo build --manifest-path web-wasm/Cargo.toml --target wasm32-unknown-unknown --release
+      - name: Stage Pages artifact
+        run: |
+          mkdir -p web/pkg
+          cp web-wasm/target/wasm32-unknown-unknown/release/medieval_web_wasm.wasm web/pkg/medieval_web_wasm.wasm
+          touch web/.nojekyll
+      - name: Check browser JavaScript syntax
+        run: find web -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | sort -z | xargs -0 -n1 node --check
+      - name: Test web contracts
+        run: node --test web-tests/*.test.mjs
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b
+        with:
+          path: web
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
