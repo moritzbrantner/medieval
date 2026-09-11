@@ -110,7 +110,7 @@ Medieval also has a deliberately local RTS control and desktop-input model in Ru
 3. **Production desktop renderer — complete foundation:** Rust + `wgpu` battlefield projection, camera, selection, order previews, GPU batching/instancing, native Tauri window/surface/frame lifecycle, and session-backed snapshot refresh are in place.
 4. **Medieval RTS controls and desktop input — complete foundation:** click/Shift/Ctrl selection, drag-box selection, right-click move/engage, wheel and keyboard camera control, stop, control groups, order previews, Escape-close behavior, and fail-closed ordered browser input all converge on the same Rust-local semantic controls.
 5. **GitHub Pages demo renderer — current:** Three.js projection of the same authoritative battle state/contracts for browser dogfood and public demos; no duplicate simulation truth. Reuse the proven physical-input vocabulary where useful, but keep battle truth and control semantics in Rust.
-6. **Terrain:** height, forests, rivers, chokepoints, deployment zones.
+6. **Terrain — height authority complete:** deterministic height/cell geometry now lives in `medieval-core`; next add forests, rivers, chokepoints, and deployment zones without moving renderer concerns into core.
 7. **Sieges:** walls, gates, towers, capture points, pathing constraints.
 8. **Campaign handoff:** campaign army composition seeds tactical battle; tactical outcome returns casualties and control changes.
 
