@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use medieval_core::{BattlePoint, BattleSide, TacticalBattle};
+use medieval_renderer::BattleRenderSnapshot;
 use serde::Deserialize;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use tauri::Listener;
@@ -15,12 +16,9 @@ use super::{NativeBattleSession, SharedError, SharedSession};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub const BROWSER_INPUT_EVENT: &str = "medieval:tactical-input";
 
-const CAMERA_PAN_FRACTION: f32 = 0.05;
 const CAMERA_ZOOM_FACTOR: f32 = 1.15;
 const DRAG_THRESHOLD_NORMALIZED: f64 = 0.02;
-const CLICK_RADIUS_FRACTION: f64 = 0.08;
-const MIN_CLICK_RADIUS_MM: f64 = 2_000.0;
-const MAX_CLICK_RADIUS_MM: f64 = 12_000.0;
+const CLICK_RADIUS_PX: f64 = 34.0;
 
 #[derive(Copy, Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -239,34 +237,12 @@ impl DesktopInputState {
 
         let battlefield = battle.battlefield();
         let camera = controls.render_view(battle).camera;
-        let zoom = camera.zoom.max(0.05);
-        let step_x = battlefield.width_mm as f32 * CAMERA_PAN_FRACTION / zoom;
-        let step_y = battlefield.depth_mm as f32 * CAMERA_PAN_FRACTION / zoom;
+        let step = camera.pan_step_mm(battlefield);
         let request = match code {
-            "ArrowLeft" => Some(TacticalControlRequest {
-                kind: "panCamera".to_owned(),
-                delta_x_mm: Some(-step_x),
-                delta_y_mm: Some(0.0),
-                ..TacticalControlRequest::default()
-            }),
-            "ArrowRight" => Some(TacticalControlRequest {
-                kind: "panCamera".to_owned(),
-                delta_x_mm: Some(step_x),
-                delta_y_mm: Some(0.0),
-                ..TacticalControlRequest::default()
-            }),
-            "ArrowUp" => Some(TacticalControlRequest {
-                kind: "panCamera".to_owned(),
-                delta_x_mm: Some(0.0),
-                delta_y_mm: Some(-step_y),
-                ..TacticalControlRequest::default()
-            }),
-            "ArrowDown" => Some(TacticalControlRequest {
-                kind: "panCamera".to_owned(),
-                delta_x_mm: Some(0.0),
-                delta_y_mm: Some(step_y),
-                ..TacticalControlRequest::default()
-            }),
+            "ArrowLeft" => Some(pan_request(-step, 0.0)),
+            "ArrowRight" => Some(pan_request(step, 0.0)),
+            "ArrowUp" => Some(pan_request(0.0, -step)),
+            "ArrowDown" => Some(pan_request(0.0, step)),
             "Equal" | "NumpadAdd" => Some(TacticalControlRequest {
                 kind: "zoomCamera".to_owned(),
                 factor: Some(CAMERA_ZOOM_FACTOR),
@@ -297,7 +273,6 @@ impl DesktopInputState {
                 ..TacticalControlRequest::default()
             }),
         };
-
         if let Some(request) = request {
             apply_control_ignoring_empty_selection(battle, controls, request)?;
         }
@@ -352,7 +327,6 @@ impl DesktopInputState {
                 },
             )?;
         }
-
         let Some(gesture) = gesture.filter(|gesture| gesture.button == button) else {
             return Ok(InputOutcome::default());
         };
@@ -361,7 +335,6 @@ impl DesktopInputState {
         } else {
             gesture.modifiers
         };
-
         match button {
             PointerButton::Primary => self.finish_primary_pointer(
                 battle,
@@ -392,20 +365,15 @@ impl DesktopInputState {
         let dragged =
             (end_x - start_x).abs().max((end_y - start_y).abs()) >= DRAG_THRESHOLD_NORMALIZED;
         let kind = selection_kind(modifiers);
-
         let unit_ids = if dragged {
-            let first = viewport_to_world(battle, controls, start)?;
-            let second = viewport_to_world(battle, controls, end)?;
-            units_in_world_rect(battle, player_side, first, second)
+            units_in_viewport_rect(battle, controls, player_side, start, end)
         } else {
-            let point = viewport_to_world(battle, controls, end)?;
-            nearest_unit(battle, controls, point, |unit| {
+            nearest_unit_at_pointer(battle, controls, end, |unit| {
                 unit.side() == player_side && !unit.is_routed() && !unit.is_destroyed()
             })
             .into_iter()
             .collect()
         };
-
         if unit_ids.is_empty() {
             if kind == "selectReplace" {
                 apply_control(
@@ -419,7 +387,6 @@ impl DesktopInputState {
             }
             return Ok(());
         }
-
         apply_control(
             battle,
             controls,
@@ -438,8 +405,7 @@ impl DesktopInputState {
         player_side: BattleSide,
         sample: PointerSample,
     ) -> Result<(), String> {
-        let destination = viewport_to_world(battle, controls, sample)?;
-        if let Some(target_unit_id) = nearest_unit(battle, controls, destination, |unit| {
+        if let Some(target_unit_id) = nearest_unit_at_pointer(battle, controls, sample, |unit| {
             unit.side() != player_side && !unit.is_destroyed()
         }) {
             let result = apply_control(
@@ -456,7 +422,7 @@ impl DesktopInputState {
                 other => other,
             };
         }
-
+        let destination = viewport_to_world(battle, controls, sample)?;
         let result = apply_control(
             battle,
             controls,
@@ -471,6 +437,15 @@ impl DesktopInputState {
             Err(error) if error == TacticalControlError::NoUnitsSelected.to_string() => Ok(()),
             other => other,
         }
+    }
+}
+
+fn pan_request(delta_x_mm: f32, delta_z_mm: f32) -> TacticalControlRequest {
+    TacticalControlRequest {
+        kind: "panCamera".to_owned(),
+        delta_x_mm: Some(delta_x_mm),
+        delta_y_mm: Some(delta_z_mm),
+        ..TacticalControlRequest::default()
     }
 }
 
@@ -499,77 +474,90 @@ fn viewport_to_world(
     controls: &TacticalControls,
     sample: PointerSample,
 ) -> Result<BattlePoint, String> {
-    let battlefield = battle.battlefield();
-    let camera = controls.render_view(battle).camera;
-    if !camera.zoom.is_finite() || camera.zoom <= 0.0 {
-        return Err("desktop tactical camera zoom is invalid".to_owned());
-    }
-    let (normalized_x, normalized_y) = sample.normalized();
-    let clip_x = normalized_x * 2.0 - 1.0;
-    let clip_y = 1.0 - normalized_y * 2.0;
-    let zoom = f64::from(camera.zoom.max(0.05));
-    let world_x =
-        f64::from(camera.center_x_mm) + clip_x * (f64::from(battlefield.width_mm) / 2.0) / zoom;
-    let world_y =
-        f64::from(camera.center_y_mm) - clip_y * (f64::from(battlefield.depth_mm) / 2.0) / zoom;
-    Ok(BattlePoint::new(
-        world_x.round().clamp(0.0, f64::from(battlefield.width_mm)) as u32,
-        world_y.round().clamp(0.0, f64::from(battlefield.depth_mm)) as u32,
-    ))
+    controls
+        .render_view(battle)
+        .camera
+        .ground_point_from_viewport(
+            battle.battlefield(),
+            sample.x as f32,
+            sample.y as f32,
+            sample.width as f32,
+            sample.height as f32,
+        )
+        .ok_or_else(|| "desktop tactical pointer ray does not intersect the battlefield".to_owned())
 }
 
-fn nearest_unit<F>(
+fn render_snapshot(battle: &TacticalBattle, controls: &TacticalControls) -> BattleRenderSnapshot {
+    BattleRenderSnapshot::capture(battle, &controls.render_view(battle))
+}
+
+fn nearest_unit_at_pointer<F>(
     battle: &TacticalBattle,
     controls: &TacticalControls,
-    point: BattlePoint,
+    sample: PointerSample,
     mut predicate: F,
 ) -> Option<String>
 where
     F: FnMut(&medieval_core::TacticalUnit) -> bool,
 {
-    let battlefield = battle.battlefield();
-    let zoom = f64::from(controls.render_view(battle).camera.zoom.max(0.05));
-    let radius =
-        (f64::from(battlefield.width_mm.min(battlefield.depth_mm)) * CLICK_RADIUS_FRACTION / zoom)
-            .clamp(MIN_CLICK_RADIUS_MM, MAX_CLICK_RADIUS_MM);
-    let radius_squared = radius * radius;
-    battle
-        .units()
+    let snapshot = render_snapshot(battle, controls);
+    snapshot
+        .units
         .iter()
-        .filter(|unit| predicate(unit))
-        .filter_map(|unit| {
-            let position = unit.position();
-            let dx = f64::from(position.x_mm) - f64::from(point.x_mm);
-            let dy = f64::from(position.y_mm) - f64::from(point.y_mm);
+        .filter_map(|rendered| {
+            let unit = battle.units().iter().find(|unit| unit.id() == rendered.unit_id)?;
+            if !predicate(unit) {
+                return None;
+            }
+            let [x, y] = snapshot.camera.project_world_point(
+                snapshot.battlefield,
+                rendered.interaction_anchor_mm(),
+                sample.width as f32,
+                sample.height as f32,
+            )?;
+            let dx = f64::from(x) - sample.x;
+            let dy = f64::from(y) - sample.y;
             let distance_squared = dx * dx + dy * dy;
-            (distance_squared <= radius_squared).then_some((distance_squared, unit.id()))
+            (distance_squared <= CLICK_RADIUS_PX * CLICK_RADIUS_PX)
+                .then_some((distance_squared, rendered.unit_id.as_str()))
         })
         .min_by(|left, right| left.0.total_cmp(&right.0).then_with(|| left.1.cmp(right.1)))
         .map(|(_, unit_id)| unit_id.to_owned())
 }
 
-fn units_in_world_rect(
+fn units_in_viewport_rect(
     battle: &TacticalBattle,
+    controls: &TacticalControls,
     player_side: BattleSide,
-    first: BattlePoint,
-    second: BattlePoint,
+    first: PointerSample,
+    second: PointerSample,
 ) -> Vec<String> {
-    let min_x = first.x_mm.min(second.x_mm);
-    let max_x = first.x_mm.max(second.x_mm);
-    let min_y = first.y_mm.min(second.y_mm);
-    let max_y = first.y_mm.max(second.y_mm);
-    battle
-        .units()
+    let snapshot = render_snapshot(battle, controls);
+    let min_x = first.x.min(second.x);
+    let max_x = first.x.max(second.x);
+    let min_y = first.y.min(second.y);
+    let max_y = first.y.max(second.y);
+    snapshot
+        .units
         .iter()
-        .filter(|unit| {
-            let position = unit.position();
-            unit.side() == player_side
-                && !unit.is_routed()
-                && !unit.is_destroyed()
-                && (min_x..=max_x).contains(&position.x_mm)
-                && (min_y..=max_y).contains(&position.y_mm)
+        .filter(|rendered| {
+            let Some(unit) = battle.units().iter().find(|unit| unit.id() == rendered.unit_id) else {
+                return false;
+            };
+            if unit.side() != player_side || unit.is_routed() || unit.is_destroyed() {
+                return false;
+            }
+            let Some([x, y]) = snapshot.camera.project_world_point(
+                snapshot.battlefield,
+                rendered.interaction_anchor_mm(),
+                first.width as f32,
+                first.height as f32,
+            ) else {
+                return false;
+            };
+            (min_x..=max_x).contains(&f64::from(x)) && (min_y..=max_y).contains(&f64::from(y))
         })
-        .map(|unit| unit.id().to_owned())
+        .map(|unit| unit.unit_id.clone())
         .collect()
 }
 
@@ -707,12 +695,11 @@ pub fn install_linux_input(
             None
         };
         if let Some(code) = code {
-            let modifiers = modifiers_from_gdk(event.state());
             let outcome = apply_shared_input(
                 &key_session,
                 DesktopInput::KeyDown {
                     code: code.to_owned(),
-                    modifiers,
+                    modifiers: modifiers_from_gdk(event.state()),
                 },
             );
             finish_native_input(outcome, &key_window, &key_running, &key_error);
@@ -735,15 +722,17 @@ pub fn install_linux_input(
             return Propagation::Proceed;
         };
         let (x, y) = event.position();
-        let input = DesktopInput::PointerDown {
-            button,
-            x,
-            y,
-            width: f64::from(widget.allocated_width().max(1)),
-            height: f64::from(widget.allocated_height().max(1)),
-            modifiers: modifiers_from_gdk(event.state()),
-        };
-        let outcome = apply_shared_input(&press_session, input);
+        let outcome = apply_shared_input(
+            &press_session,
+            DesktopInput::PointerDown {
+                button,
+                x,
+                y,
+                width: f64::from(widget.allocated_width().max(1)),
+                height: f64::from(widget.allocated_height().max(1)),
+                modifiers: modifiers_from_gdk(event.state()),
+            },
+        );
         finish_native_input(outcome, &press_window, &press_running, &press_error);
         Propagation::Stop
     });
@@ -762,15 +751,17 @@ pub fn install_linux_input(
             return Propagation::Proceed;
         };
         let (x, y) = event.position();
-        let input = DesktopInput::PointerUp {
-            button,
-            x,
-            y,
-            width: f64::from(widget.allocated_width().max(1)),
-            height: f64::from(widget.allocated_height().max(1)),
-            modifiers: modifiers_from_gdk(event.state()),
-        };
-        let outcome = apply_shared_input(&release_session, input);
+        let outcome = apply_shared_input(
+            &release_session,
+            DesktopInput::PointerUp {
+                button,
+                x,
+                y,
+                width: f64::from(widget.allocated_width().max(1)),
+                height: f64::from(widget.allocated_height().max(1)),
+                modifiers: modifiers_from_gdk(event.state()),
+            },
+        );
         finish_native_input(outcome, &release_window, &release_running, &release_error);
         Propagation::Stop
     });
@@ -887,56 +878,89 @@ mod tests {
         PointerSample::new(x, y, 1_000.0, 1_000.0).unwrap()
     }
 
-    #[test]
-    fn viewport_coordinates_round_trip_to_fitted_battlefield_space() {
-        let session = session();
-        let center =
-            viewport_to_world(&session.battle, &session.controls, pointer(500.0, 500.0)).unwrap();
-        let top_left =
-            viewport_to_world(&session.battle, &session.controls, pointer(0.0, 0.0)).unwrap();
+    fn pointer_for_unit(session: &NativeBattleSession, unit_id: &str) -> PointerSample {
+        let snapshot = render_snapshot(&session.battle, &session.controls);
+        let rendered = snapshot
+            .units
+            .iter()
+            .find(|unit| unit.unit_id == unit_id)
+            .unwrap();
+        let [x, y] = snapshot
+            .camera
+            .project_world_point(
+                snapshot.battlefield,
+                rendered.interaction_anchor_mm(),
+                1_000.0,
+                1_000.0,
+            )
+            .unwrap();
+        pointer(f64::from(x), f64::from(y))
+    }
 
-        assert_eq!(center, BattlePoint::new(50_000, 50_000));
-        assert_eq!(top_left, BattlePoint::new(0, 0));
+    fn pointer_for_ground(session: &NativeBattleSession, point: BattlePoint) -> PointerSample {
+        let camera = session.controls.render_view(&session.battle).camera;
+        let [x, y] = camera
+            .project_ground_point(session.battle.battlefield(), point, 1_000.0, 1_000.0)
+            .unwrap();
+        pointer(f64::from(x), f64::from(y))
+    }
+
+    fn click(
+        input: &mut DesktopInputState,
+        session: &mut NativeBattleSession,
+        button: PointerButton,
+        sample: PointerSample,
+    ) {
+        for down in [true, false] {
+            let event = if down {
+                DesktopInput::PointerDown {
+                    button,
+                    x: sample.x,
+                    y: sample.y,
+                    width: sample.width,
+                    height: sample.height,
+                    modifiers: InputModifiers::default(),
+                }
+            } else {
+                DesktopInput::PointerUp {
+                    button,
+                    x: sample.x,
+                    y: sample.y,
+                    width: sample.width,
+                    height: sample.height,
+                    modifiers: InputModifiers::default(),
+                }
+            };
+            input
+                .apply(
+                    &mut session.battle,
+                    &mut session.controls,
+                    session.player_side,
+                    event,
+                )
+                .unwrap();
+        }
     }
 
     #[test]
-    fn click_and_drag_selection_are_resolved_in_rust() {
+    fn viewport_ray_round_trips_fitted_battlefield_space() {
+        let session = session();
+        let point = BattlePoint::new(42_000, 38_000);
+        let sample = pointer_for_ground(&session, point);
+        let round_trip = viewport_to_world(&session.battle, &session.controls, sample).unwrap();
+        let dx = i64::from(round_trip.x_mm) - i64::from(point.x_mm);
+        let dy = i64::from(round_trip.y_mm) - i64::from(point.y_mm);
+        assert!(dx.abs() <= 1);
+        assert!(dy.abs() <= 1);
+    }
+
+    #[test]
+    fn click_and_drag_selection_follow_projected_unit_anchors() {
         let mut session = session();
         let mut input = DesktopInputState::default();
-        input
-            .apply(
-                &mut session.battle,
-                &mut session.controls,
-                session.player_side,
-                DesktopInput::PointerDown {
-                    button: PointerButton::Primary,
-                    x: 300.0,
-                    y: 500.0,
-                    width: 1_000.0,
-                    height: 1_000.0,
-                    modifiers: InputModifiers::default(),
-                },
-            )
-            .unwrap();
-        input
-            .apply(
-                &mut session.battle,
-                &mut session.controls,
-                session.player_side,
-                DesktopInput::PointerUp {
-                    button: PointerButton::Primary,
-                    x: 300.0,
-                    y: 500.0,
-                    width: 1_000.0,
-                    height: 1_000.0,
-                    modifiers: InputModifiers::default(),
-                },
-            )
-            .unwrap();
-        let snapshot = medieval_renderer::BattleRenderSnapshot::project(
-            &session.battle,
-            &session.controls.render_view(&session.battle),
-        );
+        let attacker_a = pointer_for_unit(&session, "attacker-a");
+        click(&mut input, &mut session, PointerButton::Primary, attacker_a);
+        let snapshot = render_snapshot(&session.battle, &session.controls);
         assert!(
             snapshot
                 .units
@@ -946,6 +970,22 @@ mod tests {
                 .selected
         );
 
+        let first = pointer_for_unit(&session, "attacker-a");
+        let second = pointer_for_unit(&session, "attacker-b");
+        let start = PointerSample::new(
+            first.x.min(second.x) - 20.0,
+            first.y.min(second.y) - 20.0,
+            1_000.0,
+            1_000.0,
+        )
+        .unwrap();
+        let end = PointerSample::new(
+            first.x.max(second.x) + 20.0,
+            first.y.max(second.y) + 20.0,
+            1_000.0,
+            1_000.0,
+        )
+        .unwrap();
         input
             .apply(
                 &mut session.battle,
@@ -953,10 +993,10 @@ mod tests {
                 session.player_side,
                 DesktopInput::PointerDown {
                     button: PointerButton::Primary,
-                    x: 250.0,
-                    y: 450.0,
-                    width: 1_000.0,
-                    height: 1_000.0,
+                    x: start.x,
+                    y: start.y,
+                    width: start.width,
+                    height: start.height,
                     modifiers: InputModifiers::default(),
                 },
             )
@@ -968,38 +1008,21 @@ mod tests {
                 session.player_side,
                 DesktopInput::PointerUp {
                     button: PointerButton::Primary,
-                    x: 500.0,
-                    y: 650.0,
-                    width: 1_000.0,
-                    height: 1_000.0,
+                    x: end.x,
+                    y: end.y,
+                    width: end.width,
+                    height: end.height,
                     modifiers: InputModifiers::default(),
                 },
             )
             .unwrap();
-        let snapshot = medieval_renderer::BattleRenderSnapshot::project(
-            &session.battle,
-            &session.controls.render_view(&session.battle),
-        );
-        assert!(
-            snapshot
-                .units
-                .iter()
-                .find(|unit| unit.unit_id == "attacker-a")
-                .unwrap()
-                .selected
-        );
-        assert!(
-            snapshot
-                .units
-                .iter()
-                .find(|unit| unit.unit_id == "attacker-b")
-                .unwrap()
-                .selected
-        );
+        let snapshot = render_snapshot(&session.battle, &session.controls);
+        assert!(snapshot.units.iter().find(|unit| unit.unit_id == "attacker-a").unwrap().selected);
+        assert!(snapshot.units.iter().find(|unit| unit.unit_id == "attacker-b").unwrap().selected);
     }
 
     #[test]
-    fn right_click_moves_or_engages_through_existing_control_semantics() {
+    fn right_click_moves_or_engages_using_the_visible_projection() {
         let mut session = session();
         session
             .controls
@@ -1013,37 +1036,9 @@ mod tests {
             )
             .unwrap();
         let mut input = DesktopInputState::default();
-
-        input
-            .apply(
-                &mut session.battle,
-                &mut session.controls,
-                session.player_side,
-                DesktopInput::PointerDown {
-                    button: PointerButton::Secondary,
-                    x: 550.0,
-                    y: 500.0,
-                    width: 1_000.0,
-                    height: 1_000.0,
-                    modifiers: InputModifiers::default(),
-                },
-            )
-            .unwrap();
-        input
-            .apply(
-                &mut session.battle,
-                &mut session.controls,
-                session.player_side,
-                DesktopInput::PointerUp {
-                    button: PointerButton::Secondary,
-                    x: 550.0,
-                    y: 500.0,
-                    width: 1_000.0,
-                    height: 1_000.0,
-                    modifiers: InputModifiers::default(),
-                },
-            )
-            .unwrap();
+        let destination = BattlePoint::new(55_000, 45_000);
+        let ground = pointer_for_ground(&session, destination);
+        click(&mut input, &mut session, PointerButton::Secondary, ground);
         assert_eq!(
             session
                 .battle
@@ -1052,39 +1047,11 @@ mod tests {
                 .find(|unit| unit.id() == "attacker-a")
                 .unwrap()
                 .destination(),
-            Some(BattlePoint::new(55_000, 50_000))
+            Some(destination)
         );
 
-        input
-            .apply(
-                &mut session.battle,
-                &mut session.controls,
-                session.player_side,
-                DesktopInput::PointerDown {
-                    button: PointerButton::Secondary,
-                    x: 700.0,
-                    y: 500.0,
-                    width: 1_000.0,
-                    height: 1_000.0,
-                    modifiers: InputModifiers::default(),
-                },
-            )
-            .unwrap();
-        input
-            .apply(
-                &mut session.battle,
-                &mut session.controls,
-                session.player_side,
-                DesktopInput::PointerUp {
-                    button: PointerButton::Secondary,
-                    x: 700.0,
-                    y: 500.0,
-                    width: 1_000.0,
-                    height: 1_000.0,
-                    modifiers: InputModifiers::default(),
-                },
-            )
-            .unwrap();
+        let defender = pointer_for_unit(&session, "defender");
+        click(&mut input, &mut session, PointerButton::Secondary, defender);
         assert_eq!(
             session
                 .battle
@@ -1098,7 +1065,7 @@ mod tests {
     }
 
     #[test]
-    fn keyboard_camera_groups_stop_and_escape_map_to_semantic_controls() {
+    fn keyboard_camera_groups_and_escape_map_to_semantic_controls() {
         let mut session = session();
         let mut input = DesktopInputState::default();
         let before = session.controls.render_view(&session.battle).camera;
@@ -1118,8 +1085,8 @@ mod tests {
                 .controls
                 .render_view(&session.battle)
                 .camera
-                .center_x_mm
-                > before.center_x_mm
+                .target_x_mm()
+                > before.target_x_mm()
         );
 
         session
@@ -1168,19 +1135,8 @@ mod tests {
                 },
             )
             .unwrap();
-        let snapshot = medieval_renderer::BattleRenderSnapshot::project(
-            &session.battle,
-            &session.controls.render_view(&session.battle),
-        );
-        assert!(
-            snapshot
-                .units
-                .iter()
-                .find(|unit| unit.unit_id == "attacker-a")
-                .unwrap()
-                .selected
-        );
-
+        let snapshot = render_snapshot(&session.battle, &session.controls);
+        assert!(snapshot.units.iter().find(|unit| unit.unit_id == "attacker-a").unwrap().selected);
         assert!(
             input
                 .apply(
@@ -1218,10 +1174,6 @@ mod tests {
         input
             .apply_browser(battle, controls, *player_side, first)
             .unwrap();
-        assert!(
-            input
-                .apply_browser(battle, controls, *player_side, skipped)
-                .is_err()
-        );
+        assert!(input.apply_browser(battle, controls, *player_side, skipped).is_err());
     }
 }
