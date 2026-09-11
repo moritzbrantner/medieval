@@ -505,7 +505,10 @@ where
         .units
         .iter()
         .filter_map(|rendered| {
-            let unit = battle.units().iter().find(|unit| unit.id() == rendered.unit_id)?;
+            let unit = battle
+                .units()
+                .iter()
+                .find(|unit| unit.id() == rendered.unit_id)?;
             if !predicate(unit) {
                 return None;
             }
@@ -541,7 +544,11 @@ fn units_in_viewport_rect(
         .units
         .iter()
         .filter(|rendered| {
-            let Some(unit) = battle.units().iter().find(|unit| unit.id() == rendered.unit_id) else {
+            let Some(unit) = battle
+                .units()
+                .iter()
+                .find(|unit| unit.id() == rendered.unit_id)
+            else {
                 return false;
             };
             if unit.side() != player_side || unit.is_routed() || unit.is_destroyed() {
@@ -1017,8 +1024,22 @@ mod tests {
             )
             .unwrap();
         let snapshot = render_snapshot(&session.battle, &session.controls);
-        assert!(snapshot.units.iter().find(|unit| unit.unit_id == "attacker-a").unwrap().selected);
-        assert!(snapshot.units.iter().find(|unit| unit.unit_id == "attacker-b").unwrap().selected);
+        assert!(
+            snapshot
+                .units
+                .iter()
+                .find(|unit| unit.unit_id == "attacker-a")
+                .unwrap()
+                .selected
+        );
+        assert!(
+            snapshot
+                .units
+                .iter()
+                .find(|unit| unit.unit_id == "attacker-b")
+                .unwrap()
+                .selected
+        );
     }
 
     #[test]
@@ -1136,7 +1157,14 @@ mod tests {
             )
             .unwrap();
         let snapshot = render_snapshot(&session.battle, &session.controls);
-        assert!(snapshot.units.iter().find(|unit| unit.unit_id == "attacker-a").unwrap().selected);
+        assert!(
+            snapshot
+                .units
+                .iter()
+                .find(|unit| unit.unit_id == "attacker-a")
+                .unwrap()
+                .selected
+        );
         assert!(
             input
                 .apply(
@@ -1174,6 +1202,10 @@ mod tests {
         input
             .apply_browser(battle, controls, *player_side, first)
             .unwrap();
-        assert!(input.apply_browser(battle, controls, *player_side, skipped).is_err());
+        assert!(
+            input
+                .apply_browser(battle, controls, *player_side, skipped)
+                .is_err()
+        );
     }
 }
