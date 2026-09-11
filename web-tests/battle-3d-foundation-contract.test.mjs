@@ -30,11 +30,13 @@ test("one perspective camera owns projection and viewport rays", () => {
   assert.match(camera, /pub fn project_world_point\(/);
   assert.match(camera, /pub fn viewport_ray\(/);
   assert.match(camera, /pub fn ground_point_from_viewport\(/);
+  assert.match(camera, /fn viewport_tangents\(/);
+  assert.match(camera, /small_battlefield_pan_step_has_ordered_bounds/);
   assert.doesNotMatch(camera, /Camera2d|center_x_mm|center_y_mm|pub zoom:/);
   assert.doesNotMatch(controls, /Camera2d|MIN_CAMERA_ZOOM|MAX_CAMERA_ZOOM/);
 });
 
-test("the production renderer consumes the same perspective basis with depth", () => {
+test("the production renderer consumes the same aspect-safe perspective basis with depth", () => {
   assert.match(gpu, /CameraUniform/);
   assert.match(gpu, /projection\(battlefield\)/);
   assert.match(gpu, /TextureFormat::Depth24Plus/);
@@ -42,6 +44,10 @@ test("the production renderer consumes the same perspective basis with depth", (
   assert.match(shader, /eye_near/);
   assert.match(shader, /right_tan_half_fov/);
   assert.match(shader, /view_z/);
+  assert.match(shader, /tan_half_x/);
+  assert.match(shader, /tan_half_y/);
+  assert.match(shader, /max\(aspect, 1\.0\)/);
+  assert.match(shader, /min\(aspect, 1\.0\)/);
   assert.match(shader, /output\.position = vec4<f32>/);
   assert.doesNotMatch(shader, /center_zoom_elevation|elevation_lift/);
 });
