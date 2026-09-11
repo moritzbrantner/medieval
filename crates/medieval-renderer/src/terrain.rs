@@ -144,7 +144,10 @@ mod tests {
             terrain_height_mm(battlefield, BattlePoint::new(boundary_x, boundary_z)),
             terrain_cell_height_mm(battlefield, 1, 4)
         );
-        assert_eq!(terrain_cell_index(battlefield.width_mm, battlefield.width_mm), 7);
+        assert_eq!(
+            terrain_cell_index(battlefield.width_mm, battlefield.width_mm),
+            7
+        );
     }
 
     #[test]
