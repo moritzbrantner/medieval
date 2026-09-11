@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [camera, scene, gpu, shader, browserBattle, controls, nativeInput, architecture] = await Promise.all([
+const [camera, scene, terrain, gpu, shader, browserBattle, controls, nativeInput, architecture] = await Promise.all([
   readFile(new URL("../crates/medieval-renderer/src/camera.rs", import.meta.url), "utf8"),
   readFile(new URL("../crates/medieval-renderer/src/scene.rs", import.meta.url), "utf8"),
+  readFile(new URL("../crates/medieval-renderer/src/terrain.rs", import.meta.url), "utf8"),
   readFile(new URL("../crates/medieval-renderer/src/gpu.rs", import.meta.url), "utf8"),
   readFile(new URL("../crates/medieval-renderer/src/battlefield.wgsl", import.meta.url), "utf8"),
   readFile(new URL("../web-battle-wasm/src/lib.rs", import.meta.url), "utf8"),
@@ -31,9 +32,27 @@ test("one perspective camera owns projection and viewport rays", () => {
   assert.match(camera, /pub fn viewport_ray\(/);
   assert.match(camera, /pub fn ground_point_from_viewport\(/);
   assert.match(camera, /fn viewport_tangents\(/);
+  assert.match(camera, /fn terrain_ray_hit\(/);
+  assert.match(camera, /fn ray_aabb_entry_distance\(/);
+  assert.match(camera, /TERRAIN_PICK_EPSILON_MM/);
+  assert.doesNotMatch(camera, /refine_terrain_hit\(|TERRAIN_RAY_MARCH_STEPS/);
   assert.match(camera, /small_battlefield_pan_step_has_ordered_bounds/);
   assert.doesNotMatch(camera, /Camera2d|center_x_mm|center_y_mm|pub zoom:/);
   assert.doesNotMatch(controls, /Camera2d|MIN_CAMERA_ZOOM|MAX_CAMERA_ZOOM/);
+});
+
+test("one deterministic renderer terrain surface drives geometry and interaction", () => {
+  assert.match(terrain, /TERRAIN_GRID_SIZE/);
+  assert.match(terrain, /terrain_height_mm\(/);
+  assert.match(terrain, /terrain_cell_height_mm\(/);
+  assert.match(scene, /terrain_height_mm\(battlefield/);
+  assert.match(gpu, /terrain_cell_height_mm/);
+  assert.match(camera, /terrain_height_mm\(battlefield/);
+  assert.match(camera, /terrain_cell_bounds_mm/);
+  assert.match(camera, /terrain_cell_height_mm/);
+  assert.match(architecture, /cell volume directly/);
+  assert.match(architecture, /gameplay-neutral/);
+  assert.match(architecture, /must move into `medieval-core`/);
 });
 
 test("the production renderer consumes the same aspect-safe perspective basis with depth", () => {
@@ -65,11 +84,11 @@ test("browser and native input use renderer-owned perspective geometry", () => {
   assert.doesNotMatch(nativeInput, /CLICK_RADIUS_FRACTION|MIN_CLICK_RADIUS_MM|MAX_CLICK_RADIUS_MM/);
 });
 
-test("the architecture records perspective convergence rather than compatibility debt", () => {
+test("the architecture records perspective and terrain convergence rather than compatibility debt", () => {
   assert.match(architecture, /3D mass-battle game/);
   assert.match(architecture, /Perspective camera contract/);
   assert.match(architecture, /Camera2d.*Removed/s);
-  assert.match(architecture, /ray-to-flat-ground intersection/);
-  assert.match(architecture, /deterministic terrain contract/);
+  assert.match(architecture, /ray-to-terrain intersection/);
+  assert.match(architecture, /Terrain height foundation/);
   assert.match(architecture, /one production renderer and one camera geometry contract/);
 });

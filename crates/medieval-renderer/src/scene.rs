@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use medieval_core::{BattlePoint, BattleSide, FlatBattlefield, Formation, TacticalBattle};
 
-use crate::Camera3d;
+use crate::{Camera3d, terrain::terrain_height_mm};
 
 const SOLDIER_SPACING_MM: f32 = 900.0;
 const SOLDIER_CENTER_Y_MM: f32 = 900.0;
@@ -60,6 +60,7 @@ pub struct RenderUnitInstance {
     pub routed: bool,
     pub selected: bool,
     pub order_preview: bool,
+    pub terrain_elevation_mm: f32,
     /// Renderer world-space centers: ground X → world X, elevation → world Y,
     /// ground Y → world Z.
     pub soldier_centers_mm: Vec<[f32; 3]>,
@@ -68,13 +69,9 @@ pub struct RenderUnitInstance {
 impl RenderUnitInstance {
     #[must_use]
     pub fn interaction_anchor_mm(&self) -> [f32; 3] {
-        let elevation = self
-            .soldier_centers_mm
-            .first()
-            .map_or(0.0, |center| center[1]);
         [
             self.position.x_mm as f32,
-            elevation,
+            self.terrain_elevation_mm + SOLDIER_CENTER_Y_MM,
             self.position.y_mm as f32,
         ]
     }
@@ -93,32 +90,38 @@ impl BattleRenderSnapshot {
     /// No pixel, clip-space, or platform-specific input data is stored here.
     #[must_use]
     pub fn capture(battle: &TacticalBattle, view: &RenderViewState) -> Self {
+        let battlefield = battle.battlefield();
         let units = battle
             .units()
             .iter()
             .filter(|unit| !unit.is_destroyed())
-            .map(|unit| RenderUnitInstance {
-                unit_id: unit.id().to_owned(),
-                side: unit.side(),
-                position: unit.position(),
-                formation: unit.formation(),
-                soldiers: unit.soldiers(),
-                frontage_slots: unit.frontage_slots(),
-                morale: unit.morale(),
-                fatigue: unit.fatigue(),
-                routed: unit.is_routed(),
-                selected: view.is_selected(unit.id()),
-                order_preview: view.has_order_preview(unit.id()),
-                soldier_centers_mm: soldier_centers(
-                    unit.position(),
-                    unit.soldiers(),
-                    unit.frontage_slots(),
-                ),
+            .map(|unit| {
+                let terrain_elevation_mm = terrain_height_mm(battlefield, unit.position()) as f32;
+                RenderUnitInstance {
+                    unit_id: unit.id().to_owned(),
+                    side: unit.side(),
+                    position: unit.position(),
+                    formation: unit.formation(),
+                    soldiers: unit.soldiers(),
+                    frontage_slots: unit.frontage_slots(),
+                    morale: unit.morale(),
+                    fatigue: unit.fatigue(),
+                    routed: unit.is_routed(),
+                    selected: view.is_selected(unit.id()),
+                    order_preview: view.has_order_preview(unit.id()),
+                    terrain_elevation_mm,
+                    soldier_centers_mm: soldier_centers(
+                        battlefield,
+                        unit.position(),
+                        unit.soldiers(),
+                        unit.frontage_slots(),
+                    ),
+                }
             })
             .collect();
         Self {
             tick: battle.tick(),
-            battlefield: battle.battlefield(),
+            battlefield,
             camera: view.camera,
             units,
         }
@@ -133,7 +136,12 @@ impl BattleRenderSnapshot {
     }
 }
 
-fn soldier_centers(position: BattlePoint, soldiers: u16, frontage_slots: u16) -> Vec<[f32; 3]> {
+fn soldier_centers(
+    battlefield: FlatBattlefield,
+    position: BattlePoint,
+    soldiers: u16,
+    frontage_slots: u16,
+) -> Vec<[f32; 3]> {
     let count = usize::from(soldiers);
     let frontage = usize::from(frontage_slots.max(1).min(soldiers.max(1)));
     let ranks = count.div_ceil(frontage).max(1);
@@ -143,10 +151,16 @@ fn soldier_centers(position: BattlePoint, soldiers: u16, frontage_slots: u16) ->
         .map(|index| {
             let file = index % frontage;
             let rank = index / frontage;
+            let x = position.x_mm as f32 + (file as f32 - center_file) * SOLDIER_SPACING_MM;
+            let z = position.y_mm as f32 + (rank as f32 - center_rank) * SOLDIER_SPACING_MM;
+            let terrain_point = BattlePoint::new(
+                x.round().clamp(0.0, battlefield.width_mm as f32) as u32,
+                z.round().clamp(0.0, battlefield.depth_mm as f32) as u32,
+            );
             [
-                position.x_mm as f32 + (file as f32 - center_file) * SOLDIER_SPACING_MM,
-                SOLDIER_CENTER_Y_MM,
-                position.y_mm as f32 + (rank as f32 - center_rank) * SOLDIER_SPACING_MM,
+                x,
+                terrain_height_mm(battlefield, terrain_point) as f32 + SOLDIER_CENTER_Y_MM,
+                z,
             ]
         })
         .collect()
@@ -164,7 +178,7 @@ mod tests {
                 "attacker",
                 BattleSide::Attacker,
                 80,
-                BattlePoint::new(30_000, 50_000),
+                BattlePoint::new(50_000, 50_000),
                 Formation::Line { files: 20 },
                 1_000,
             )],
@@ -188,9 +202,14 @@ mod tests {
                 .flat_map(|center| center.iter())
                 .all(|value| value.is_finite())
         );
+        assert!(first.units[0].terrain_elevation_mm > 0.0);
         assert_eq!(
             first.units[0].interaction_anchor_mm(),
-            [30_000.0, SOLDIER_CENTER_Y_MM, 50_000.0]
+            [
+                50_000.0,
+                first.units[0].terrain_elevation_mm + SOLDIER_CENTER_Y_MM,
+                50_000.0,
+            ]
         );
         assert!(first.units[0].selected);
     }
@@ -205,6 +224,18 @@ mod tests {
         assert_eq!(
             BattleRenderSnapshot::capture(&battle, &fit).units[0].soldier_centers_mm,
             BattleRenderSnapshot::capture(&battle, &moved).units[0].soldier_centers_mm
+        );
+    }
+
+    #[test]
+    fn soldier_centers_follow_the_terrain_surface() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let centers = soldier_centers(battlefield, BattlePoint::new(50_000, 50_000), 1, 1);
+        assert_eq!(centers.len(), 1);
+        assert_eq!(
+            centers[0][1],
+            terrain_height_mm(battlefield, BattlePoint::new(50_000, 50_000)) as f32
+                + SOLDIER_CENTER_Y_MM
         );
     }
 }
