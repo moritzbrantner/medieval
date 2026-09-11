@@ -59,8 +59,10 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     let view_x = dot(relative, camera.right_tan_half_fov.xyz);
     let view_y = dot(relative, camera.up_aspect.xyz);
     let view_z = dot(relative, camera.forward_far.xyz);
-    let tan_half_fov = max(camera.right_tan_half_fov.w, 0.0001);
+    let base_tan_half_fov = max(camera.right_tan_half_fov.w, 0.0001);
     let aspect = max(camera.up_aspect.w, 0.0001);
+    let tan_half_x = base_tan_half_fov * max(aspect, 1.0);
+    let tan_half_y = base_tan_half_fov / min(aspect, 1.0);
     let near = camera.eye_near.w;
     let far = camera.forward_far.w;
     let depth_a = far / (far - near);
@@ -68,8 +70,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
     var output: VertexOutput;
     output.position = vec4<f32>(
-        view_x / (tan_half_fov * aspect),
-        view_y / tan_half_fov,
+        view_x / tan_half_x,
+        view_y / tan_half_y,
         depth_a * view_z - depth_b,
         view_z,
     );
