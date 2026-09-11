@@ -132,6 +132,7 @@ struct DepthTarget {
 
 pub struct GpuBattleRenderer {
     device: wgpu::Device,
+    queue: Option<wgpu::Queue>,
     pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -188,6 +189,7 @@ impl GpuBattleRenderer {
         let pipeline = create_pipeline(device, target_format, &pipeline_layout, &shader);
         Self {
             device: device.clone(),
+            queue: None,
             pipeline,
             camera_buffer,
             camera_bind_group,
@@ -218,11 +220,11 @@ impl GpuBattleRenderer {
             u32::try_from(instances.len()).expect("3D tactical instance count fits in u32");
         self.camera = snapshot.camera;
         self.battlefield = snapshot.battlefield;
+        self.queue = Some(queue.clone());
     }
 
     pub fn render(
         &self,
-        queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         clear_color: wgpu::Color,
@@ -230,16 +232,19 @@ impl GpuBattleRenderer {
         let texture = target.texture();
         let width = texture.width().max(1);
         let height = texture.height().max(1);
-        queue.write_buffer(
-            &self.camera_buffer,
-            0,
-            bytemuck::bytes_of(&CameraUniform::from_camera(
-                self.camera,
-                self.battlefield,
-                width,
-                height,
-            )),
-        );
+        self.queue
+            .as_ref()
+            .expect("a tactical snapshot is uploaded before rendering")
+            .write_buffer(
+                &self.camera_buffer,
+                0,
+                bytemuck::bytes_of(&CameraUniform::from_camera(
+                    self.camera,
+                    self.battlefield,
+                    width,
+                    height,
+                )),
+            );
 
         let mut depth_target = self.depth_target.borrow_mut();
         if depth_target
