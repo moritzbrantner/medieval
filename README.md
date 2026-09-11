@@ -2,26 +2,27 @@
 
 A Rust-first strategy game inspired by the campaign-and-battle structure of *Medieval: Total War* (2002), built as an original implementation rather than a reuse of proprietary game code, names, or assets.
 
-The project starts deliberately small: a turn-based province campaign with armies, movement, recruitment, economy, and deterministic auto-resolved battles. Real-time tactical battles come only after the campaign loop is fun and stable.
+The current vertical target is a real 3D mass-battle layer backed by deterministic Rust simulation. The compact province campaign remains the strategic layer that will feed those battles once the tactical architecture is ready. GitHub Pages and the desktop shell are product surfaces for the same Rust-owned battle rules and `wgpu` renderer; browser JavaScript is only a platform/input adapter.
 
-The current product and acceptance target is desktop. Android/iOS packaging, mobile-specific input, and mobile layout validation are explicitly deferred until mobile becomes a deliberate product priority.
+The current product and acceptance target is desktop plus WebGPU browser dogfood. Android/iOS packaging, mobile-specific input, and mobile layout validation remain deferred until mobile becomes a deliberate product priority.
 
 ## Architecture
 
-- `crates/medieval-core` — authoritative deterministic game rules and state transitions in Rust.
-- `src-tauri` — thin Tauri 2 application shell and command adapter.
-- `web` — presentation/input layer; it renders Rust-owned state and sends player intents back to Rust.
-- `docs/ROADMAP.md` — vertical MVP roadmap and explicit non-goals.
+- `crates/medieval-core` — authoritative deterministic campaign and battle rules/state transitions in Rust.
+- `crates/medieval-renderer` — renderer-owned world-space battle snapshots, 3D scene preparation, and `wgpu` GPU rendering.
+- `src-tauri` — desktop platform adapter and native tactical surface/input integration.
+- `web-battle-wasm` — WebGPU/WASM tactical surface adapter using the same Rust core and renderer.
+- `web` — campaign/menu/browser presentation and physical-input adaptation; it does not own game rules.
+- `docs/BATTLE-ARCHITECTURE.md` — non-negotiable 3D tactical architecture and the active cleanup/migration boundary.
+- `docs/ROADMAP.md` — broader campaign, tactical, and online-battle roadmap.
 
-The core crate stays UI- and platform-independent so it can be tested cheaply and reused by the desktop shell today or future multiplayer/server/platform work later.
+The core remains UI- and platform-independent. Tactical rendering is also singular: desktop and browser consume `medieval-renderer` rather than maintaining separate gameplay renderers.
 
-## MVP definition
+## Current playable surfaces
 
-A player can start a tiny campaign, inspect provinces, recruit units, move an army, end turns, fight deterministic auto-resolved battles, capture provinces, and win by controlling the map. Save/load, AI turns, and a small event log complete the first playable loop.
+The compact campaign already supports armies, movement, recruitment, economy, deterministic auto-resolved battles, AI turns, victory conditions, and save/load.
 
-The initial foundation already proves the ownership boundary: the UI can render campaign state and request an end turn, while Rust owns the actual state transition.
-
-See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the implementation sequence.
+A single-player tactical sandbox is also available on GitHub Pages and through the desktop battle surface. Its battle simulation, semantic controls, and GPU rendering are Rust-owned. The tactical renderer is now being migrated from the original 2D formation projection to the final 3D architecture; see [`docs/BATTLE-ARCHITECTURE.md`](docs/BATTLE-ARCHITECTURE.md) for the exact migration contract.
 
 ## Development
 
@@ -38,4 +39,5 @@ Validation:
 cargo fmt --check
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace
+node --test web-tests/*.test.mjs
 ```
