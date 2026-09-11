@@ -1,6 +1,8 @@
 struct CameraUniform {
-    center_zoom_elevation: vec4<f32>,
-    battlefield: vec4<f32>,
+    eye_near: vec4<f32>,
+    right_tan_half_fov: vec4<f32>,
+    up_aspect: vec4<f32>,
+    forward_far: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -53,19 +55,24 @@ fn cube_normal(index: u32) -> vec3<f32> {
 fn vs_main(input: VertexInput) -> VertexOutput {
     let world_position = input.center_material.xyz
         + cube_vertex(input.vertex_index) * input.half_extent_routed.xyz;
-    let half_width = max(camera.battlefield.x, 1.0);
-    let half_depth = max(camera.battlefield.y, 1.0);
-    let full_depth = max(camera.battlefield.z, 1.0);
-    let zoom = camera.center_zoom_elevation.z;
-    let elevation_lift = world_position.y * camera.center_zoom_elevation.w;
-    let clip_x = (world_position.x - camera.center_zoom_elevation.x) / half_width * zoom;
-    let clip_y = (camera.center_zoom_elevation.y - world_position.z + elevation_lift)
-        / half_depth
-        * zoom;
-    let depth = clamp((world_position.z - world_position.y * 0.35) / full_depth, 0.0, 1.0);
+    let relative = world_position - camera.eye_near.xyz;
+    let view_x = dot(relative, camera.right_tan_half_fov.xyz);
+    let view_y = dot(relative, camera.up_aspect.xyz);
+    let view_z = dot(relative, camera.forward_far.xyz);
+    let tan_half_fov = max(camera.right_tan_half_fov.w, 0.0001);
+    let aspect = max(camera.up_aspect.w, 0.0001);
+    let near = camera.eye_near.w;
+    let far = camera.forward_far.w;
+    let depth_a = far / (far - near);
+    let depth_b = near * far / (far - near);
 
     var output: VertexOutput;
-    output.position = vec4<f32>(clip_x, clip_y, depth, 1.0);
+    output.position = vec4<f32>(
+        view_x / (tan_half_fov * aspect),
+        view_y / tan_half_fov,
+        depth_a * view_z - depth_b,
+        view_z,
+    );
     output.normal = cube_normal(input.vertex_index);
     output.material = input.center_material.w;
     output.routed = input.half_extent_routed.w;
