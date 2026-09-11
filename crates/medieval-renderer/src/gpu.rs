@@ -4,13 +4,12 @@ use bytemuck::{Pod, Zeroable};
 use medieval_core::{BattleSide, FlatBattlefield};
 use wgpu::util::DeviceExt;
 
-use crate::BattleRenderSnapshot;
+use crate::{BattleRenderSnapshot, camera::COMPATIBILITY_ELEVATION_SCALE};
 
 const SOLDIER_HALF_WIDTH_MM: f32 = 250.0;
 const SOLDIER_HALF_HEIGHT_MM: f32 = 900.0;
 const SOLDIER_HALF_DEPTH_MM: f32 = 250.0;
 const GROUND_HALF_HEIGHT_MM: f32 = 100.0;
-const OBLIQUE_ELEVATION_SCALE: f32 = 0.72;
 const CUBE_VERTEX_COUNT: u32 = 36;
 const INITIAL_INSTANCE_CAPACITY: usize = 256;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
@@ -91,7 +90,7 @@ impl CameraUniform {
                 snapshot.camera.center_x_mm,
                 snapshot.camera.center_y_mm,
                 snapshot.camera.sanitized_zoom(),
-                OBLIQUE_ELEVATION_SCALE,
+                COMPATIBILITY_ELEVATION_SCALE,
             ],
             battlefield: [
                 snapshot.battlefield.width_mm as f32 / 2.0,
@@ -147,7 +146,7 @@ impl GpuBattleRenderer {
             immediate_size: 0,
         });
         let camera = CameraUniform {
-            center_zoom_elevation: [0.0, 0.0, 1.0, OBLIQUE_ELEVATION_SCALE],
+            center_zoom_elevation: [0.0, 0.0, 1.0, COMPATIBILITY_ELEVATION_SCALE],
             battlefield: [1.0, 1.0, 2.0, 0.0],
         };
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
