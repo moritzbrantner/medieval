@@ -1992,6 +1992,7 @@ dependencies = [
 name = "medieval-core"
 version = "0.1.0"
 dependencies = [
+ "physics-engine",
  "serde",
  "serde_json",
 ]
@@ -2520,6 +2521,11 @@ checksum = "e57fef6bc5981e38c2ce2d63bfa546861309f875b8a75f092d1d54ae2d64f266"
 dependencies = [
  "siphasher",
 ]
+
+[[package]]
+name = "physics-engine"
+version = "0.1.0"
+source = "git+https://github.com/moritzbrantner/physics-engine?rev=26f75db7c033d9c25e0c16cc88e8e9c6197d3b4c#26f75db7c033d9c25e0c16cc88e8e9c6197d3b4c"
 
 [[package]]
 name = "pin-project-lite"
