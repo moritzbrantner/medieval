@@ -1,6 +1,8 @@
 use medieval_core::{BattlePoint, FlatBattlefield};
 
-use crate::terrain::terrain_height_mm;
+use crate::terrain::{
+    TERRAIN_GRID_SIZE, terrain_cell_bounds_mm, terrain_cell_height_mm, terrain_height_mm,
+};
 
 const DEFAULT_FOV_Y_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
 const DEFAULT_PITCH_RADIANS: f32 = 0.872_664_63;
@@ -11,9 +13,7 @@ const MAX_DISTANCE_FRACTION: f32 = 5.0;
 const MIN_PAN_STEP_FRACTION: f32 = 0.01;
 const MAX_PAN_STEP_FRACTION: f32 = 0.1;
 const NEAR_PLANE_MM: f32 = 100.0;
-const ZERO_HEIGHT_ENDPOINT_EPSILON_MM: f32 = 1.0;
-const TERRAIN_RAY_MARCH_STEPS: u32 = 256;
-const TERRAIN_RAY_REFINEMENT_STEPS: u32 = 18;
+const TERRAIN_PICK_EPSILON_MM: f32 = 1.0;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ViewportRay {
@@ -224,39 +224,8 @@ impl Camera3d {
             viewport_width_px,
             viewport_height_px,
         )?;
-        if ray.direction[1] >= -f32::EPSILON {
-            return None;
-        }
-        let zero_plane_distance = -ray.origin_mm[1] / ray.direction[1];
-        if !zero_plane_distance.is_finite() || zero_plane_distance < 0.0 {
-            return None;
-        }
-
-        let mut previous_inside: Option<(f32, f32)> = None;
-        for step in 0..=TERRAIN_RAY_MARCH_STEPS {
-            let distance = zero_plane_distance * step as f32 / TERRAIN_RAY_MARCH_STEPS as f32;
-            let Some((point, clearance)) = terrain_clearance(battlefield, ray, distance) else {
-                continue;
-            };
-            if clearance <= 0.0 {
-                if let Some((previous_distance, previous_clearance)) = previous_inside
-                    && previous_clearance > 0.0
-                {
-                    let hit_distance =
-                        refine_terrain_hit(battlefield, ray, previous_distance, distance);
-                    return terrain_point_at_distance(battlefield, ray, hit_distance);
-                }
-                return Some(point);
-            }
-            if step == TERRAIN_RAY_MARCH_STEPS
-                && terrain_height_mm(battlefield, point) == 0
-                && clearance <= ZERO_HEIGHT_ENDPOINT_EPSILON_MM
-            {
-                return Some(point);
-            }
-            previous_inside = Some((distance, clearance));
-        }
-        None
+        let hit = terrain_ray_hit(battlefield, ray)?;
+        terrain_point_from_hit(battlefield, ray, hit)
     }
 
     #[must_use]
@@ -298,41 +267,89 @@ impl Camera3d {
     }
 }
 
-fn terrain_clearance(
-    battlefield: FlatBattlefield,
-    ray: ViewportRay,
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TerrainRayHit {
     distance: f32,
-) -> Option<(BattlePoint, f32)> {
-    let hit = add(ray.origin_mm, scale(ray.direction, distance));
-    let point = terrain_point_from_world(battlefield, hit[0], hit[2])?;
-    let surface_y = terrain_height_mm(battlefield, point) as f32;
-    Some((point, hit[1] - surface_y))
+    x0_mm: u32,
+    x1_mm: u32,
+    z0_mm: u32,
+    z1_mm: u32,
 }
 
-fn refine_terrain_hit(
-    battlefield: FlatBattlefield,
-    ray: ViewportRay,
-    mut low: f32,
-    mut high: f32,
-) -> f32 {
-    for _ in 0..TERRAIN_RAY_REFINEMENT_STEPS {
-        let middle = (low + high) / 2.0;
-        match terrain_clearance(battlefield, ray, middle) {
-            Some((_, clearance)) if clearance > 0.0 => low = middle,
-            Some(_) => high = middle,
-            None => low = middle,
+fn terrain_ray_hit(battlefield: FlatBattlefield, ray: ViewportRay) -> Option<TerrainRayHit> {
+    if battlefield.width_mm == 0 || battlefield.depth_mm == 0 {
+        return None;
+    }
+
+    let mut nearest: Option<TerrainRayHit> = None;
+    for cell_x in 0..TERRAIN_GRID_SIZE {
+        for cell_z in 0..TERRAIN_GRID_SIZE {
+            let Some((x0_mm, x1_mm, z0_mm, z1_mm)) =
+                terrain_cell_bounds_mm(battlefield, cell_x, cell_z)
+            else {
+                continue;
+            };
+            let maximum_y = terrain_cell_height_mm(battlefield, cell_x, cell_z) as f32;
+            let Some(distance) = ray_aabb_entry_distance(
+                ray,
+                [x0_mm as f32, 0.0, z0_mm as f32],
+                [x1_mm as f32, maximum_y, z1_mm as f32],
+            ) else {
+                continue;
+            };
+            let candidate = TerrainRayHit {
+                distance,
+                x0_mm,
+                x1_mm,
+                z0_mm,
+                z1_mm,
+            };
+            if nearest.is_none_or(|current| candidate.distance < current.distance) {
+                nearest = Some(candidate);
+            }
         }
     }
-    high
+    nearest
 }
 
-fn terrain_point_at_distance(
+fn ray_aabb_entry_distance(ray: ViewportRay, minimum: [f32; 3], maximum: [f32; 3]) -> Option<f32> {
+    let mut entry = 0.0_f32;
+    let mut exit = f32::INFINITY;
+    for axis in 0..3 {
+        let minimum = minimum[axis] - TERRAIN_PICK_EPSILON_MM;
+        let maximum = maximum[axis] + TERRAIN_PICK_EPSILON_MM;
+        let origin = ray.origin_mm[axis];
+        let direction = ray.direction[axis];
+        if direction.abs() <= f32::EPSILON {
+            if origin < minimum || origin > maximum {
+                return None;
+            }
+            continue;
+        }
+
+        let first = (minimum - origin) / direction;
+        let second = (maximum - origin) / direction;
+        entry = entry.max(first.min(second));
+        exit = exit.min(first.max(second));
+        if exit < entry || exit < 0.0 {
+            return None;
+        }
+    }
+    let distance = entry.max(0.0);
+    distance.is_finite().then_some(distance)
+}
+
+fn terrain_point_from_hit(
     battlefield: FlatBattlefield,
     ray: ViewportRay,
-    distance: f32,
+    hit: TerrainRayHit,
 ) -> Option<BattlePoint> {
-    let hit = add(ray.origin_mm, scale(ray.direction, distance));
-    terrain_point_from_world(battlefield, hit[0], hit[2])
+    let world = add(ray.origin_mm, scale(ray.direction, hit.distance));
+    terrain_point_from_world(
+        battlefield,
+        world[0].clamp(hit.x0_mm as f32, hit.x1_mm as f32),
+        world[2].clamp(hit.z0_mm as f32, hit.z1_mm as f32),
+    )
 }
 
 fn terrain_point_from_world(
@@ -340,19 +357,20 @@ fn terrain_point_from_world(
     world_x_mm: f32,
     world_z_mm: f32,
 ) -> Option<BattlePoint> {
-    if !world_x_mm.is_finite()
-        || !world_z_mm.is_finite()
-        || world_x_mm < 0.0
-        || world_z_mm < 0.0
-        || world_x_mm > battlefield.width_mm as f32
-        || world_z_mm > battlefield.depth_mm as f32
+    let x_mm = tolerant_battlefield_coordinate(world_x_mm, battlefield.width_mm)?;
+    let z_mm = tolerant_battlefield_coordinate(world_z_mm, battlefield.depth_mm)?;
+    Some(BattlePoint::new(x_mm, z_mm))
+}
+
+fn tolerant_battlefield_coordinate(coordinate_mm: f32, span_mm: u32) -> Option<u32> {
+    let span = span_mm as f32;
+    if !coordinate_mm.is_finite()
+        || coordinate_mm < -TERRAIN_PICK_EPSILON_MM
+        || coordinate_mm > span + TERRAIN_PICK_EPSILON_MM
     {
         return None;
     }
-    Some(BattlePoint::new(
-        world_x_mm.round() as u32,
-        world_z_mm.round() as u32,
-    ))
+    Some(coordinate_mm.clamp(0.0, span).round() as u32)
 }
 
 fn valid_viewport(width: f32, height: f32) -> bool {
@@ -437,6 +455,35 @@ mod tests {
         let dy = i64::from(round_trip.y_mm) - i64::from(point.y_mm);
         assert!(dx.abs() <= 2);
         assert!(dy.abs() <= 2);
+    }
+
+    #[test]
+    fn exact_battlefield_boundary_round_trips_with_pick_tolerance() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let camera = Camera3d::fit(battlefield);
+        let point = BattlePoint::new(0, 2_500);
+        let pixel = camera
+            .project_ground_point(battlefield, point, 1_600.0, 900.0)
+            .unwrap();
+        let round_trip = camera
+            .ground_point_from_viewport(battlefield, pixel[0], pixel[1], 1_600.0, 900.0)
+            .unwrap();
+        assert!(i64::from(round_trip.x_mm).abs() <= 1);
+        assert!((i64::from(round_trip.y_mm) - i64::from(point.y_mm)).abs() <= 2);
+    }
+
+    #[test]
+    fn close_center_ray_hits_the_visible_height_step() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let mut camera = Camera3d::fit(battlefield);
+        camera.pan_ground(battlefield, 0.0, -37_500.0);
+        camera.dolly(battlefield, 100.0);
+        let target = BattlePoint::new(50_000, 12_500);
+        let hit = camera
+            .ground_point_from_viewport(battlefield, 500.0, 500.0, 1_000.0, 1_000.0)
+            .unwrap();
+        assert!((i64::from(hit.x_mm) - i64::from(target.x_mm)).abs() <= 2);
+        assert!((i64::from(hit.y_mm) - i64::from(target.y_mm)).abs() <= 2);
     }
 
     #[test]
