@@ -1,6 +1,7 @@
 use medieval_core::{BattlePoint, FlatBattlefield};
 
 pub(crate) const TERRAIN_GRID_SIZE: u32 = 8;
+#[cfg(test)]
 pub(crate) const TERRAIN_BASE_DEPTH_MM: f32 = 200.0;
 const TERRAIN_MAX_HEIGHT_DIVISOR: u32 = 25;
 
@@ -62,6 +63,7 @@ pub(crate) fn terrain_cell_bounds_mm(
     Some((x0, x1, z0, z1))
 }
 
+#[cfg(test)]
 #[must_use]
 pub(crate) fn terrain_cell_world_bounds(
     battlefield: FlatBattlefield,
