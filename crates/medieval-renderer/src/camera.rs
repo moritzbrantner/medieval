@@ -11,7 +11,7 @@ const MAX_DISTANCE_FRACTION: f32 = 5.0;
 const MIN_PAN_STEP_FRACTION: f32 = 0.01;
 const MAX_PAN_STEP_FRACTION: f32 = 0.1;
 const NEAR_PLANE_MM: f32 = 100.0;
-const TERRAIN_HIT_EPSILON_MM: f32 = 1.0;
+const ZERO_HEIGHT_ENDPOINT_EPSILON_MM: f32 = 1.0;
 const TERRAIN_RAY_MARCH_STEPS: u32 = 256;
 const TERRAIN_RAY_REFINEMENT_STEPS: u32 = 18;
 
@@ -238,14 +238,20 @@ impl Camera3d {
             let Some((point, clearance)) = terrain_clearance(battlefield, ray, distance) else {
                 continue;
             };
-            if clearance <= TERRAIN_HIT_EPSILON_MM {
+            if clearance <= 0.0 {
                 if let Some((previous_distance, previous_clearance)) = previous_inside
-                    && previous_clearance > TERRAIN_HIT_EPSILON_MM
+                    && previous_clearance > 0.0
                 {
                     let hit_distance =
                         refine_terrain_hit(battlefield, ray, previous_distance, distance);
                     return terrain_point_at_distance(battlefield, ray, hit_distance);
                 }
+                return Some(point);
+            }
+            if step == TERRAIN_RAY_MARCH_STEPS
+                && terrain_height_mm(battlefield, point) == 0
+                && clearance <= ZERO_HEIGHT_ENDPOINT_EPSILON_MM
+            {
                 return Some(point);
             }
             previous_inside = Some((distance, clearance));
@@ -312,7 +318,7 @@ fn refine_terrain_hit(
     for _ in 0..TERRAIN_RAY_REFINEMENT_STEPS {
         let middle = (low + high) / 2.0;
         match terrain_clearance(battlefield, ray, middle) {
-            Some((_, clearance)) if clearance > TERRAIN_HIT_EPSILON_MM => low = middle,
+            Some((_, clearance)) if clearance > 0.0 => low = middle,
             Some(_) => high = middle,
             None => low = middle,
         }
