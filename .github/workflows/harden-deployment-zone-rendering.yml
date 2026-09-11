@@ -1,0 +1,57 @@
+name: harden-deployment-zone-rendering
+
+on:
+  push:
+    branches:
+      - feature/tactical-deployment-zones
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Keep deployment guidance on the terrain surface
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          gpu = Path('crates/medieval-renderer/src/gpu.rs')
+          text = gpu.read_text()
+          text = text.replace(
+              'const DEPLOYMENT_BOUNDARY_HEIGHT_MM: f32 = 360.0;',
+              'const DEPLOYMENT_BOUNDARY_HEIGHT_MM: f32 = 40.0;',
+          )
+          gpu.write_text(text)
+
+          shader = Path('crates/medieval-renderer/src/battlefield.wgsl')
+          text = shader.read_text()
+          text = text.replace('    var alpha = 1.0;\n', '')
+          text = text.replace('        alpha = 0.72;\n', '')
+          text = text.replace(
+              '    return vec4<f32>(color * (0.36 + diffuse * 0.64), alpha);',
+              '    return vec4<f32>(color * (0.36 + diffuse * 0.64), 1.0);',
+          )
+          shader.write_text(text)
+          PY
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e
+        with:
+          components: rustfmt
+      - name: Verify focused renderer contract
+        run: |
+          cargo fmt --all --check
+          cargo test --locked -p medieval-renderer deployment_boundaries_are_projected_from_core_zones
+      - name: Commit rendering hardening
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "moritzbrantner"
+          git config user.email "31051084+moritzbrantner@users.noreply.github.com"
+          git add crates/medieval-renderer/src/gpu.rs crates/medieval-renderer/src/battlefield.wgsl
+          git commit -m "Keep deployment boundaries as ground guidance"
+          git push origin HEAD:feature/tactical-deployment-zones
