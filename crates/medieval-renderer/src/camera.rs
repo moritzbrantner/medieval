@@ -80,10 +80,7 @@ impl Camera3d {
         let half_depth = battlefield.depth_mm as f32 / 2.0;
         let x = self.center_x_mm + clip_x * half_width / zoom;
         let y = self.center_y_mm - clip_y * half_depth / zoom;
-        if x < 0.0
-            || y < 0.0
-            || x > battlefield.width_mm as f32
-            || y > battlefield.depth_mm as f32
+        if x < 0.0 || y < 0.0 || x > battlefield.width_mm as f32 || y > battlefield.depth_mm as f32
         {
             return None;
         }
