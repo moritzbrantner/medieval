@@ -50,7 +50,7 @@ test("one deterministic renderer terrain surface drives geometry and interaction
   assert.match(camera, /terrain_height_mm\(battlefield/);
   assert.match(camera, /terrain_cell_bounds_mm/);
   assert.match(camera, /terrain_cell_height_mm/);
-  assert.match(architecture, /cell volumes directly/);
+  assert.match(architecture, /cell volume directly/);
   assert.match(architecture, /gameplay-neutral/);
   assert.match(architecture, /must move into `medieval-core`/);
 });
