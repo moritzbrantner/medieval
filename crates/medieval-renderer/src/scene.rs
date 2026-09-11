@@ -123,6 +123,14 @@ impl BattleRenderSnapshot {
             units,
         }
     }
+
+    /// Projects core battle truth into the world-space render domain. This is
+    /// intentionally a synonym for `capture`; screen projection remains on
+    /// `Camera3d` and the GPU pipeline.
+    #[must_use]
+    pub fn project(battle: &TacticalBattle, view: &RenderViewState) -> Self {
+        Self::capture(battle, view)
+    }
 }
 
 fn soldier_centers(position: BattlePoint, soldiers: u16, frontage_slots: u16) -> Vec<[f32; 3]> {
@@ -171,6 +179,7 @@ mod tests {
         let first = BattleRenderSnapshot::capture(&battle, &view);
         let second = BattleRenderSnapshot::capture(&battle, &view);
         assert_eq!(first, second);
+        assert_eq!(first, BattleRenderSnapshot::project(&battle, &view));
         assert_eq!(first.units[0].soldier_centers_mm.len(), 80);
         assert!(
             first.units[0]
