@@ -107,12 +107,7 @@ impl CameraUniform {
                 projection.right[2],
                 projection.tan_half_fov_y,
             ],
-            up_aspect: [
-                projection.up[0],
-                projection.up[1],
-                projection.up[2],
-                aspect,
-            ],
+            up_aspect: [projection.up[0], projection.up[1], projection.up[2], aspect],
             forward_far: [
                 projection.forward[0],
                 projection.forward[1],
