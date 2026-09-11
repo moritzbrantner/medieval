@@ -87,10 +87,8 @@ impl Camera3d {
     }
 
     pub fn pan_ground(&mut self, battlefield: FlatBattlefield, delta_x_mm: f32, delta_z_mm: f32) {
-        self.target_x_mm =
-            (self.target_x_mm + delta_x_mm).clamp(0.0, battlefield.width_mm as f32);
-        self.target_z_mm =
-            (self.target_z_mm + delta_z_mm).clamp(0.0, battlefield.depth_mm as f32);
+        self.target_x_mm = (self.target_x_mm + delta_x_mm).clamp(0.0, battlefield.width_mm as f32);
+        self.target_z_mm = (self.target_z_mm + delta_z_mm).clamp(0.0, battlefield.depth_mm as f32);
     }
 
     pub fn dolly(&mut self, battlefield: FlatBattlefield, factor: f32) {
@@ -176,10 +174,7 @@ impl Camera3d {
         let direction = normalize(add(
             projection.forward,
             add(
-                scale(
-                    projection.right,
-                    ndc_x * projection.tan_half_fov_y * aspect,
-                ),
+                scale(projection.right, ndc_x * projection.tan_half_fov_y * aspect),
                 scale(projection.up, ndc_y * projection.tan_half_fov_y),
             ),
         ))?;
@@ -223,7 +218,10 @@ impl Camera3d {
         {
             return None;
         }
-        Some(BattlePoint::new(hit[0].round() as u32, hit[2].round() as u32))
+        Some(BattlePoint::new(
+            hit[0].round() as u32,
+            hit[2].round() as u32,
+        ))
     }
 
     #[must_use]
