@@ -133,9 +133,6 @@ mod tests {
         assert_eq!(minimum, [50_000.0, -TERRAIN_BASE_DEPTH_MM, 40_000.0]);
         assert_eq!(maximum[0], 62_500.0);
         assert_eq!(maximum[2], 50_000.0);
-        assert_eq!(
-            maximum[1],
-            terrain_cell_height_mm(battlefield, 4, 4) as f32
-        );
+        assert_eq!(maximum[1], terrain_cell_height_mm(battlefield, 4, 4) as f32);
     }
 }
