@@ -30,7 +30,9 @@ jobs:
           components: rustfmt, clippy
       - name: Apply deployment-zone slice
         run: python3 .github/scripts/implement-deployment-zones.py
-      - name: Format Rust
+      - name: Normalize generated Rust formatting
+        run: cargo fmt --all
+      - name: Verify Rust formatting
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
