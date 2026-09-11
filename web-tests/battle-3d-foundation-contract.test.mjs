@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [camera, scene, terrain, gpu, shader, browserBattle, controls, nativeInput, architecture] = await Promise.all([
+const [camera, scene, terrain, coreTerrain, gpu, shader, browserBattle, controls, nativeInput, architecture] = await Promise.all([
   readFile(new URL("../crates/medieval-renderer/src/camera.rs", import.meta.url), "utf8"),
   readFile(new URL("../crates/medieval-renderer/src/scene.rs", import.meta.url), "utf8"),
   readFile(new URL("../crates/medieval-renderer/src/terrain.rs", import.meta.url), "utf8"),
+  readFile(new URL("../crates/medieval-core/src/terrain.rs", import.meta.url), "utf8"),
   readFile(new URL("../crates/medieval-renderer/src/gpu.rs", import.meta.url), "utf8"),
   readFile(new URL("../crates/medieval-renderer/src/battlefield.wgsl", import.meta.url), "utf8"),
   readFile(new URL("../web-battle-wasm/src/lib.rs", import.meta.url), "utf8"),
@@ -41,18 +42,23 @@ test("one perspective camera owns projection and viewport rays", () => {
   assert.doesNotMatch(controls, /Camera2d|MIN_CAMERA_ZOOM|MAX_CAMERA_ZOOM/);
 });
 
-test("one deterministic renderer terrain surface drives geometry and interaction", () => {
-  assert.match(terrain, /TERRAIN_GRID_SIZE/);
-  assert.match(terrain, /terrain_height_mm\(/);
-  assert.match(terrain, /terrain_cell_height_mm\(/);
+test("one deterministic core terrain contract drives renderer geometry and interaction", () => {
+  assert.match(coreTerrain, /pub struct TacticalTerrain/);
+  assert.match(coreTerrain, /HeightFoundationV1/);
+  assert.match(coreTerrain, /pub fn height_mm\(/);
+  assert.match(coreTerrain, /pub fn cell_height_mm\(/);
+  assert.match(coreTerrain, /pub fn cell_bounds_mm\(/);
+  assert.match(terrain, /TacticalTerrain/);
+  assert.match(terrain, /TACTICAL_TERRAIN_GRID_SIZE/);
+  assert.doesNotMatch(terrain, /TERRAIN_MAX_HEIGHT_DIVISOR|fn scaled_boundary|fn terrain_cell_index/);
   assert.match(scene, /terrain_height_mm\(battlefield/);
   assert.match(gpu, /terrain_cell_height_mm/);
   assert.match(camera, /terrain_height_mm\(battlefield/);
   assert.match(camera, /terrain_cell_bounds_mm/);
   assert.match(camera, /terrain_cell_height_mm/);
   assert.match(architecture, /cell volume directly/);
+  assert.match(architecture, /core-owned/);
   assert.match(architecture, /gameplay-neutral/);
-  assert.match(architecture, /must move into `medieval-core`/);
 });
 
 test("the production renderer consumes the same aspect-safe perspective basis with depth", () => {

@@ -12,23 +12,23 @@ Every tactical slice must therefore be a smaller piece of the final 3D system ra
 
 - `BattlePoint.x_mm` maps to world X.
 - `BattlePoint.y_mm` maps to world Z (battlefield depth).
-- World Y is elevation and is supplied by the terrain system as terrain lands.
+- World Y is elevation. Its deterministic ground-to-height contract is owned by `medieval-core`; renderers only project it into world geometry.
 
 Pixels, clip-space coordinates, projection matrices, camera state, GPU buffers, and renderer-only transforms must not enter `medieval-core`.
 
-Keeping the current integer ground coordinates is deliberate. A 3D renderer does not require the simulation to adopt floating-point GPU vectors, and authoritative terrain elevation can later be introduced through an explicit deterministic terrain query instead of coupling simulation truth to presentation types.
+Keeping the current integer ground coordinates is deliberate. A 3D renderer does not require the simulation to adopt floating-point GPU vectors. Authoritative elevation is queried through the deterministic `TacticalTerrain` contract without coupling core truth to presentation types.
 
 ## Ownership
 
 ### `medieval-core`
 
-Owns battle truth: units, positions on the battlefield, formations, movement, combat, morale, fatigue, routing, future terrain effects, and deterministic ticks.
+Owns battle truth: units, positions on the battlefield, formations, movement, combat, morale, fatigue, routing, deterministic ticks, and the deterministic `TacticalTerrain` elevation contract. Terrain effects on gameplay remain separate rules that have not landed yet.
 
 ### `medieval-renderer`
 
-Owns the 3D scene projection and GPU work: perspective camera, world-space render snapshots, viewport rays, renderer-only terrain geometry, soldier instances, selection/order visualization, lighting, depth, culling/LOD, and `wgpu` resources.
+Owns the 3D scene projection and GPU work: perspective camera, world-space render snapshots, viewport rays, terrain mesh/volume projection, soldier instances, selection/order visualization, lighting, depth, culling/LOD, and `wgpu` resources.
 
-The current terrain-height field is intentionally renderer-owned and gameplay-neutral. It proves the geometry, elevation, and ray-intersection path without making movement or combat depend on presentation state. Before height, forests, rivers, or chokepoints affect simulation outcomes, their deterministic contract must move into `medieval-core`.
+The current terrain-height profile is core-owned and gameplay-neutral. `medieval-core::TacticalTerrain` owns deterministic height and cell-boundary queries; `medieval-renderer` is only a projection adapter for geometry and picking. Movement, combat, morale, routing, and legality still do not depend on elevation.
 
 A render snapshot may copy authoritative metadata needed to draw the battle, but it must not contain precomputed pixel or clip-space positions.
 
@@ -65,7 +65,7 @@ The original tactical preview assumptions have now been removed or contained at 
 | `Camera2d` existed in shared controls | Removed. Semantic controls own a `Camera3d` directly. |
 | Browser used adapter-local affine projection/inverse math | Removed. Visible-unit picking uses `Camera3d::project_world_point`; orders use `ground_point_from_viewport`. |
 | Native input used affine viewport conversion and ground-distance hit radii | Removed. Native click/drag selection uses projected visible anchors; orders use the same viewport-ray terrain intersection. |
-| Flat renderer ground had no elevation source | Replaced by one deterministic renderer-local height field shared by wgpu geometry, unit elevation, camera targeting, and viewport picking. It remains gameplay-neutral until an authoritative core terrain contract lands. |
+| Flat renderer ground had no elevation source | Replaced by the core-owned deterministic `TacticalTerrain::HeightFoundationV1` profile. wgpu geometry, unit elevation, camera targeting, and viewport picking consume the same contract while gameplay remains terrain-neutral. |
 | `BattlePoint` has two ground axes | Kept. It is deterministic ground-domain state, not a 2D rendering commitment. |
 
 ## Perspective camera contract
@@ -89,28 +89,27 @@ Zoom is a camera dolly operation, not a scalar applied to clip-space geometry. P
 
 The first terrain slice is intentionally narrow and final-shape compatible:
 
-1. One deterministic 8×8 renderer height field supplies all current visual elevation.
-2. `GpuBattleRenderer` renders those cells through the same Rust/wgpu instance pipeline as the rest of the tactical scene.
+1. `medieval-core::TacticalTerrain::HeightFoundationV1` owns the deterministic 8×8 elevation and cell-boundary contract.
+2. `medieval-renderer` contains only a thin adapter over that core contract; `GpuBattleRenderer` renders the returned cells through the shared Rust/wgpu instance pipeline.
 3. Soldier world geometry and interaction anchors use the same sampled terrain elevation.
 4. `Camera3d` looks at the elevated terrain target and intersects viewport rays against that same height field.
 5. Browser and native adapters remain unchanged; neither learns terrain math or projection math.
 
 Terrain picking intersects each rendered cell volume directly, including visible height-step faces, and uses a 1 mm renderer-space tolerance only at geometric boundaries so projected battlefield-edge points do not disappear through floating-point roundoff. That tolerance expands only horizontal X/Z cell bounds; elevation bounds remain exact so top-surface intersections do not shift tactical destinations.
 
-This does **not** make terrain a tactical rule. Movement, combat, morale, routing, and legality remain independent of elevation until a deterministic terrain representation is owned by `medieval-core`.
+This makes terrain elevation authoritative data, but **not yet a tactical modifier**. Movement, combat, morale, routing, and legality remain independent of elevation until explicit core rules consume the terrain contract.
 
 ## Next vertical slices
 
 The next work should deepen the same architecture rather than add another compatibility layer:
 
-1. Promote terrain data into an explicit deterministic `medieval-core` contract before any terrain-dependent gameplay rule lands.
-2. Add forests and rivers as core-owned terrain features with renderer projection kept separate from effects.
-3. Add chokepoints and deployment zones through explicit tactical legality queries.
-4. Add explicit orbit/rotation input using the existing yaw/pitch camera state.
-5. Add formation facing so soldier geometry and movement direction can become meaningful in 3D.
-6. Replace primitive soldier cuboids incrementally with asset-tooling-backed meshes/animation while retaining instancing/LOD boundaries.
+1. Add forests and rivers as core-owned terrain features with renderer projection kept separate from effects.
+2. Add chokepoints and deployment zones through explicit tactical legality queries.
+3. Add explicit orbit/rotation input using the existing yaw/pitch camera state.
+4. Add formation facing so soldier geometry and movement direction can become meaningful in 3D.
+5. Replace primitive soldier cuboids incrementally with asset-tooling-backed meshes/animation while retaining instancing/LOD boundaries.
 
-Terrain height must become authoritative through an explicit deterministic interface before hills affect movement, combat, or line of sight.
+Terrain height is now authoritative through the explicit deterministic `TacticalTerrain` interface. Hills must remain gameplay-neutral until movement, combat, or line-of-sight effects are introduced as separate core rules.
 
 ## Acceptance rules
 
@@ -122,4 +121,5 @@ A tactical rendering change is structurally acceptable only when:
 - GPU projection, unit picking, and order placement derive from the same camera geometry;
 - no player command depends on a visual approximation that disagrees with the camera;
 - depth and 3D geometry are first-class, not optional demo modes;
+- terrain generation/query semantics live in `medieval-core`; the renderer may own only projection/picking geometry and must not duplicate the deterministic terrain algorithm;
 - terrain/presentation concerns do not leak floating-point GPU types into deterministic core state.
