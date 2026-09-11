@@ -26,7 +26,7 @@ Owns battle truth: units, positions on the battlefield, formations, movement, co
 
 ### `medieval-renderer`
 
-Owns the 3D scene projection and GPU work: camera, world-space render snapshots, terrain meshes, soldier instances, selection/order visualization, lighting, depth, culling/LOD, and `wgpu` resources.
+Owns the 3D scene projection and GPU work: perspective camera, world-space render snapshots, viewport rays, terrain meshes, soldier instances, selection/order visualization, lighting, depth, culling/LOD, and `wgpu` resources.
 
 A render snapshot may copy authoritative metadata needed to draw the battle, but it must not contain precomputed pixel or clip-space positions.
 
@@ -34,7 +34,7 @@ A render snapshot may copy authoritative metadata needed to draw the battle, but
 
 `src-tauri` and `web-battle-wasm` own surfaces, physical input adaptation, window/canvas lifecycle, and presentation integration. Both must drive the same Rust battle rules and `medieval-renderer`; neither may implement tactical rules independently.
 
-## Target rendering path
+## Rendering and interaction path
 
 ```text
 TacticalBattle
@@ -43,53 +43,57 @@ world-space BattleRenderSnapshot
     ↓
 BattleScene / terrain / soldier instances
     ↓
-Camera3d + lighting + depth
-    ↓
-GpuBattleRenderer (wgpu)
-    ↓
-Tauri surface or WebGPU canvas
+Camera3d perspective basis + viewport rays
+    ├──→ GpuBattleRenderer (wgpu) → Tauri surface / WebGPU canvas
+    └──→ projected selection + ray/ground order placement
 ```
 
-There is one production renderer. Do not maintain a long-lived 2D renderer, Three.js battle renderer, or browser-only gameplay renderer beside it.
+There is one production renderer and one camera geometry contract. Do not maintain a long-lived 2D renderer, Three.js battle renderer, browser-only gameplay renderer, or adapter-owned projection formula beside it.
 
-## Migration inventory
+## Converged 3D foundations
 
-| Existing assumption | Decision |
+The original tactical preview assumptions have now been removed or contained at the correct domain boundary:
+
+| Former assumption | Current contract |
 | --- | --- |
-| Unit render snapshots contain `clip_center` / `clip_half_extent` | **Remove now.** Snapshots become world-space only. |
-| One rectangle/quad represents an entire formation | **Remove now.** The first 3D representation expands a formation into instanced soldier geometry. |
-| Tactical render pass has no depth target | **Remove now.** 3D rendering always owns a depth buffer. |
-| `battlefield.wgsl` receives already-projected 2D positions | **Remove now.** The shader receives 3D world geometry and renderer camera state. |
-| `Camera2d` name in shared controls | **Compatibility only for this migration slice.** `Camera3d` is authoritative and the alias must disappear when input migrates. |
-| Browser `projected_pixel` / `battlefield_point` affine math | **Next required migration.** Replace with `Camera3d` projection plus ray-to-terrain picking. |
-| Native `viewport_to_world`, zoom-scaled hit radius, and world-rectangle drag selection | **Next required migration.** Replace with camera rays / projected selection tests. |
-| Flat battlefield has no elevation source | **Keep temporarily as a terrain fixture.** Introduce a deterministic terrain contract before hills affect simulation. |
-| `BattlePoint` has two ground axes | **Keep.** It is deterministic ground-domain state, not a 2D rendering commitment. |
+| Unit render snapshots contained `clip_center` / `clip_half_extent` | Render snapshots contain only world-space soldier geometry and authoritative render metadata. |
+| One rectangle represented an entire formation | Formations expand deterministically into instanced individual soldier geometry. |
+| Tactical render pass had no depth target | The production 3D renderer always owns a depth attachment. |
+| Shader received already-projected 2D positions | WGSL receives world geometry plus the renderer-owned perspective camera basis. |
+| `Camera2d` existed in shared controls | Removed. Semantic controls own a `Camera3d` directly. |
+| Browser used adapter-local affine projection/inverse math | Removed. Visible-unit picking uses `Camera3d::project_world_point`; orders use `ground_point_from_viewport`. |
+| Native input used affine viewport conversion and ground-distance hit radii | Removed. Native click/drag selection uses projected visible anchors; orders use the same viewport-ray ground intersection. |
+| Flat battlefield has no elevation source | Still a deliberate terrain fixture. The camera already emits rays so terrain intersection can replace flat-ground intersection without changing platform adapters. |
+| `BattlePoint` has two ground axes | Kept. It is deterministic ground-domain state, not a 2D rendering commitment. |
 
-## Current migration slice
+## Perspective camera contract
 
-This slice deliberately changes the structural foundation before changing every player-facing camera behavior:
+`Camera3d` owns the geometry used by both rendering and interaction:
 
-1. `Camera3d` becomes the renderer camera type.
-2. `BattleRenderSnapshot` contains world-space soldier centers instead of clip-space rectangles.
-3. `GpuBattleRenderer` draws instanced 3D cuboids for individual soldiers plus a world-space ground mesh.
-4. The render pipeline has a real depth attachment and simple directional lighting.
-5. Native and browser surfaces continue to consume the same renderer while their existing ground-camera input remains source-compatible.
+- target position on the ground plane;
+- camera distance;
+- yaw and pitch;
+- vertical field of view;
+- near/far planes;
+- world-to-screen projection;
+- viewport-ray construction;
+- current ray-to-flat-ground intersection.
 
-The temporary ground projection used during this slice is not the final camera model. It exists only so the renderer conversion can land without making pointer commands geometrically incorrect in the same commit.
+The GPU uniform is derived from that same camera basis. Platform adapters may provide physical coordinates and semantic pan/zoom intents, but they must not reproduce projection equations.
 
-## Next mandatory slice
+Zoom is a camera dolly operation, not a scalar applied to clip-space geometry. Pan moves the ground target. Unit hit testing is screen-space against the same projected world anchors used by the visible scene.
 
-Before adding more battle features:
+## Next vertical slices
 
-1. Give `Camera3d` a real perspective tactical-camera model (position/target or equivalent, pitch/yaw, field of view, near/far planes).
-2. Put world-to-screen projection and viewport-ray construction on that camera.
-3. Migrate browser and native picking/order placement to ray/terrain intersection.
-4. Migrate drag selection to projected 3D bounds or frustum selection.
-5. Remove the `Camera2d` compatibility alias and all duplicated affine camera math.
-6. Keep the renderer path singular; do not add a second experimental renderer.
+The camera migration is no longer blocking tactical features. The next work should deepen the same architecture rather than add another compatibility layer:
 
-Only after that convergence should formation facing, terrain height, animation, or richer combat presentation build on top.
+1. Introduce a deterministic terrain contract with height sampling and ray/terrain intersection.
+2. Generate a first terrain mesh from that contract and keep gameplay effects initially neutral.
+3. Add explicit orbit/rotation input using the existing yaw/pitch camera state.
+4. Add formation facing so soldier geometry and movement direction can become meaningful in 3D.
+5. Replace primitive soldier cuboids incrementally with asset-tooling-backed meshes/animation while retaining instancing/LOD boundaries.
+
+Terrain height must become authoritative through an explicit deterministic interface before hills affect movement, combat, or line of sight.
 
 ## Acceptance rules
 
@@ -98,6 +102,7 @@ A tactical rendering change is structurally acceptable only when:
 - authoritative game state remains in `medieval-core`;
 - render snapshots are world-space and renderer-owned;
 - browser and desktop consume the same Rust renderer and semantic commands;
+- GPU projection, unit picking, and order placement derive from the same camera geometry;
 - no player command depends on a visual approximation that disagrees with the camera;
 - depth and 3D geometry are first-class, not optional demo modes;
-- temporary compatibility is named and has an explicit deletion step.
+- terrain/presentation concerns do not leak floating-point GPU types into deterministic core state.

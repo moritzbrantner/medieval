@@ -90,7 +90,6 @@ impl BrowserSandbox {
             })
             .await
             .map_err(|error| format!("could not create the WebGPU device: {error}"))?;
-
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
         let config = surface
@@ -101,10 +100,9 @@ impl BrowserSandbox {
         let mut battle = sample_battle()?;
         drive_opponent(&mut battle)?;
         let controls = TacticalControls::new(&battle, BattleSide::Attacker);
-        let snapshot = BattleRenderSnapshot::project(&battle, &controls.render_view(&battle));
+        let snapshot = BattleRenderSnapshot::capture(&battle, &controls.render_view(&battle));
         let mut renderer = GpuBattleRenderer::new(&device, config.format);
         renderer.upload_snapshot(&device, &queue, &snapshot);
-
         let mut sandbox = Self {
             canvas,
             surface,
@@ -139,7 +137,6 @@ impl BrowserSandbox {
         if !timestamp_ms.is_finite() {
             return Err("animation timestamp must be finite".to_owned());
         }
-
         let previous = self.last_frame_ms.replace(timestamp_ms);
         if !self.paused {
             if let Some(previous) = previous {
@@ -165,7 +162,6 @@ impl BrowserSandbox {
                 }
             }
         }
-
         self.render()
     }
 
@@ -189,7 +185,6 @@ impl BrowserSandbox {
         let snapshot = self.snapshot();
         let picked = pick_unit(&snapshot, x_px, y_px, width_px, height_px);
         let selected = snapshot.units.iter().any(|unit| unit.selected);
-
         match button {
             0 => {
                 let selectable = picked.as_deref().and_then(|unit_id| {
@@ -258,7 +253,7 @@ impl BrowserSandbox {
     }
 
     fn snapshot(&self) -> BattleRenderSnapshot {
-        BattleRenderSnapshot::project(&self.battle, &self.controls.render_view(&self.battle))
+        BattleRenderSnapshot::capture(&self.battle, &self.controls.render_view(&self.battle))
     }
 
     fn outcome(&self) -> Option<&'static str> {
@@ -320,7 +315,6 @@ impl BrowserSandbox {
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
         }
-
         let snapshot = self.snapshot();
         self.renderer
             .upload_snapshot(&self.device, &self.queue, &snapshot);
@@ -361,64 +355,15 @@ impl BrowserSandbox {
 }
 
 fn sample_battle() -> Result<TacticalBattle, String> {
-    let battlefield = FlatBattlefield::new(100_000, 100_000);
     TacticalBattle::new(
-        battlefield,
+        FlatBattlefield::new(100_000, 100_000),
         vec![
-            unit(
-                "attacker-spears",
-                BattleSide::Attacker,
-                110,
-                22_000,
-                24_000,
-                Formation::Line { files: 28 },
-                450,
-            ),
-            unit(
-                "attacker-archers",
-                BattleSide::Attacker,
-                80,
-                18_000,
-                50_000,
-                Formation::Line { files: 24 },
-                420,
-            ),
-            unit(
-                "attacker-knights",
-                BattleSide::Attacker,
-                44,
-                22_000,
-                76_000,
-                Formation::Column { files: 12 },
-                850,
-            ),
-            unit(
-                "defender-spears",
-                BattleSide::Defender,
-                110,
-                78_000,
-                24_000,
-                Formation::Line { files: 28 },
-                430,
-            ),
-            unit(
-                "defender-archers",
-                BattleSide::Defender,
-                80,
-                82_000,
-                50_000,
-                Formation::Line { files: 24 },
-                400,
-            ),
-            unit(
-                "defender-knights",
-                BattleSide::Defender,
-                44,
-                78_000,
-                76_000,
-                Formation::Column { files: 12 },
-                800,
-            ),
+            unit("attacker-spears", BattleSide::Attacker, 110, 22_000, 24_000, Formation::Line { files: 28 }, 450),
+            unit("attacker-archers", BattleSide::Attacker, 80, 18_000, 50_000, Formation::Line { files: 24 }, 420),
+            unit("attacker-knights", BattleSide::Attacker, 44, 22_000, 76_000, Formation::Column { files: 12 }, 850),
+            unit("defender-spears", BattleSide::Defender, 110, 78_000, 24_000, Formation::Line { files: 28 }, 430),
+            unit("defender-archers", BattleSide::Defender, 80, 82_000, 50_000, Formation::Line { files: 24 }, 400),
+            unit("defender-knights", BattleSide::Defender, 44, 78_000, 76_000, Formation::Column { files: 12 }, 800),
         ],
     )
     .map_err(|error| error.to_string())
@@ -455,25 +400,27 @@ fn drive_opponent(battle: &mut TacticalBattle) -> Result<(), String> {
     if attackers.is_empty() {
         return Ok(());
     }
-
     let defenders = battle
         .units()
         .iter()
         .filter(|unit| {
             unit.side() == BattleSide::Defender && !unit.is_routed() && !unit.is_destroyed()
         })
-        .map(|unit| (unit.id().to_owned(), unit.position(), unit.engagement_target().map(str::to_owned)))
+        .map(|unit| {
+            (
+                unit.id().to_owned(),
+                unit.position(),
+                unit.engagement_target().map(str::to_owned),
+            )
+        })
         .collect::<Vec<_>>();
-
     let mut assignments = Vec::with_capacity(defenders.len());
     for (defender_id, defender_position, current_target) in defenders {
         let target = attackers
             .iter()
             .min_by(|left, right| {
-                let left_distance = distance_squared(defender_position, left.1);
-                let right_distance = distance_squared(defender_position, right.1);
-                left_distance
-                    .cmp(&right_distance)
+                distance_squared(defender_position, left.1)
+                    .cmp(&distance_squared(defender_position, right.1))
                     .then_with(|| left.0.cmp(&right.0))
             })
             .map(|candidate| candidate.0.clone())
@@ -482,7 +429,6 @@ fn drive_opponent(battle: &mut TacticalBattle) -> Result<(), String> {
             assignments.push((defender_id, target));
         }
     }
-
     for (defender_id, target_id) in assignments {
         battle
             .issue_engagement_order(&defender_id, &target_id)
@@ -609,7 +555,6 @@ pub async fn battle_sandbox_start(canvas_id: String) -> Result<String, JsValue> 
         .ok_or_else(|| js_error(format!("battle canvas #{canvas_id} does not exist")))?
         .dyn_into::<HtmlCanvasElement>()
         .map_err(|_| js_error(format!("element #{canvas_id} is not a canvas")))?;
-
     let sandbox = BrowserSandbox::new(canvas).await.map_err(js_error)?;
     let status = sandbox.status_json().map_err(js_error)?;
     SANDBOX.with(|slot| *slot.borrow_mut() = Some(sandbox));
