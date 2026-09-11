@@ -1,18 +1,22 @@
 use std::cell::RefCell;
 
 use bytemuck::{Pod, Zeroable};
-use medieval_core::{BattleSide, FlatBattlefield};
+use medieval_core::{BattlePoint, BattleSide, DeploymentZone, FlatBattlefield};
 use wgpu::util::DeviceExt;
 
 use crate::{
     BattleRenderSnapshot, Camera3d,
-    terrain::{TERRAIN_GRID_SIZE, terrain_cell_bounds_mm, terrain_cell_height_mm},
+    terrain::{
+        TERRAIN_GRID_SIZE, terrain_cell_bounds_mm, terrain_cell_height_mm, terrain_height_mm,
+    },
 };
 
 const SOLDIER_HALF_WIDTH_MM: f32 = 250.0;
 const SOLDIER_HALF_HEIGHT_MM: f32 = 900.0;
 const SOLDIER_HALF_DEPTH_MM: f32 = 250.0;
 const GROUND_BASE_DEPTH_MM: f32 = 200.0;
+const DEPLOYMENT_BOUNDARY_HALF_WIDTH_MM: f32 = 180.0;
+const DEPLOYMENT_BOUNDARY_HEIGHT_MM: f32 = 40.0;
 const CUBE_VERTEX_COUNT: u32 = 36;
 const INITIAL_INSTANCE_CAPACITY: usize = 256;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
@@ -46,6 +50,43 @@ impl GpuWorldInstance {
             ],
             half_extent_routed: [
                 (x1 - x0) as f32 / 2.0,
+                half_height,
+                (z1 - z0) as f32 / 2.0,
+                0.0,
+            ],
+            visual: [0.0; 4],
+        })
+    }
+
+    fn deployment_boundary_segment(
+        zone: DeploymentZone,
+        battlefield: FlatBattlefield,
+        cell_z: u32,
+    ) -> Option<Self> {
+        let (_, _, z0, z1) = terrain_cell_bounds_mm(battlefield, 0, cell_z)?;
+        if z1 <= z0 {
+            return None;
+        }
+        let boundary_x = match zone.side {
+            BattleSide::Attacker => zone.max_x_mm,
+            BattleSide::Defender => zone.min_x_mm,
+        };
+        let center_z = z0 + (z1 - z0) / 2;
+        let terrain_y =
+            terrain_height_mm(battlefield, BattlePoint::new(boundary_x, center_z)) as f32;
+        let half_height = DEPLOYMENT_BOUNDARY_HEIGHT_MM / 2.0;
+        Some(Self {
+            center_material: [
+                boundary_x as f32,
+                terrain_y + half_height,
+                (z0 as f32 + z1 as f32) / 2.0,
+                match zone.side {
+                    BattleSide::Attacker => 3.0,
+                    BattleSide::Defender => 4.0,
+                },
+            ],
+            half_extent_routed: [
+                DEPLOYMENT_BOUNDARY_HALF_WIDTH_MM,
                 half_height,
                 (z1 - z0) as f32 / 2.0,
                 0.0,
@@ -306,12 +347,22 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
         .map(|unit| unit.soldier_centers_mm.len())
         .sum::<usize>();
     let terrain_capacity = (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE) as usize;
-    let mut instances = Vec::with_capacity(terrain_capacity + soldier_count);
+    let deployment_capacity = (2 * TERRAIN_GRID_SIZE) as usize;
+    let mut instances = Vec::with_capacity(terrain_capacity + deployment_capacity + soldier_count);
     for cell_z in 0..TERRAIN_GRID_SIZE {
         for cell_x in 0..TERRAIN_GRID_SIZE {
             if let Some(cell) = GpuWorldInstance::terrain_cell(snapshot.battlefield, cell_x, cell_z)
             {
                 instances.push(cell);
+            }
+        }
+    }
+    for zone in snapshot.deployment_zones {
+        for cell_z in 0..TERRAIN_GRID_SIZE {
+            if let Some(marker) =
+                GpuWorldInstance::deployment_boundary_segment(zone, snapshot.battlefield, cell_z)
+            {
+                instances.push(marker);
             }
         }
     }
@@ -431,8 +482,22 @@ mod tests {
             BattleRenderSnapshot::capture(&battle, &RenderViewState::fit(battle.battlefield()));
         assert_eq!(
             gpu_instances(&snapshot).len(),
-            (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE) as usize + 80
+            (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE + 2 * TERRAIN_GRID_SIZE) as usize + 80
         );
+    }
+
+    #[test]
+    fn deployment_boundaries_are_projected_from_core_zones() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let zones = medieval_core::standard_deployment_zones(battlefield);
+        let attacker =
+            GpuWorldInstance::deployment_boundary_segment(zones[0], battlefield, 0).unwrap();
+        let defender =
+            GpuWorldInstance::deployment_boundary_segment(zones[1], battlefield, 0).unwrap();
+        assert_eq!(attacker.center_material[0], zones[0].max_x_mm as f32);
+        assert_eq!(defender.center_material[0], zones[1].min_x_mm as f32);
+        assert_eq!(attacker.center_material[3], 3.0);
+        assert_eq!(defender.center_material[3], 4.0);
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use std::{cell::RefCell, cmp::Ordering, collections::BTreeSet};
 
 use medieval_core::{
-    BattlePoint, BattleSide, FlatBattlefield, Formation, TACTICAL_TICKS_PER_SECOND, TacticalBattle,
-    TacticalUnit,
+    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation,
+    TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalUnit,
 };
 use medieval_renderer::{BattleRenderSnapshot, GpuBattleRenderer};
 use serde::Serialize;
@@ -35,6 +35,7 @@ struct SandboxStatus {
     paused: bool,
     outcome: Option<&'static str>,
     selected_units: Vec<String>,
+    deployment_zones: [DeploymentZone; 2],
     camera: CameraStatus,
     units: Vec<UnitStatus>,
 }
@@ -320,6 +321,7 @@ impl BrowserSandbox {
             paused: self.paused,
             outcome: self.outcome(),
             selected_units: selected.into_iter().map(str::to_owned).collect(),
+            deployment_zones: self.battle.deployment_zones(),
             camera: CameraStatus {
                 target_x_mm: snapshot.camera.target_x_mm(),
                 target_z_mm: snapshot.camera.target_z_mm(),
@@ -378,7 +380,7 @@ impl BrowserSandbox {
 }
 
 fn sample_battle() -> Result<TacticalBattle, String> {
-    TacticalBattle::new(
+    TacticalBattle::deploy(
         FlatBattlefield::new(100_000, 100_000),
         vec![
             unit("attacker-spears", BattleSide::Attacker, 110, 22_000, 24_000, Formation::Line { files: 28 }, 450),

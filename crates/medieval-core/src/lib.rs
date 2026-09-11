@@ -3,10 +3,12 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 mod battle;
+mod deployment;
 mod save;
 mod tactical;
 mod terrain;
 pub use battle::{ArmyRoster, BattleOutcome, BattleReport};
+pub use deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
 pub use save::{CAMPAIGN_SAVE_SCHEMA_VERSION, CampaignSave, SaveError};
 pub use tactical::{
     BattlePoint, BattleSide, FlatBattlefield, Formation, MovementOrder, TACTICAL_TICKS_PER_SECOND,

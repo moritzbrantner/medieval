@@ -564,7 +564,7 @@ fn spawn_frame_scheduler(
 
 fn sample_session() -> NativeBattleSession {
     let battlefield = FlatBattlefield::new(100_000, 100_000);
-    let battle = TacticalBattle::new(
+    let battle = TacticalBattle::deploy(
         battlefield,
         vec![
             TacticalUnit::new(
