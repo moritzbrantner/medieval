@@ -1,6 +1,7 @@
 use medieval_core::{BattlePoint, FlatBattlefield};
 
 const MIN_CAMERA_ZOOM: f32 = 0.05;
+pub(crate) const COMPATIBILITY_ELEVATION_SCALE: f32 = 0.72;
 
 /// Renderer-owned tactical camera state.
 ///
@@ -33,8 +34,33 @@ impl Camera3d {
         }
     }
 
-    /// Current compatibility ground projection. This is renderer-owned so the
+    /// Current compatibility world projection. This is renderer-owned so the
     /// next perspective-camera slice has one projection boundary to replace.
+    #[must_use]
+    pub fn project_world_point(
+        self,
+        battlefield: FlatBattlefield,
+        world_position_mm: [f32; 3],
+        viewport_width_px: f32,
+        viewport_height_px: f32,
+    ) -> Option<[f32; 2]> {
+        if !world_position_mm.into_iter().all(f32::is_finite)
+            || !valid_viewport(viewport_width_px, viewport_height_px)
+        {
+            return None;
+        }
+        let half_width = battlefield.width_mm as f32 / 2.0;
+        let half_depth = battlefield.depth_mm as f32 / 2.0;
+        let zoom = self.sanitized_zoom();
+        let clip_x = (world_position_mm[0] - self.center_x_mm) / half_width * zoom;
+        let elevation_lift = world_position_mm[1] * COMPATIBILITY_ELEVATION_SCALE;
+        let clip_y = (self.center_y_mm - world_position_mm[2] + elevation_lift) / half_depth * zoom;
+        Some([
+            (clip_x + 1.0) * viewport_width_px / 2.0,
+            (1.0 - clip_y) * viewport_height_px / 2.0,
+        ])
+    }
+
     #[must_use]
     pub fn project_ground_point(
         self,
@@ -43,18 +69,12 @@ impl Camera3d {
         viewport_width_px: f32,
         viewport_height_px: f32,
     ) -> Option<[f32; 2]> {
-        if !valid_viewport(viewport_width_px, viewport_height_px) {
-            return None;
-        }
-        let half_width = battlefield.width_mm as f32 / 2.0;
-        let half_depth = battlefield.depth_mm as f32 / 2.0;
-        let zoom = self.sanitized_zoom();
-        let clip_x = (point.x_mm as f32 - self.center_x_mm) / half_width * zoom;
-        let clip_y = (self.center_y_mm - point.y_mm as f32) / half_depth * zoom;
-        Some([
-            (clip_x + 1.0) * viewport_width_px / 2.0,
-            (1.0 - clip_y) * viewport_height_px / 2.0,
-        ])
+        self.project_world_point(
+            battlefield,
+            [point.x_mm as f32, 0.0, point.y_mm as f32],
+            viewport_width_px,
+            viewport_height_px,
+        )
     }
 
     /// Current compatibility flat-ground intersection. Terrain-aware ray
@@ -112,6 +132,25 @@ mod tests {
             .ground_point_from_viewport(battlefield, pixel[0], pixel[1], 1_600.0, 900.0)
             .unwrap();
         assert_eq!(round_trip, point);
+    }
+
+    #[test]
+    fn elevated_world_point_projects_above_its_ground_anchor() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let camera = Camera3d::fit(battlefield);
+        let ground = camera
+            .project_world_point(battlefield, [50_000.0, 0.0, 50_000.0], 1_000.0, 1_000.0)
+            .unwrap();
+        let elevated = camera
+            .project_world_point(
+                battlefield,
+                [50_000.0, 1_800.0, 50_000.0],
+                1_000.0,
+                1_000.0,
+            )
+            .unwrap();
+        assert_eq!(elevated[0], ground[0]);
+        assert!(elevated[1] < ground[1]);
     }
 
     #[test]
