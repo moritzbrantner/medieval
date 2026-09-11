@@ -1,6 +1,6 @@
 use medieval_core::{BattlePoint, FlatBattlefield};
 
-const DEFAULT_FOV_Y_RADIANS: f32 = 0.785_398_2;
+const DEFAULT_FOV_Y_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
 const DEFAULT_PITCH_RADIANS: f32 = 0.872_664_63;
 const DEFAULT_YAW_RADIANS: f32 = 0.0;
 const FIT_DISTANCE_MARGIN: f32 = 1.35;
@@ -277,11 +277,19 @@ fn viewport_tangents(base_tan_half_fov: f32, width: f32, height: f32) -> (f32, f
 }
 
 fn add(left: [f32; 3], right: [f32; 3]) -> [f32; 3] {
-    [left[0] + right[0], left[1] + right[1], left[2] + right[2]]
+    [
+        left[0] + right[0],
+        left[1] + right[1],
+        left[2] + right[2],
+    ]
 }
 
 fn sub(left: [f32; 3], right: [f32; 3]) -> [f32; 3] {
-    [left[0] - right[0], left[1] - right[1], left[2] - right[2]]
+    [
+        left[0] - right[0],
+        left[1] - right[1],
+        left[2] - right[2],
+    ]
 }
 
 fn scale(vector: [f32; 3], factor: f32) -> [f32; 3] {
