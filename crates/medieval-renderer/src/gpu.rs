@@ -377,10 +377,8 @@ mod tests {
             )],
         )
         .unwrap();
-        let snapshot = BattleRenderSnapshot::capture(
-            &battle,
-            &RenderViewState::fit(battle.battlefield()),
-        );
+        let snapshot =
+            BattleRenderSnapshot::capture(&battle, &RenderViewState::fit(battle.battlefield()));
         assert_eq!(gpu_instances(&snapshot).len(), 81);
     }
 
