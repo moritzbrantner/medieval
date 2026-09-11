@@ -11,6 +11,7 @@ const MAX_DISTANCE_FRACTION: f32 = 5.0;
 const MIN_PAN_STEP_FRACTION: f32 = 0.01;
 const MAX_PAN_STEP_FRACTION: f32 = 0.1;
 const NEAR_PLANE_MM: f32 = 100.0;
+const TERRAIN_HIT_EPSILON_MM: f32 = 1.0;
 const TERRAIN_RAY_MARCH_STEPS: u32 = 256;
 const TERRAIN_RAY_REFINEMENT_STEPS: u32 = 18;
 
@@ -233,21 +234,16 @@ impl Camera3d {
 
         let mut previous_inside: Option<(f32, f32)> = None;
         for step in 0..=TERRAIN_RAY_MARCH_STEPS {
-            let distance =
-                zero_plane_distance * step as f32 / TERRAIN_RAY_MARCH_STEPS as f32;
+            let distance = zero_plane_distance * step as f32 / TERRAIN_RAY_MARCH_STEPS as f32;
             let Some((point, clearance)) = terrain_clearance(battlefield, ray, distance) else {
                 continue;
             };
-            if clearance <= 0.0 {
+            if clearance <= TERRAIN_HIT_EPSILON_MM {
                 if let Some((previous_distance, previous_clearance)) = previous_inside
-                    && previous_clearance > 0.0
+                    && previous_clearance > TERRAIN_HIT_EPSILON_MM
                 {
-                    let hit_distance = refine_terrain_hit(
-                        battlefield,
-                        ray,
-                        previous_distance,
-                        distance,
-                    );
+                    let hit_distance =
+                        refine_terrain_hit(battlefield, ray, previous_distance, distance);
                     return terrain_point_at_distance(battlefield, ray, hit_distance);
                 }
                 return Some(point);
@@ -312,7 +308,7 @@ fn refine_terrain_hit(
     for _ in 0..TERRAIN_RAY_REFINEMENT_STEPS {
         let middle = (low + high) / 2.0;
         match terrain_clearance(battlefield, ray, middle) {
-            Some((_, clearance)) if clearance > 0.0 => low = middle,
+            Some((_, clearance)) if clearance > TERRAIN_HIT_EPSILON_MM => low = middle,
             Some(_) => high = middle,
             None => low = middle,
         }
@@ -403,6 +399,24 @@ mod tests {
         let battlefield = FlatBattlefield::new(100_000, 80_000);
         let camera = Camera3d::fit(battlefield);
         let point = BattlePoint::new(34_000, 61_000);
+        let pixel = camera
+            .project_ground_point(battlefield, point, 1_600.0, 900.0)
+            .unwrap();
+        let round_trip = camera
+            .ground_point_from_viewport(battlefield, pixel[0], pixel[1], 1_600.0, 900.0)
+            .unwrap();
+        let dx = i64::from(round_trip.x_mm) - i64::from(point.x_mm);
+        let dy = i64::from(round_trip.y_mm) - i64::from(point.y_mm);
+        assert!(dx.abs() <= 2);
+        assert!(dy.abs() <= 2);
+    }
+
+    #[test]
+    fn zero_height_perimeter_ground_point_round_trips() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let camera = Camera3d::fit(battlefield);
+        let point = BattlePoint::new(50_000, 95_000);
+        assert_eq!(terrain_height_mm(battlefield, point), 0);
         let pixel = camera
             .project_ground_point(battlefield, point, 1_600.0, 900.0)
             .unwrap();
