@@ -95,7 +95,7 @@ The first terrain slice is intentionally narrow and final-shape compatible:
 4. `Camera3d` looks at the elevated terrain target and intersects viewport rays against that same height field.
 5. Browser and native adapters remain unchanged; neither learns terrain math or projection math.
 
-Terrain picking intersects each rendered cell volume directly, including visible height-step faces, and uses a 1 mm renderer-space tolerance only at geometric boundaries so projected battlefield-edge points do not disappear through floating-point roundoff.
+Terrain picking intersects each rendered cell volume directly, including visible height-step faces, and uses a 1 mm renderer-space tolerance only at geometric boundaries so projected battlefield-edge points do not disappear through floating-point roundoff. That tolerance expands only horizontal X/Z cell bounds; elevation bounds remain exact so top-surface intersections do not shift tactical destinations.
 
 This does **not** make terrain a tactical rule. Movement, combat, morale, routing, and legality remain independent of elevation until a deterministic terrain representation is owned by `medieval-core`.
 
