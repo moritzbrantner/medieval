@@ -35,7 +35,23 @@ struct SandboxStatus {
     paused: bool,
     outcome: Option<&'static str>,
     selected_units: Vec<String>,
+    camera: CameraStatus,
     units: Vec<UnitStatus>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CameraStatus {
+    target_x_mm: f32,
+    target_z_mm: f32,
+    distance_mm: f32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewportPoint {
+    x_px: f64,
+    y_px: f64,
 }
 
 #[derive(Serialize)]
@@ -50,6 +66,7 @@ struct UnitStatus {
     destroyed: bool,
     selected: bool,
     engagement_target: Option<String>,
+    destination: Option<BattlePoint>,
     x_mm: u32,
     y_mm: u32,
 }
@@ -293,6 +310,7 @@ impl BrowserSandbox {
                 destroyed: unit.is_destroyed(),
                 selected: selected.contains(unit.id()),
                 engagement_target: unit.engagement_target().map(str::to_owned),
+                destination: unit.destination(),
                 x_mm: unit.position().x_mm,
                 y_mm: unit.position().y_mm,
             })
@@ -302,6 +320,11 @@ impl BrowserSandbox {
             paused: self.paused,
             outcome: self.outcome(),
             selected_units: selected.into_iter().map(str::to_owned).collect(),
+            camera: CameraStatus {
+                target_x_mm: snapshot.camera.target_x_mm(),
+                target_z_mm: snapshot.camera.target_z_mm(),
+                distance_mm: snapshot.camera.distance_mm(),
+            },
             units,
         })
         .map_err(|error| error.to_string())
@@ -578,6 +601,61 @@ pub fn battle_sandbox_pointer(
     with_sandbox(|sandbox| {
         sandbox.pointer(button, x_px, y_px, width_px, height_px, shift)?;
         sandbox.status_json()
+    })
+}
+
+#[wasm_bindgen]
+pub fn battle_sandbox_unit_viewport(
+    unit_id: &str,
+    width_px: f64,
+    height_px: f64,
+) -> Result<String, JsValue> {
+    with_sandbox(|sandbox| {
+        validate_viewport(0.0, 0.0, width_px, height_px)?;
+        let snapshot = sandbox.snapshot();
+        let unit = snapshot
+            .units
+            .iter()
+            .find(|unit| unit.unit_id == unit_id)
+            .ok_or_else(|| format!("unit {unit_id} is not visible"))?;
+        let (x_px, y_px) = projected_pixel(
+            &snapshot,
+            unit.interaction_anchor_mm(),
+            width_px,
+            height_px,
+        )
+        .ok_or_else(|| format!("unit {unit_id} does not project into the viewport"))?;
+        serde_json::to_string(&ViewportPoint { x_px, y_px }).map_err(|error| error.to_string())
+    })
+}
+
+#[wasm_bindgen]
+pub fn battle_sandbox_ground_viewport(
+    x_mm: u32,
+    y_mm: u32,
+    width_px: f64,
+    height_px: f64,
+) -> Result<String, JsValue> {
+    with_sandbox(|sandbox| {
+        validate_viewport(0.0, 0.0, width_px, height_px)?;
+        let snapshot = sandbox.snapshot();
+        if x_mm > snapshot.battlefield.width_mm || y_mm > snapshot.battlefield.depth_mm {
+            return Err("projected ground point must be inside the battlefield".to_owned());
+        }
+        let [x_px, y_px] = snapshot
+            .camera
+            .project_ground_point(
+                snapshot.battlefield,
+                BattlePoint::new(x_mm, y_mm),
+                width_px as f32,
+                height_px as f32,
+            )
+            .ok_or_else(|| "ground point does not project into the viewport".to_owned())?;
+        serde_json::to_string(&ViewportPoint {
+            x_px: f64::from(x_px),
+            y_px: f64::from(y_px),
+        })
+        .map_err(|error| error.to_string())
     })
 }
 

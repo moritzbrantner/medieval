@@ -118,6 +118,7 @@ A tactical rendering change is structurally acceptable only when:
 - authoritative game state remains in `medieval-core`;
 - render snapshots are world-space and renderer-owned;
 - browser and desktop consume the same Rust renderer and semantic commands;
+- browser controls have end-to-end acceptance that drives real pointer/keyboard events through JavaScript, WASM, and Rust-owned control/battle state without calling control commands directly from the test;
 - GPU projection, unit picking, and order placement derive from the same camera geometry;
 - no player command depends on a visual approximation that disagrees with the camera;
 - depth and 3D geometry are first-class, not optional demo modes;

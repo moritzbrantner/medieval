@@ -1,12 +1,14 @@
 import init, {
   battle_sandbox_control,
   battle_sandbox_frame,
+  battle_sandbox_ground_viewport,
   battle_sandbox_pan,
   battle_sandbox_pointer,
   battle_sandbox_reset,
   battle_sandbox_set_paused,
   battle_sandbox_start,
   battle_sandbox_status,
+  battle_sandbox_unit_viewport,
 } from "./pkg/medieval_web_battle.js";
 
 const canvas = document.querySelector("#battle-canvas");
@@ -20,6 +22,7 @@ const fitButton = document.querySelector("#fit-camera");
 const resetButton = document.querySelector("#reset-battle");
 
 let currentStatus;
+const controlsE2E = new URLSearchParams(window.location.search).has("e2e-controls");
 let animationActive = true;
 let lastStatusRefresh = 0;
 
@@ -97,6 +100,23 @@ function renderStatus(rawStatus) {
     fragment.append(row);
   }
   unitList.replaceChildren(fragment);
+}
+
+function projectForControlsE2E(projector, ...args) {
+  const rect = canvas.getBoundingClientRect();
+  return JSON.parse(projector(...args, rect.width, rect.height));
+}
+
+if (controlsE2E) {
+  window.__medievalControlsE2E = Object.freeze({
+    status: () => structuredClone(currentStatus),
+    unitViewport: (unitId) => projectForControlsE2E(battle_sandbox_unit_viewport, unitId),
+    groundViewport: (xMm, yMm) => projectForControlsE2E(
+      battle_sandbox_ground_viewport,
+      xMm,
+      yMm,
+    ),
+  });
 }
 
 function runControl(request) {
@@ -230,6 +250,7 @@ async function start() {
     await init();
     renderStatus(await battle_sandbox_start(canvas.id));
     canvas.focus();
+    if (controlsE2E) document.documentElement.dataset.controlsE2eReady = "true";
     requestAnimationFrame(animate);
   } catch (error) {
     animationActive = false;
