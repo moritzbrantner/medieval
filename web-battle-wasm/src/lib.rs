@@ -16,7 +16,6 @@ const MAX_FRAME_DELTA_MS: f64 = 250.0;
 const MAX_TICKS_PER_FRAME: u32 = 5;
 const OPPONENT_REPLAN_TICKS: u64 = TACTICAL_TICKS_PER_SECOND as u64;
 const PICK_RADIUS_PX: f64 = 34.0;
-const MIN_CAMERA_ZOOM: f32 = 0.05;
 const CAMERA_PAN_MM: f32 = 5_000.0;
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.055,
@@ -508,30 +507,19 @@ fn validate_viewport(x: f64, y: f64, width: f64, height: f64) -> Result<(), Stri
     Ok(())
 }
 
-fn sanitized_zoom(zoom: f32) -> f32 {
-    if zoom.is_finite() && zoom > 0.0 {
-        zoom.max(MIN_CAMERA_ZOOM)
-    } else {
-        1.0
-    }
-}
-
 fn projected_pixel(
     snapshot: &BattleRenderSnapshot,
-    position: BattlePoint,
+    world_position_mm: [f32; 3],
     width_px: f64,
     height_px: f64,
-) -> (f64, f64) {
-    let half_width = f64::from(snapshot.battlefield.width_mm) / 2.0;
-    let half_depth = f64::from(snapshot.battlefield.depth_mm) / 2.0;
-    let zoom = f64::from(sanitized_zoom(snapshot.camera.zoom));
-    let clip_x = (f64::from(position.x_mm) - f64::from(snapshot.camera.center_x_mm))
-        / half_width
-        * zoom;
-    let clip_y = (f64::from(snapshot.camera.center_y_mm) - f64::from(position.y_mm))
-        / half_depth
-        * zoom;
-    ((clip_x + 1.0) * width_px / 2.0, (1.0 - clip_y) * height_px / 2.0)
+) -> Option<(f64, f64)> {
+    let [x, y] = snapshot.camera.project_world_point(
+        snapshot.battlefield,
+        world_position_mm,
+        width_px as f32,
+        height_px as f32,
+    )?;
+    Some((f64::from(x), f64::from(y)))
 }
 
 fn pick_unit(
@@ -546,7 +534,12 @@ fn pick_unit(
         .iter()
         .filter(|unit| !unit.routed)
         .filter_map(|unit| {
-            let (unit_x, unit_y) = projected_pixel(snapshot, unit.position, width_px, height_px);
+            let (unit_x, unit_y) = projected_pixel(
+                snapshot,
+                unit.interaction_anchor_mm(),
+                width_px,
+                height_px,
+            )?;
             let dx = unit_x - x_px;
             let dy = unit_y - y_px;
             let distance = dx * dx + dy * dy;
@@ -569,21 +562,13 @@ fn battlefield_point(
     width_px: f64,
     height_px: f64,
 ) -> Option<BattlePoint> {
-    let clip_x = x_px / width_px * 2.0 - 1.0;
-    let clip_y = 1.0 - y_px / height_px * 2.0;
-    let zoom = f64::from(sanitized_zoom(snapshot.camera.zoom));
-    let half_width = f64::from(snapshot.battlefield.width_mm) / 2.0;
-    let half_depth = f64::from(snapshot.battlefield.depth_mm) / 2.0;
-    let x = f64::from(snapshot.camera.center_x_mm) + clip_x * half_width / zoom;
-    let y = f64::from(snapshot.camera.center_y_mm) - clip_y * half_depth / zoom;
-    if x < 0.0
-        || y < 0.0
-        || x > f64::from(snapshot.battlefield.width_mm)
-        || y > f64::from(snapshot.battlefield.depth_mm)
-    {
-        return None;
-    }
-    Some(BattlePoint::new(x.round() as u32, y.round() as u32))
+    snapshot.camera.ground_point_from_viewport(
+        snapshot.battlefield,
+        x_px as f32,
+        y_px as f32,
+        width_px as f32,
+        height_px as f32,
+    )
 }
 
 const fn side_name(side: BattleSide) -> &'static str {
