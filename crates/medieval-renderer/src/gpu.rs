@@ -143,7 +143,7 @@ impl GpuBattleRenderer {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Medieval 3D tactical pipeline layout"),
-            bind_group_layouts: &[&camera_layout],
+            bind_group_layouts: &[Some(&camera_layout)],
             immediate_size: 0,
         });
         let camera = CameraUniform {
@@ -307,8 +307,8 @@ fn create_pipeline(
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::LessEqual,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
