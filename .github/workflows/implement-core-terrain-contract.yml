@@ -438,7 +438,9 @@ jobs:
           Path("web-tests/battle-3d-foundation-contract.test.mjs").write_text(textwrap.dedent(web_test), encoding="utf-8")
           PY
       - name: Format
-        run: cargo fmt --all --check
+        run: |
+          cargo fmt --all
+          cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Test workspace
