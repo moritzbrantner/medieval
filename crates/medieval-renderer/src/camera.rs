@@ -6,6 +6,8 @@ const DEFAULT_YAW_RADIANS: f32 = 0.0;
 const FIT_DISTANCE_MARGIN: f32 = 1.35;
 const MIN_DISTANCE_FRACTION: f32 = 0.04;
 const MAX_DISTANCE_FRACTION: f32 = 5.0;
+const MIN_PAN_STEP_FRACTION: f32 = 0.01;
+const MAX_PAN_STEP_FRACTION: f32 = 0.1;
 const NEAR_PLANE_MM: f32 = 100.0;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -93,7 +95,7 @@ impl Camera3d {
 
     pub fn dolly(&mut self, battlefield: FlatBattlefield, factor: f32) {
         let max_span = battlefield.width_mm.max(battlefield.depth_mm) as f32;
-        let min_distance = (max_span * MIN_DISTANCE_FRACTION).max(1_000.0);
+        let min_distance = (max_span * MIN_DISTANCE_FRACTION).max(1.0);
         let max_distance = (max_span * MAX_DISTANCE_FRACTION).max(min_distance);
         self.distance_mm = (self.distance_mm / factor).clamp(min_distance, max_distance);
     }
@@ -101,7 +103,9 @@ impl Camera3d {
     #[must_use]
     pub fn pan_step_mm(self, battlefield: FlatBattlefield) -> f32 {
         let max_span = battlefield.width_mm.max(battlefield.depth_mm) as f32;
-        (self.distance_mm * 0.04).clamp(1_000.0, max_span * 0.1)
+        let min_step = (max_span * MIN_PAN_STEP_FRACTION).max(1.0);
+        let max_step = (max_span * MAX_PAN_STEP_FRACTION).max(min_step);
+        (self.distance_mm * 0.04).clamp(min_step, max_step)
     }
 
     #[must_use]
@@ -125,9 +129,13 @@ impl Camera3d {
         if view_z <= projection.near_mm || view_z >= projection.far_mm {
             return None;
         }
-        let aspect = viewport_width_px / viewport_height_px;
-        let ndc_x = view_x / (view_z * projection.tan_half_fov_y * aspect);
-        let ndc_y = view_y / (view_z * projection.tan_half_fov_y);
+        let (tan_half_x, tan_half_y) = viewport_tangents(
+            projection.tan_half_fov_y,
+            viewport_width_px,
+            viewport_height_px,
+        );
+        let ndc_x = view_x / (view_z * tan_half_x);
+        let ndc_y = view_y / (view_z * tan_half_y);
         if !ndc_x.is_finite() || !ndc_y.is_finite() {
             return None;
         }
@@ -168,14 +176,18 @@ impl Camera3d {
             return None;
         }
         let projection = self.projection(battlefield);
-        let aspect = viewport_width_px / viewport_height_px;
         let ndc_x = x_px / viewport_width_px * 2.0 - 1.0;
         let ndc_y = 1.0 - y_px / viewport_height_px * 2.0;
+        let (tan_half_x, tan_half_y) = viewport_tangents(
+            projection.tan_half_fov_y,
+            viewport_width_px,
+            viewport_height_px,
+        );
         let direction = normalize(add(
             projection.forward,
             add(
-                scale(projection.right, ndc_x * projection.tan_half_fov_y * aspect),
-                scale(projection.up, ndc_y * projection.tan_half_fov_y),
+                scale(projection.right, ndc_x * tan_half_x),
+                scale(projection.up, ndc_y * tan_half_y),
             ),
         ))?;
         Some(ViewportRay {
@@ -255,6 +267,15 @@ fn valid_viewport(width: f32, height: f32) -> bool {
     width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0
 }
 
+fn viewport_tangents(base_tan_half_fov: f32, width: f32, height: f32) -> (f32, f32) {
+    let aspect = width / height;
+    if aspect >= 1.0 {
+        (base_tan_half_fov * aspect, base_tan_half_fov)
+    } else {
+        (base_tan_half_fov, base_tan_half_fov / aspect)
+    }
+}
+
 fn add(left: [f32; 3], right: [f32; 3]) -> [f32; 3] {
     [left[0] + right[0], left[1] + right[1], left[2] + right[2]]
 }
@@ -319,6 +340,24 @@ mod tests {
     }
 
     #[test]
+    fn fit_keeps_battlefield_corners_visible_on_portrait_viewports() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let camera = Camera3d::fit(battlefield);
+        for point in [
+            BattlePoint::new(0, 0),
+            BattlePoint::new(100_000, 0),
+            BattlePoint::new(0, 100_000),
+            BattlePoint::new(100_000, 100_000),
+        ] {
+            let [x, y] = camera
+                .project_ground_point(battlefield, point, 300.0, 1_000.0)
+                .unwrap();
+            assert!((0.0..=300.0).contains(&x));
+            assert!((0.0..=1_000.0).contains(&y));
+        }
+    }
+
+    #[test]
     fn elevation_changes_perspective_projection() {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
         let camera = Camera3d::fit(battlefield);
@@ -342,6 +381,15 @@ mod tests {
         assert_eq!(camera.target_z_mm(), 0.0);
         camera.dolly(battlefield, 100.0);
         assert!(camera.distance_mm() < fit_distance);
-        assert!(camera.distance_mm() >= 1_000.0);
+        assert!(camera.distance_mm() >= 1.0);
+    }
+
+    #[test]
+    fn small_battlefield_pan_step_has_ordered_bounds() {
+        let battlefield = FlatBattlefield::new(2_000, 3_000);
+        let camera = Camera3d::fit(battlefield);
+        let step = camera.pan_step_mm(battlefield);
+        assert!(step.is_finite());
+        assert!((30.0..=300.0).contains(&step));
     }
 }
