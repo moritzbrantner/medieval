@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use medieval_core::{BattleSide, FlatBattlefield};
 use wgpu::util::DeviceExt;
 
-use crate::{BattleRenderSnapshot, camera::COMPATIBILITY_ELEVATION_SCALE};
+use crate::{BattleRenderSnapshot, Camera3d};
 
 const SOLDIER_HALF_WIDTH_MM: f32 = 250.0;
 const SOLDIER_HALF_HEIGHT_MM: f32 = 900.0;
@@ -79,24 +79,45 @@ const fn flag(value: bool) -> f32 {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Pod, Zeroable)]
 struct CameraUniform {
-    center_zoom_elevation: [f32; 4],
-    battlefield: [f32; 4],
+    eye_near: [f32; 4],
+    right_tan_half_fov: [f32; 4],
+    up_aspect: [f32; 4],
+    forward_far: [f32; 4],
 }
 
 impl CameraUniform {
-    fn from_snapshot(snapshot: &BattleRenderSnapshot) -> Self {
+    fn from_camera(
+        camera: Camera3d,
+        battlefield: FlatBattlefield,
+        viewport_width: u32,
+        viewport_height: u32,
+    ) -> Self {
+        let projection = camera.projection(battlefield);
+        let aspect = viewport_width.max(1) as f32 / viewport_height.max(1) as f32;
         Self {
-            center_zoom_elevation: [
-                snapshot.camera.center_x_mm,
-                snapshot.camera.center_y_mm,
-                snapshot.camera.sanitized_zoom(),
-                COMPATIBILITY_ELEVATION_SCALE,
+            eye_near: [
+                projection.eye_mm[0],
+                projection.eye_mm[1],
+                projection.eye_mm[2],
+                projection.near_mm,
             ],
-            battlefield: [
-                snapshot.battlefield.width_mm as f32 / 2.0,
-                snapshot.battlefield.depth_mm as f32 / 2.0,
-                snapshot.battlefield.depth_mm as f32,
-                0.0,
+            right_tan_half_fov: [
+                projection.right[0],
+                projection.right[1],
+                projection.right[2],
+                projection.tan_half_fov_y,
+            ],
+            up_aspect: [
+                projection.up[0],
+                projection.up[1],
+                projection.up[2],
+                aspect,
+            ],
+            forward_far: [
+                projection.forward[0],
+                projection.forward[1],
+                projection.forward[2],
+                projection.far_mm,
             ],
         }
     }
@@ -117,6 +138,8 @@ pub struct GpuBattleRenderer {
     instance_buffer: wgpu::Buffer,
     instance_capacity: usize,
     instance_count: u32,
+    camera: Camera3d,
+    battlefield: FlatBattlefield,
     depth_target: RefCell<Option<DepthTarget>>,
 }
 
@@ -145,13 +168,12 @@ impl GpuBattleRenderer {
             bind_group_layouts: &[Some(&camera_layout)],
             immediate_size: 0,
         });
-        let camera = CameraUniform {
-            center_zoom_elevation: [0.0, 0.0, 1.0, COMPATIBILITY_ELEVATION_SCALE],
-            battlefield: [1.0, 1.0, 2.0, 0.0],
-        };
+        let battlefield = FlatBattlefield::new(1, 1);
+        let camera = Camera3d::fit(battlefield);
+        let camera_uniform = CameraUniform::from_camera(camera, battlefield, 1, 1);
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Medieval 3D tactical camera uniform"),
-            contents: bytemuck::bytes_of(&camera),
+            contents: bytemuck::bytes_of(&camera_uniform),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -172,6 +194,8 @@ impl GpuBattleRenderer {
             instance_buffer,
             instance_capacity: INITIAL_INSTANCE_CAPACITY,
             instance_count: 0,
+            camera,
+            battlefield,
             depth_target: RefCell::new(None),
         }
     }
@@ -192,15 +216,13 @@ impl GpuBattleRenderer {
         }
         self.instance_count =
             u32::try_from(instances.len()).expect("3D tactical instance count fits in u32");
-        queue.write_buffer(
-            &self.camera_buffer,
-            0,
-            bytemuck::bytes_of(&CameraUniform::from_snapshot(snapshot)),
-        );
+        self.camera = snapshot.camera;
+        self.battlefield = snapshot.battlefield;
     }
 
     pub fn render(
         &self,
+        queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         clear_color: wgpu::Color,
@@ -208,6 +230,17 @@ impl GpuBattleRenderer {
         let texture = target.texture();
         let width = texture.width().max(1);
         let height = texture.height().max(1);
+        queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::bytes_of(&CameraUniform::from_camera(
+                self.camera,
+                self.battlefield,
+                width,
+                height,
+            )),
+        );
+
         let mut depth_target = self.depth_target.borrow_mut();
         if depth_target
             .as_ref()
@@ -382,9 +415,12 @@ mod tests {
     }
 
     #[test]
-    fn shader_consumes_world_geometry() {
+    fn shader_consumes_world_geometry_and_perspective_camera_basis() {
         assert!(SHADER_SOURCE.contains("vertex_index"));
         assert!(SHADER_SOURCE.contains("world_position"));
         assert!(SHADER_SOURCE.contains("cube_normal"));
+        assert!(SHADER_SOURCE.contains("view_z"));
+        assert!(SHADER_SOURCE.contains("eye_near"));
+        assert!(!SHADER_SOURCE.contains("center_zoom_elevation"));
     }
 }
