@@ -1,5 +1,7 @@
 use medieval_core::{BattlePoint, FlatBattlefield};
 
+use crate::terrain::terrain_height_mm;
+
 const DEFAULT_FOV_Y_RADIANS: f32 = std::f32::consts::FRAC_PI_4;
 const DEFAULT_PITCH_RADIANS: f32 = 0.872_664_63;
 const DEFAULT_YAW_RADIANS: f32 = 0.0;
@@ -9,6 +11,8 @@ const MAX_DISTANCE_FRACTION: f32 = 5.0;
 const MIN_PAN_STEP_FRACTION: f32 = 0.01;
 const MAX_PAN_STEP_FRACTION: f32 = 0.1;
 const NEAR_PLANE_MM: f32 = 100.0;
+const TERRAIN_RAY_MARCH_STEPS: u32 = 256;
+const TERRAIN_RAY_REFINEMENT_STEPS: u32 = 18;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ViewportRay {
@@ -155,7 +159,11 @@ impl Camera3d {
     ) -> Option<[f32; 2]> {
         self.project_world_point(
             battlefield,
-            [point.x_mm as f32, 0.0, point.y_mm as f32],
+            [
+                point.x_mm as f32,
+                terrain_height_mm(battlefield, point) as f32,
+                point.y_mm as f32,
+            ],
             viewport_width_px,
             viewport_height_px,
         )
@@ -196,9 +204,9 @@ impl Camera3d {
         })
     }
 
-    /// Intersects the renderer-owned viewport ray with the current flat ground
-    /// plane. Terrain can replace this intersection without changing platform
-    /// input adapters.
+    /// Intersects the renderer-owned viewport ray with the deterministic
+    /// renderer terrain surface. Platform adapters continue to supply only
+    /// physical viewport coordinates and receive a ground-space `BattlePoint`.
     #[must_use]
     pub fn ground_point_from_viewport(
         self,
@@ -218,33 +226,54 @@ impl Camera3d {
         if ray.direction[1] >= -f32::EPSILON {
             return None;
         }
-        let distance = -ray.origin_mm[1] / ray.direction[1];
-        if !distance.is_finite() || distance < 0.0 {
+        let zero_plane_distance = -ray.origin_mm[1] / ray.direction[1];
+        if !zero_plane_distance.is_finite() || zero_plane_distance < 0.0 {
             return None;
         }
-        let hit = add(ray.origin_mm, scale(ray.direction, distance));
-        if hit[0] < 0.0
-            || hit[2] < 0.0
-            || hit[0] > battlefield.width_mm as f32
-            || hit[2] > battlefield.depth_mm as f32
-        {
-            return None;
+
+        let mut previous_inside: Option<(f32, f32)> = None;
+        for step in 0..=TERRAIN_RAY_MARCH_STEPS {
+            let distance =
+                zero_plane_distance * step as f32 / TERRAIN_RAY_MARCH_STEPS as f32;
+            let Some((point, clearance)) = terrain_clearance(battlefield, ray, distance) else {
+                continue;
+            };
+            if clearance <= 0.0 {
+                if let Some((previous_distance, previous_clearance)) = previous_inside
+                    && previous_clearance > 0.0
+                {
+                    let hit_distance = refine_terrain_hit(
+                        battlefield,
+                        ray,
+                        previous_distance,
+                        distance,
+                    );
+                    return terrain_point_at_distance(battlefield, ray, hit_distance);
+                }
+                return Some(point);
+            }
+            previous_inside = Some((distance, clearance));
         }
-        Some(BattlePoint::new(
-            hit[0].round() as u32,
-            hit[2].round() as u32,
-        ))
+        None
     }
 
     #[must_use]
     pub(crate) fn projection(self, battlefield: FlatBattlefield) -> CameraProjection {
         let cos_pitch = self.pitch_radians.cos();
+        let target_point = BattlePoint::new(
+            self.target_x_mm.round().clamp(0.0, battlefield.width_mm as f32) as u32,
+            self.target_z_mm.round().clamp(0.0, battlefield.depth_mm as f32) as u32,
+        );
+        let target = [
+            self.target_x_mm,
+            terrain_height_mm(battlefield, target_point) as f32,
+            self.target_z_mm,
+        ];
         let offset = [
             self.yaw_radians.sin() * cos_pitch * self.distance_mm,
             self.pitch_radians.sin() * self.distance_mm,
             self.yaw_radians.cos() * cos_pitch * self.distance_mm,
         ];
-        let target = [self.target_x_mm, 0.0, self.target_z_mm];
         let eye = add(target, offset);
         let forward = normalize(sub(target, eye)).expect("camera eye and target are distinct");
         let right = normalize(cross(forward, [0.0, 1.0, 0.0]))
@@ -261,6 +290,63 @@ impl Camera3d {
             far_mm: self.distance_mm + max_span * 4.0,
         }
     }
+}
+
+fn terrain_clearance(
+    battlefield: FlatBattlefield,
+    ray: ViewportRay,
+    distance: f32,
+) -> Option<(BattlePoint, f32)> {
+    let hit = add(ray.origin_mm, scale(ray.direction, distance));
+    let point = terrain_point_from_world(battlefield, hit[0], hit[2])?;
+    let surface_y = terrain_height_mm(battlefield, point) as f32;
+    Some((point, hit[1] - surface_y))
+}
+
+fn refine_terrain_hit(
+    battlefield: FlatBattlefield,
+    ray: ViewportRay,
+    mut low: f32,
+    mut high: f32,
+) -> f32 {
+    for _ in 0..TERRAIN_RAY_REFINEMENT_STEPS {
+        let middle = (low + high) / 2.0;
+        match terrain_clearance(battlefield, ray, middle) {
+            Some((_, clearance)) if clearance > 0.0 => low = middle,
+            Some(_) => high = middle,
+            None => low = middle,
+        }
+    }
+    high
+}
+
+fn terrain_point_at_distance(
+    battlefield: FlatBattlefield,
+    ray: ViewportRay,
+    distance: f32,
+) -> Option<BattlePoint> {
+    let hit = add(ray.origin_mm, scale(ray.direction, distance));
+    terrain_point_from_world(battlefield, hit[0], hit[2])
+}
+
+fn terrain_point_from_world(
+    battlefield: FlatBattlefield,
+    world_x_mm: f32,
+    world_z_mm: f32,
+) -> Option<BattlePoint> {
+    if !world_x_mm.is_finite()
+        || !world_z_mm.is_finite()
+        || world_x_mm < 0.0
+        || world_z_mm < 0.0
+        || world_x_mm > battlefield.width_mm as f32
+        || world_z_mm > battlefield.depth_mm as f32
+    {
+        return None;
+    }
+    Some(BattlePoint::new(
+        world_x_mm.round() as u32,
+        world_z_mm.round() as u32,
+    ))
 }
 
 fn valid_viewport(width: f32, height: f32) -> bool {
@@ -313,7 +399,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn projected_ground_point_round_trips_through_the_viewport_ray() {
+    fn projected_ground_point_round_trips_through_the_terrain_ray() {
         let battlefield = FlatBattlefield::new(100_000, 80_000);
         let camera = Camera3d::fit(battlefield);
         let point = BattlePoint::new(34_000, 61_000);
@@ -325,17 +411,19 @@ mod tests {
             .unwrap();
         let dx = i64::from(round_trip.x_mm) - i64::from(point.x_mm);
         let dy = i64::from(round_trip.y_mm) - i64::from(point.y_mm);
-        assert!(dx.abs() <= 1);
-        assert!(dy.abs() <= 1);
+        assert!(dx.abs() <= 2);
+        assert!(dy.abs() <= 2);
     }
 
     #[test]
-    fn center_viewport_ray_hits_the_camera_target() {
+    fn center_viewport_ray_hits_the_elevated_camera_target() {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
         let camera = Camera3d::fit(battlefield);
+        let target = BattlePoint::new(50_000, 50_000);
+        assert!(terrain_height_mm(battlefield, target) > 0);
         assert_eq!(
             camera.ground_point_from_viewport(battlefield, 500.0, 500.0, 1_000.0, 1_000.0),
-            Some(BattlePoint::new(50_000, 50_000))
+            Some(target)
         );
     }
 
@@ -361,11 +449,18 @@ mod tests {
     fn elevation_changes_perspective_projection() {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
         let camera = Camera3d::fit(battlefield);
+        let point = BattlePoint::new(50_000, 50_000);
+        let terrain_y = terrain_height_mm(battlefield, point) as f32;
         let ground = camera
-            .project_world_point(battlefield, [50_000.0, 0.0, 50_000.0], 1_000.0, 1_000.0)
+            .project_world_point(battlefield, [50_000.0, terrain_y, 50_000.0], 1_000.0, 1_000.0)
             .unwrap();
         let elevated = camera
-            .project_world_point(battlefield, [50_000.0, 1_800.0, 50_000.0], 1_000.0, 1_000.0)
+            .project_world_point(
+                battlefield,
+                [50_000.0, terrain_y + 1_800.0, 50_000.0],
+                1_000.0,
+                1_000.0,
+            )
             .unwrap();
         assert_eq!(elevated[0], ground[0]);
         assert_ne!(elevated[1], ground[1]);
