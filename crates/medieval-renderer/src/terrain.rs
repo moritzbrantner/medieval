@@ -1,6 +1,7 @@
 use medieval_core::{BattlePoint, FlatBattlefield};
 
 pub(crate) const TERRAIN_GRID_SIZE: u32 = 8;
+pub(crate) const TERRAIN_BASE_DEPTH_MM: f32 = 200.0;
 const TERRAIN_MAX_HEIGHT_DIVISOR: u32 = 25;
 
 /// Renderer-owned elevation surface for the first terrain slice.
@@ -61,6 +62,26 @@ pub(crate) fn terrain_cell_bounds_mm(
     Some((x0, x1, z0, z1))
 }
 
+#[must_use]
+pub(crate) fn terrain_cell_world_bounds(
+    battlefield: FlatBattlefield,
+    cell_x: u32,
+    cell_z: u32,
+) -> Option<([f32; 3], [f32; 3])> {
+    let (x0, x1, z0, z1) = terrain_cell_bounds_mm(battlefield, cell_x, cell_z)?;
+    if x1 <= x0 || z1 <= z0 {
+        return None;
+    }
+    Some((
+        [x0 as f32, -TERRAIN_BASE_DEPTH_MM, z0 as f32],
+        [
+            x1 as f32,
+            terrain_cell_height_mm(battlefield, cell_x, cell_z) as f32,
+            z1 as f32,
+        ],
+    ))
+}
+
 fn terrain_cell_index(coordinate_mm: u32, span_mm: u32) -> u32 {
     if span_mm == 0 {
         return 0;
@@ -102,6 +123,19 @@ mod tests {
         assert_eq!(
             terrain_cell_bounds_mm(battlefield, 7, 7),
             Some((87_502, 100_003, 70_004, 80_005))
+        );
+    }
+
+    #[test]
+    fn world_bounds_match_the_rendered_cell_volume() {
+        let battlefield = FlatBattlefield::new(100_000, 80_000);
+        let (minimum, maximum) = terrain_cell_world_bounds(battlefield, 4, 4).unwrap();
+        assert_eq!(minimum, [50_000.0, -TERRAIN_BASE_DEPTH_MM, 40_000.0]);
+        assert_eq!(maximum[0], 62_500.0);
+        assert_eq!(maximum[2], 50_000.0);
+        assert_eq!(
+            maximum[1],
+            terrain_cell_height_mm(battlefield, 4, 4) as f32
         );
     }
 }
