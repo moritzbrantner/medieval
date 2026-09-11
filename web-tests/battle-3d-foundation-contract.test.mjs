@@ -32,7 +32,10 @@ test("one perspective camera owns projection and viewport rays", () => {
   assert.match(camera, /pub fn viewport_ray\(/);
   assert.match(camera, /pub fn ground_point_from_viewport\(/);
   assert.match(camera, /fn viewport_tangents\(/);
-  assert.match(camera, /refine_terrain_hit\(/);
+  assert.match(camera, /fn terrain_ray_hit\(/);
+  assert.match(camera, /fn ray_aabb_entry_distance\(/);
+  assert.match(camera, /TERRAIN_PICK_EPSILON_MM/);
+  assert.doesNotMatch(camera, /refine_terrain_hit\(|TERRAIN_RAY_MARCH_STEPS/);
   assert.match(camera, /small_battlefield_pan_step_has_ordered_bounds/);
   assert.doesNotMatch(camera, /Camera2d|center_x_mm|center_y_mm|pub zoom:/);
   assert.doesNotMatch(controls, /Camera2d|MIN_CAMERA_ZOOM|MAX_CAMERA_ZOOM/);
@@ -45,6 +48,9 @@ test("one deterministic renderer terrain surface drives geometry and interaction
   assert.match(scene, /terrain_height_mm\(battlefield/);
   assert.match(gpu, /terrain_cell_height_mm/);
   assert.match(camera, /terrain_height_mm\(battlefield/);
+  assert.match(camera, /terrain_cell_bounds_mm/);
+  assert.match(camera, /terrain_cell_height_mm/);
+  assert.match(architecture, /cell volumes directly/);
   assert.match(architecture, /gameplay-neutral/);
   assert.match(architecture, /must move into `medieval-core`/);
 });
