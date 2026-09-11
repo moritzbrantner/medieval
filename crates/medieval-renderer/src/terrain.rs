@@ -88,8 +88,11 @@ fn terrain_cell_index(coordinate_mm: u32, span_mm: u32) -> u32 {
     if span_mm == 0 {
         return 0;
     }
-    ((u64::from(coordinate_mm.min(span_mm)) * u64::from(TERRAIN_GRID_SIZE)) / u64::from(span_mm))
-        .min(u64::from(TERRAIN_GRID_SIZE - 1)) as u32
+    let coordinate_mm = coordinate_mm.min(span_mm);
+    (1..TERRAIN_GRID_SIZE)
+        .rev()
+        .find(|&cell| coordinate_mm >= scaled_boundary(span_mm, cell))
+        .unwrap_or(0)
 }
 
 fn scaled_boundary(span_mm: u32, index: u32) -> u32 {
@@ -126,6 +129,22 @@ mod tests {
             terrain_cell_bounds_mm(battlefield, 7, 7),
             Some((87_502, 100_003, 70_004, 80_005))
         );
+    }
+
+    #[test]
+    fn height_lookup_uses_the_same_floored_cell_boundaries_as_rendering() {
+        let battlefield = FlatBattlefield::new(100_003, 80_005);
+        let boundary_x = scaled_boundary(battlefield.width_mm, 1);
+        let boundary_z = scaled_boundary(battlefield.depth_mm, 4);
+
+        assert_eq!(boundary_x, 12_500);
+        assert_eq!(terrain_cell_index(boundary_x - 1, battlefield.width_mm), 0);
+        assert_eq!(terrain_cell_index(boundary_x, battlefield.width_mm), 1);
+        assert_eq!(
+            terrain_height_mm(battlefield, BattlePoint::new(boundary_x, boundary_z)),
+            terrain_cell_height_mm(battlefield, 1, 4)
+        );
+        assert_eq!(terrain_cell_index(battlefield.width_mm, battlefield.width_mm), 7);
     }
 
     #[test]
