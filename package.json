@@ -1,0 +1,10 @@
+{
+  "name": "medieval-browser-acceptance",
+  "private": true,
+  "scripts": {
+    "test:e2e:controls": "playwright test e2e/tactical-controls.spec.mjs --project=chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

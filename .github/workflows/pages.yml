@@ -40,10 +40,19 @@ jobs:
             --out-name medieval_web_battle \
             --no-typescript
           touch web/.nojekyll
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Install browser acceptance dependencies
+        run: npm ci
+      - name: Install Chromium for tactical controls E2E
+        run: npx playwright install --with-deps chromium
       - name: Check browser JavaScript syntax
         run: find web -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | sort -z | xargs -0 -n1 node --check
       - name: Test web contracts
         run: node --test web-tests/*.test.mjs
+      - name: Test tactical controls end to end
+        run: npm run test:e2e:controls
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b
         with:
