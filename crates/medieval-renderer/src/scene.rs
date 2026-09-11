@@ -66,8 +66,6 @@ pub struct RenderUnitInstance {
 }
 
 impl RenderUnitInstance {
-    /// World-space center used for unit-level interaction during the migration
-    /// from formation rectangles to individual soldier geometry.
     #[must_use]
     pub fn interaction_anchor_mm(&self) -> [f32; 3] {
         let elevation = self
@@ -92,7 +90,7 @@ pub struct BattleRenderSnapshot {
 
 impl BattleRenderSnapshot {
     /// Captures authoritative battle state into renderer-owned world space.
-    /// No pixel or clip-space data is stored in the snapshot.
+    /// No pixel, clip-space, or platform-specific input data is stored here.
     #[must_use]
     pub fn capture(battle: &TacticalBattle, view: &RenderViewState) -> Self {
         let units = battle
@@ -124,12 +122,6 @@ impl BattleRenderSnapshot {
             camera: view.camera,
             units,
         }
-    }
-
-    /// Temporary call-site compatibility while browser/native adapters migrate.
-    #[must_use]
-    pub fn project(battle: &TacticalBattle, view: &RenderViewState) -> Self {
-        Self::capture(battle, view)
     }
 }
 
@@ -199,8 +191,8 @@ mod tests {
         let battle = battle();
         let fit = RenderViewState::fit(battle.battlefield());
         let mut moved = fit.clone();
-        moved.camera.center_x_mm += 5_000.0;
-        moved.camera.zoom = 2.0;
+        moved.camera.pan_ground(battle.battlefield(), 5_000.0, 0.0);
+        moved.camera.dolly(battle.battlefield(), 2.0);
         assert_eq!(
             BattleRenderSnapshot::capture(&battle, &fit).units[0].soldier_centers_mm,
             BattleRenderSnapshot::capture(&battle, &moved).units[0].soldier_centers_mm
