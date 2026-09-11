@@ -1,0 +1,455 @@
+name: implement-core-terrain-contract
+
+on:
+  push:
+    branches:
+      - feature/core-terrain-contract
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Install Tauri Linux prerequisites
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e
+        with:
+          components: rustfmt, clippy
+      - name: Apply core-owned terrain contract
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          core_terrain = r'''use serde::{Deserialize, Serialize};
+
+          use crate::{BattlePoint, FlatBattlefield};
+
+          pub const TACTICAL_TERRAIN_GRID_SIZE: u32 = 8;
+          const TERRAIN_MAX_HEIGHT_DIVISOR: u32 = 25;
+
+          #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+          #[serde(rename_all = "camelCase")]
+          pub enum TacticalTerrainProfile {
+              #[default]
+              HeightFoundationV1,
+          }
+
+          /// Deterministic tactical terrain authority.
+          ///
+          /// The current profile owns elevation data/query semantics in `medieval-core`
+          /// while movement, combat, morale, and legality deliberately remain terrain-neutral.
+          /// Renderers may project this contract but must not reproduce its generation rules.
+          #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+          #[serde(rename_all = "camelCase")]
+          pub struct TacticalTerrain {
+              profile: TacticalTerrainProfile,
+          }
+
+          impl TacticalTerrain {
+              #[must_use]
+              pub const fn height_foundation() -> Self {
+                  Self {
+                      profile: TacticalTerrainProfile::HeightFoundationV1,
+                  }
+              }
+
+              #[must_use]
+              pub const fn profile(self) -> TacticalTerrainProfile {
+                  self.profile
+              }
+
+              #[must_use]
+              pub fn height_mm(self, battlefield: FlatBattlefield, point: BattlePoint) -> u32 {
+                  if battlefield.width_mm == 0 || battlefield.depth_mm == 0 {
+                      return 0;
+                  }
+                  self.cell_height_mm(
+                      battlefield,
+                      terrain_cell_index(point.x_mm, battlefield.width_mm),
+                      terrain_cell_index(point.y_mm, battlefield.depth_mm),
+                  )
+              }
+
+              #[must_use]
+              pub fn cell_height_mm(
+                  self,
+                  battlefield: FlatBattlefield,
+                  cell_x: u32,
+                  cell_z: u32,
+              ) -> u32 {
+                  let _profile = self.profile;
+                  let cell_x = cell_x.min(TACTICAL_TERRAIN_GRID_SIZE - 1);
+                  let cell_z = cell_z.min(TACTICAL_TERRAIN_GRID_SIZE - 1);
+                  let sample_x = cell_x * 2 + 1;
+                  let sample_z = cell_z * 2 + 1;
+                  let center = TACTICAL_TERRAIN_GRID_SIZE;
+                  let distance = sample_x.abs_diff(center).max(sample_z.abs_diff(center));
+                  let max_distance = TACTICAL_TERRAIN_GRID_SIZE - 1;
+                  let elevation_scale = max_distance.saturating_sub(distance);
+                  let peak_scale = TACTICAL_TERRAIN_GRID_SIZE.saturating_sub(2).max(1);
+                  let max_height =
+                      battlefield.width_mm.min(battlefield.depth_mm) / TERRAIN_MAX_HEIGHT_DIVISOR;
+                  max_height.saturating_mul(elevation_scale) / peak_scale
+              }
+
+              #[must_use]
+              pub fn cell_bounds_mm(
+                  self,
+                  battlefield: FlatBattlefield,
+                  cell_x: u32,
+                  cell_z: u32,
+              ) -> Option<(u32, u32, u32, u32)> {
+                  let _profile = self.profile;
+                  if battlefield.width_mm == 0
+                      || battlefield.depth_mm == 0
+                      || cell_x >= TACTICAL_TERRAIN_GRID_SIZE
+                      || cell_z >= TACTICAL_TERRAIN_GRID_SIZE
+                  {
+                      return None;
+                  }
+                  let x0 = scaled_boundary(battlefield.width_mm, cell_x);
+                  let x1 = scaled_boundary(battlefield.width_mm, cell_x + 1);
+                  let z0 = scaled_boundary(battlefield.depth_mm, cell_z);
+                  let z1 = scaled_boundary(battlefield.depth_mm, cell_z + 1);
+                  Some((x0, x1, z0, z1))
+              }
+          }
+
+          fn terrain_cell_index(coordinate_mm: u32, span_mm: u32) -> u32 {
+              if span_mm == 0 {
+                  return 0;
+              }
+              let coordinate_mm = coordinate_mm.min(span_mm);
+              (1..TACTICAL_TERRAIN_GRID_SIZE)
+                  .rev()
+                  .find(|&cell| coordinate_mm >= scaled_boundary(span_mm, cell))
+                  .unwrap_or(0)
+          }
+
+          fn scaled_boundary(span_mm: u32, index: u32) -> u32 {
+              ((u64::from(span_mm) * u64::from(index)) / u64::from(TACTICAL_TERRAIN_GRID_SIZE))
+                  as u32
+          }
+
+          #[cfg(test)]
+          mod tests {
+              use super::*;
+
+              #[test]
+              fn height_foundation_is_deterministic_and_serializable() {
+                  let terrain = TacticalTerrain::height_foundation();
+                  let battlefield = FlatBattlefield::new(100_000, 80_000);
+                  let point = BattlePoint::new(50_000, 40_000);
+                  let first = terrain.height_mm(battlefield, point);
+                  let second = terrain.height_mm(battlefield, point);
+                  assert_eq!(first, second);
+                  assert!(first > 0);
+
+                  let encoded = serde_json::to_string(&terrain).unwrap();
+                  let decoded: TacticalTerrain = serde_json::from_str(&encoded).unwrap();
+                  assert_eq!(decoded, terrain);
+                  assert_eq!(decoded.height_mm(battlefield, point), first);
+              }
+
+              #[test]
+              fn height_lookup_uses_the_same_floored_boundaries_as_cell_geometry() {
+                  let terrain = TacticalTerrain::height_foundation();
+                  let battlefield = FlatBattlefield::new(100_003, 80_005);
+                  let boundary_x = scaled_boundary(battlefield.width_mm, 1);
+                  let boundary_z = scaled_boundary(battlefield.depth_mm, 4);
+                  assert_eq!(boundary_x, 12_500);
+                  assert_eq!(terrain_cell_index(boundary_x - 1, battlefield.width_mm), 0);
+                  assert_eq!(terrain_cell_index(boundary_x, battlefield.width_mm), 1);
+                  assert_eq!(
+                      terrain.height_mm(battlefield, BattlePoint::new(boundary_x, boundary_z)),
+                      terrain.cell_height_mm(battlefield, 1, 4)
+                  );
+                  assert_eq!(
+                      terrain_cell_index(battlefield.width_mm, battlefield.width_mm),
+                      TACTICAL_TERRAIN_GRID_SIZE - 1
+                  );
+              }
+
+              #[test]
+              fn cell_bounds_cover_the_exact_battlefield_extent() {
+                  let terrain = TacticalTerrain::height_foundation();
+                  let battlefield = FlatBattlefield::new(100_003, 80_005);
+                  assert_eq!(
+                      terrain.cell_bounds_mm(battlefield, 0, 0),
+                      Some((0, 12_500, 0, 10_000))
+                  );
+                  assert_eq!(
+                      terrain.cell_bounds_mm(battlefield, 7, 7),
+                      Some((87_502, 100_003, 70_004, 80_005))
+                  );
+              }
+
+              #[test]
+              fn terrain_is_flat_at_the_outer_edge_and_elevated_in_the_center() {
+                  let terrain = TacticalTerrain::height_foundation();
+                  let battlefield = FlatBattlefield::new(100_000, 80_000);
+                  assert_eq!(terrain.height_mm(battlefield, BattlePoint::new(0, 0)), 0);
+                  assert!(terrain.height_mm(battlefield, BattlePoint::new(50_000, 40_000)) > 0);
+              }
+          }
+          '''
+          # Dedent the raw literal written with workflow indentation.
+          import textwrap
+          Path("crates/medieval-core/src/terrain.rs").write_text(textwrap.dedent(core_terrain), encoding="utf-8")
+
+          lib = Path("crates/medieval-core/src/lib.rs")
+          text = lib.read_text(encoding="utf-8")
+          old = "mod battle;\nmod save;\nmod tactical;\npub use battle::{ArmyRoster, BattleOutcome, BattleReport};"
+          new = "mod battle;\nmod save;\nmod tactical;\nmod terrain;\npub use battle::{ArmyRoster, BattleOutcome, BattleReport};"
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = "pub use tactical::{\n    BattlePoint, BattleSide, FlatBattlefield, Formation, MovementOrder, TACTICAL_TICKS_PER_SECOND,\n    TacticalBattle, TacticalError, TacticalUnit,\n};"
+          new = old + "\npub use terrain::{TACTICAL_TERRAIN_GRID_SIZE, TacticalTerrain, TacticalTerrainProfile};"
+          assert old in text
+          lib.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          renderer_terrain = r'''use medieval_core::{
+              BattlePoint, FlatBattlefield, TACTICAL_TERRAIN_GRID_SIZE, TacticalTerrain,
+          };
+
+          pub(crate) const TERRAIN_GRID_SIZE: u32 = TACTICAL_TERRAIN_GRID_SIZE;
+          #[cfg(test)]
+          pub(crate) const TERRAIN_BASE_DEPTH_MM: f32 = 200.0;
+
+          const fn terrain() -> TacticalTerrain {
+              TacticalTerrain::height_foundation()
+          }
+
+          #[must_use]
+          pub(crate) fn terrain_height_mm(battlefield: FlatBattlefield, point: BattlePoint) -> u32 {
+              terrain().height_mm(battlefield, point)
+          }
+
+          #[must_use]
+          pub(crate) fn terrain_cell_height_mm(
+              battlefield: FlatBattlefield,
+              cell_x: u32,
+              cell_z: u32,
+          ) -> u32 {
+              terrain().cell_height_mm(battlefield, cell_x, cell_z)
+          }
+
+          #[must_use]
+          pub(crate) fn terrain_cell_bounds_mm(
+              battlefield: FlatBattlefield,
+              cell_x: u32,
+              cell_z: u32,
+          ) -> Option<(u32, u32, u32, u32)> {
+              terrain().cell_bounds_mm(battlefield, cell_x, cell_z)
+          }
+
+          #[cfg(test)]
+          #[must_use]
+          pub(crate) fn terrain_cell_world_bounds(
+              battlefield: FlatBattlefield,
+              cell_x: u32,
+              cell_z: u32,
+          ) -> Option<([f32; 3], [f32; 3])> {
+              let (x0, x1, z0, z1) = terrain_cell_bounds_mm(battlefield, cell_x, cell_z)?;
+              if x1 <= x0 || z1 <= z0 {
+                  return None;
+              }
+              Some((
+                  [x0 as f32, -TERRAIN_BASE_DEPTH_MM, z0 as f32],
+                  [
+                      x1 as f32,
+                      terrain_cell_height_mm(battlefield, cell_x, cell_z) as f32,
+                      z1 as f32,
+                  ],
+              ))
+          }
+
+          #[cfg(test)]
+          mod tests {
+              use super::*;
+
+              #[test]
+              fn renderer_adapter_matches_the_core_terrain_contract() {
+                  let battlefield = FlatBattlefield::new(100_003, 80_005);
+                  let point = BattlePoint::new(12_500, 40_002);
+                  let core = TacticalTerrain::height_foundation();
+                  assert_eq!(terrain_height_mm(battlefield, point), core.height_mm(battlefield, point));
+                  assert_eq!(
+                      terrain_cell_bounds_mm(battlefield, 1, 4),
+                      core.cell_bounds_mm(battlefield, 1, 4)
+                  );
+                  assert_eq!(
+                      terrain_cell_height_mm(battlefield, 1, 4),
+                      core.cell_height_mm(battlefield, 1, 4)
+                  );
+              }
+
+              #[test]
+              fn world_bounds_match_the_rendered_cell_volume() {
+                  let battlefield = FlatBattlefield::new(100_000, 80_000);
+                  let (minimum, maximum) = terrain_cell_world_bounds(battlefield, 4, 4).unwrap();
+                  assert_eq!(minimum, [50_000.0, -TERRAIN_BASE_DEPTH_MM, 40_000.0]);
+                  assert_eq!(maximum[0], 62_500.0);
+                  assert_eq!(maximum[2], 50_000.0);
+                  assert_eq!(maximum[1], terrain_cell_height_mm(battlefield, 4, 4) as f32);
+              }
+          }
+          '''
+          Path("crates/medieval-renderer/src/terrain.rs").write_text(textwrap.dedent(renderer_terrain), encoding="utf-8")
+
+          architecture = Path("docs/BATTLE-ARCHITECTURE.md")
+          text = architecture.read_text(encoding="utf-8")
+          replacements = {
+              "World Y is elevation and is supplied by the terrain system as terrain lands.": "World Y is elevation. Its deterministic ground-to-height contract is owned by `medieval-core`; renderers only project it into world geometry.",
+              "Keeping the current integer ground coordinates is deliberate. A 3D renderer does not require the simulation to adopt floating-point GPU vectors, and authoritative terrain elevation can later be introduced through an explicit deterministic terrain query instead of coupling simulation truth to presentation types.": "Keeping the current integer ground coordinates is deliberate. A 3D renderer does not require the simulation to adopt floating-point GPU vectors. Authoritative elevation is queried through the deterministic `TacticalTerrain` contract without coupling core truth to presentation types.",
+              "Owns battle truth: units, positions on the battlefield, formations, movement, combat, morale, fatigue, routing, future terrain effects, and deterministic ticks.": "Owns battle truth: units, positions on the battlefield, formations, movement, combat, morale, fatigue, routing, deterministic ticks, and the deterministic `TacticalTerrain` elevation contract. Terrain effects on gameplay remain separate rules that have not landed yet.",
+              "Owns the 3D scene projection and GPU work: perspective camera, world-space render snapshots, viewport rays, renderer-only terrain geometry, soldier instances, selection/order visualization, lighting, depth, culling/LOD, and `wgpu` resources.": "Owns the 3D scene projection and GPU work: perspective camera, world-space render snapshots, viewport rays, terrain mesh/volume projection, soldier instances, selection/order visualization, lighting, depth, culling/LOD, and `wgpu` resources.",
+              "The current terrain-height field is intentionally renderer-owned and gameplay-neutral. It proves the geometry, elevation, and ray-intersection path without making movement or combat depend on presentation state. Before height, forests, rivers, or chokepoints affect simulation outcomes, their deterministic contract must move into `medieval-core`.": "The current terrain-height profile is core-owned and gameplay-neutral. `medieval-core::TacticalTerrain` owns deterministic height and cell-boundary queries; `medieval-renderer` is only a projection adapter for geometry and picking. Movement, combat, morale, routing, and legality still do not depend on elevation.",
+              "| Flat renderer ground had no elevation source | Replaced by one deterministic renderer-local height field shared by wgpu geometry, unit elevation, camera targeting, and viewport picking. It remains gameplay-neutral until an authoritative core terrain contract lands. |": "| Flat renderer ground had no elevation source | Replaced by the core-owned deterministic `TacticalTerrain::HeightFoundationV1` profile. wgpu geometry, unit elevation, camera targeting, and viewport picking consume the same contract while gameplay remains terrain-neutral. |",
+              "1. One deterministic 8×8 renderer height field supplies all current visual elevation.": "1. `medieval-core::TacticalTerrain::HeightFoundationV1` owns the deterministic 8×8 elevation and cell-boundary contract.",
+              "2. `GpuBattleRenderer` renders those cells through the same Rust/wgpu instance pipeline as the rest of the tactical scene.": "2. `medieval-renderer` contains only a thin adapter over that core contract; `GpuBattleRenderer` renders the returned cells through the shared Rust/wgpu instance pipeline.",
+              "This does **not** make terrain a tactical rule. Movement, combat, morale, routing, and legality remain independent of elevation until a deterministic terrain representation is owned by `medieval-core`.": "This makes terrain elevation authoritative data, but **not yet a tactical modifier**. Movement, combat, morale, routing, and legality remain independent of elevation until explicit core rules consume the terrain contract.",
+              "1. Promote terrain data into an explicit deterministic `medieval-core` contract before any terrain-dependent gameplay rule lands.\n2. Add forests and rivers as core-owned terrain features with renderer projection kept separate from effects.\n3. Add chokepoints and deployment zones through explicit tactical legality queries.\n4. Add explicit orbit/rotation input using the existing yaw/pitch camera state.\n5. Add formation facing so soldier geometry and movement direction can become meaningful in 3D.\n6. Replace primitive soldier cuboids incrementally with asset-tooling-backed meshes/animation while retaining instancing/LOD boundaries.": "1. Add forests and rivers as core-owned terrain features with renderer projection kept separate from effects.\n2. Add chokepoints and deployment zones through explicit tactical legality queries.\n3. Add explicit orbit/rotation input using the existing yaw/pitch camera state.\n4. Add formation facing so soldier geometry and movement direction can become meaningful in 3D.\n5. Replace primitive soldier cuboids incrementally with asset-tooling-backed meshes/animation while retaining instancing/LOD boundaries.",
+              "Terrain height must become authoritative through an explicit deterministic interface before hills affect movement, combat, or line of sight.": "Terrain height is now authoritative through the explicit deterministic `TacticalTerrain` interface. Hills must remain gameplay-neutral until movement, combat, or line-of-sight effects are introduced as separate core rules.",
+              "- terrain/presentation concerns do not leak floating-point GPU types into deterministic core state.": "- terrain generation/query semantics live in `medieval-core`; the renderer may own only projection/picking geometry and must not duplicate the deterministic terrain algorithm;\n- terrain/presentation concerns do not leak floating-point GPU types into deterministic core state."
+          }
+          for old, new in replacements.items():
+              assert old in text, old
+              text = text.replace(old, new, 1)
+          architecture.write_text(text, encoding="utf-8")
+
+          roadmap = Path("docs/ROADMAP.md")
+          text = roadmap.read_text(encoding="utf-8")
+          old = "6. **Terrain:** height, forests, rivers, chokepoints, deployment zones."
+          new = "6. **Terrain — height authority complete:** deterministic height/cell geometry now lives in `medieval-core`; next add forests, rivers, chokepoints, and deployment zones without moving renderer concerns into core."
+          assert old in text
+          roadmap.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          web_test = r'''import assert from "node:assert/strict";
+          import { readFile } from "node:fs/promises";
+          import test from "node:test";
+
+          const [camera, scene, terrain, coreTerrain, gpu, shader, browserBattle, controls, nativeInput, architecture] = await Promise.all([
+            readFile(new URL("../crates/medieval-renderer/src/camera.rs", import.meta.url), "utf8"),
+            readFile(new URL("../crates/medieval-renderer/src/scene.rs", import.meta.url), "utf8"),
+            readFile(new URL("../crates/medieval-renderer/src/terrain.rs", import.meta.url), "utf8"),
+            readFile(new URL("../crates/medieval-core/src/terrain.rs", import.meta.url), "utf8"),
+            readFile(new URL("../crates/medieval-renderer/src/gpu.rs", import.meta.url), "utf8"),
+            readFile(new URL("../crates/medieval-renderer/src/battlefield.wgsl", import.meta.url), "utf8"),
+            readFile(new URL("../web-battle-wasm/src/lib.rs", import.meta.url), "utf8"),
+            readFile(new URL("../shared/tactical_controls.rs", import.meta.url), "utf8"),
+            readFile(new URL("../src-tauri/src/native_battle/input.rs", import.meta.url), "utf8"),
+            readFile(new URL("../docs/BATTLE-ARCHITECTURE.md", import.meta.url), "utf8"),
+          ]);
+
+          test("battle render snapshots remain world-space rather than clip-space rectangles", () => {
+            assert.match(camera, /pub struct Camera3d/);
+            assert.match(scene, /pub soldier_centers_mm: Vec<\[f32; 3\]>/);
+            assert.match(scene, /pub fn interaction_anchor_mm\(/);
+            assert.match(scene, /pub fn capture\(/);
+            assert.doesNotMatch(scene, /clip_center|clip_half_extent|fn project_rect/);
+          });
+
+          test("one perspective camera owns projection and viewport rays", () => {
+            assert.match(camera, /target_x_mm/);
+            assert.match(camera, /distance_mm/);
+            assert.match(camera, /yaw_radians/);
+            assert.match(camera, /pitch_radians/);
+            assert.match(camera, /fov_y_radians/);
+            assert.match(camera, /pub fn project_world_point\(/);
+            assert.match(camera, /pub fn viewport_ray\(/);
+            assert.match(camera, /pub fn ground_point_from_viewport\(/);
+            assert.match(camera, /fn viewport_tangents\(/);
+            assert.match(camera, /fn terrain_ray_hit\(/);
+            assert.match(camera, /fn ray_aabb_entry_distance\(/);
+            assert.match(camera, /TERRAIN_PICK_EPSILON_MM/);
+            assert.doesNotMatch(camera, /refine_terrain_hit\(|TERRAIN_RAY_MARCH_STEPS/);
+            assert.match(camera, /small_battlefield_pan_step_has_ordered_bounds/);
+            assert.doesNotMatch(camera, /Camera2d|center_x_mm|center_y_mm|pub zoom:/);
+            assert.doesNotMatch(controls, /Camera2d|MIN_CAMERA_ZOOM|MAX_CAMERA_ZOOM/);
+          });
+
+          test("one deterministic core terrain contract drives renderer geometry and interaction", () => {
+            assert.match(coreTerrain, /pub struct TacticalTerrain/);
+            assert.match(coreTerrain, /HeightFoundationV1/);
+            assert.match(coreTerrain, /pub fn height_mm\(/);
+            assert.match(coreTerrain, /pub fn cell_height_mm\(/);
+            assert.match(coreTerrain, /pub fn cell_bounds_mm\(/);
+            assert.match(terrain, /TacticalTerrain/);
+            assert.match(terrain, /TACTICAL_TERRAIN_GRID_SIZE/);
+            assert.doesNotMatch(terrain, /TERRAIN_MAX_HEIGHT_DIVISOR|fn scaled_boundary|fn terrain_cell_index/);
+            assert.match(scene, /terrain_height_mm\(battlefield/);
+            assert.match(gpu, /terrain_cell_height_mm/);
+            assert.match(camera, /terrain_height_mm\(battlefield/);
+            assert.match(camera, /terrain_cell_bounds_mm/);
+            assert.match(camera, /terrain_cell_height_mm/);
+            assert.match(architecture, /cell volume directly/);
+            assert.match(architecture, /core-owned/);
+            assert.match(architecture, /gameplay-neutral/);
+          });
+
+          test("the production renderer consumes the same aspect-safe perspective basis with depth", () => {
+            assert.match(gpu, /CameraUniform/);
+            assert.match(gpu, /projection\(battlefield\)/);
+            assert.match(gpu, /TextureFormat::Depth24Plus/);
+            assert.match(gpu, /RenderPassDepthStencilAttachment/);
+            assert.match(shader, /eye_near/);
+            assert.match(shader, /right_tan_half_fov/);
+            assert.match(shader, /view_z/);
+            assert.match(shader, /tan_half_x/);
+            assert.match(shader, /tan_half_y/);
+            assert.match(shader, /max\(aspect, 1\.0\)/);
+            assert.match(shader, /min\(aspect, 1\.0\)/);
+            assert.match(shader, /output\.position = vec4<f32>/);
+            assert.doesNotMatch(shader, /center_zoom_elevation|elevation_lift/);
+          });
+
+          test("browser and native input use renderer-owned perspective geometry", () => {
+            assert.match(browserBattle, /unit\.interaction_anchor_mm\(\)/);
+            assert.match(browserBattle, /snapshot\.camera\.project_world_point\(/);
+            assert.match(browserBattle, /snapshot\.camera\.ground_point_from_viewport\(/);
+            assert.doesNotMatch(browserBattle, /fn sanitized_zoom\(|half_width.*clip_x/s);
+
+            assert.match(nativeInput, /nearest_unit_at_pointer/);
+            assert.match(nativeInput, /project_world_point\(/);
+            assert.match(nativeInput, /ground_point_from_viewport\(/);
+            assert.match(nativeInput, /units_in_viewport_rect/);
+            assert.doesNotMatch(nativeInput, /CLICK_RADIUS_FRACTION|MIN_CLICK_RADIUS_MM|MAX_CLICK_RADIUS_MM/);
+          });
+
+          test("the architecture records perspective and terrain convergence rather than compatibility debt", () => {
+            assert.match(architecture, /3D mass-battle game/);
+            assert.match(architecture, /Perspective camera contract/);
+            assert.match(architecture, /Camera2d.*Removed/s);
+            assert.match(architecture, /ray-to-terrain intersection/);
+            assert.match(architecture, /Terrain height foundation/);
+            assert.match(architecture, /one production renderer and one camera geometry contract/);
+          });
+          '''
+          Path("web-tests/battle-3d-foundation-contract.test.mjs").write_text(textwrap.dedent(web_test), encoding="utf-8")
+          PY
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Test workspace
+        run: cargo test --locked --workspace
+      - name: Test web contracts
+        run: node --test web-tests/*.test.mjs
+      - name: Commit validated implementation
+        run: |
+          git config user.name "moritzbrantner"
+          git config user.email "31051084+moritzbrantner@users.noreply.github.com"
+          git rm .github/workflows/implement-core-terrain-contract.yml
+          git add crates/medieval-core/src/lib.rs crates/medieval-core/src/terrain.rs crates/medieval-renderer/src/terrain.rs docs/BATTLE-ARCHITECTURE.md docs/ROADMAP.md web-tests/battle-3d-foundation-contract.test.mjs
+          git commit -m "Promote terrain height authority into medieval-core"
+          git push origin HEAD:feature/core-terrain-contract
