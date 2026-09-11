@@ -65,6 +65,23 @@ pub struct RenderUnitInstance {
     pub soldier_centers_mm: Vec<[f32; 3]>,
 }
 
+impl RenderUnitInstance {
+    /// World-space center used for unit-level interaction during the migration
+    /// from formation rectangles to individual soldier geometry.
+    #[must_use]
+    pub fn interaction_anchor_mm(&self) -> [f32; 3] {
+        let elevation = self
+            .soldier_centers_mm
+            .first()
+            .map_or(0.0, |center| center[1]);
+        [
+            self.position.x_mm as f32,
+            elevation,
+            self.position.y_mm as f32,
+        ]
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct BattleRenderSnapshot {
     pub tick: u64,
@@ -169,6 +186,10 @@ mod tests {
                 .iter()
                 .flat_map(|center| center.iter())
                 .all(|value| value.is_finite())
+        );
+        assert_eq!(
+            first.units[0].interaction_anchor_mm(),
+            [30_000.0, SOLDIER_CENTER_Y_MM, 50_000.0]
         );
         assert!(first.units[0].selected);
     }
