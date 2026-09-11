@@ -163,11 +163,13 @@ mod tests {
         let second = BattleRenderSnapshot::capture(&battle, &view);
         assert_eq!(first, second);
         assert_eq!(first.units[0].soldier_centers_mm.len(), 80);
-        assert!(first.units[0]
-            .soldier_centers_mm
-            .iter()
-            .flat_map(|center| center.iter())
-            .all(|value| value.is_finite()));
+        assert!(
+            first.units[0]
+                .soldier_centers_mm
+                .iter()
+                .flat_map(|center| center.iter())
+                .all(|value| value.is_finite())
+        );
         assert!(first.units[0].selected);
     }
 
