@@ -97,6 +97,8 @@ The first terrain slice is intentionally narrow and final-shape compatible:
 
 Terrain picking intersects each rendered cell volume directly, including visible height-step faces, and uses a 1 mm renderer-space tolerance only at geometric boundaries so projected battlefield-edge points do not disappear through floating-point roundoff. That tolerance expands only horizontal X/Z cell bounds; elevation bounds remain exact so top-surface intersections do not shift tactical destinations.
 
+Deployment legality is also core-owned. `medieval-core` deterministically defines the attacker and defender back-third deployment zones and `TacticalBattle::deploy` rejects initial units outside their side's zone. Renderers consume those exact zones and may visualize their inner boundaries, but they do not decide legal setup positions. Arbitrary `TacticalBattle::new` construction remains available for deterministic mid-battle fixtures and replay/state reconstruction where deployment-phase validation is not applicable.
+
 This makes terrain elevation authoritative data, but **not yet a tactical modifier**. Movement, combat, morale, routing, and legality remain independent of elevation until explicit core rules consume the terrain contract.
 
 ## Next vertical slices
@@ -104,7 +106,7 @@ This makes terrain elevation authoritative data, but **not yet a tactical modifi
 The next work should deepen the same architecture rather than add another compatibility layer:
 
 1. Add forests and rivers as core-owned terrain features with renderer projection kept separate from effects.
-2. Add chokepoints and deployment zones through explicit tactical legality queries.
+2. Derive chokepoints from explicit movement/pathing legality rather than renderer geometry.
 3. Add explicit orbit/rotation input using the existing yaw/pitch camera state.
 4. Add formation facing so soldier geometry and movement direction can become meaningful in 3D.
 5. Replace primitive soldier cuboids incrementally with asset-tooling-backed meshes/animation while retaining instancing/LOD boundaries.

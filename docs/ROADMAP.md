@@ -109,8 +109,8 @@ Medieval also has a deliberately local RTS control and desktop-input model in Ru
 2. **Morale and combat — complete:** frontage, fatigue, simultaneous casualties, morale shocks, routs, pursuit.
 3. **Production desktop renderer — complete foundation:** Rust + `wgpu` battlefield projection, camera, selection, order previews, GPU batching/instancing, native Tauri window/surface/frame lifecycle, and session-backed snapshot refresh are in place.
 4. **Medieval RTS controls and desktop input — complete foundation:** click/Shift/Ctrl selection, drag-box selection, right-click move/engage, wheel and keyboard camera control, stop, control groups, order previews, Escape-close behavior, and fail-closed ordered browser input all converge on the same Rust-local semantic controls.
-5. **GitHub Pages demo renderer — current:** Three.js projection of the same authoritative battle state/contracts for browser dogfood and public demos; no duplicate simulation truth. Reuse the proven physical-input vocabulary where useful, but keep battle truth and control semantics in Rust.
-6. **Terrain — height authority complete:** deterministic height/cell geometry now lives in `medieval-core`; next add forests, rivers, chokepoints, and deployment zones without moving renderer concerns into core.
+5. **GitHub Pages demo renderer — complete acceptance foundation:** the browser projects the same authoritative tactical state, uses the shared Rust-local control semantics, and now has release-WASM Playwright acceptance for physical pointer/keyboard/wheel controls.
+6. **Terrain and battlefield legality — deployment zones current:** deterministic height/cell geometry lives in `medieval-core`; core-owned attacker/defender deployment zones now validate production battle setup and are projected by renderers. Next add forests and rivers, then derive chokepoints from explicit movement/pathing rules.
 7. **Sieges:** walls, gates, towers, capture points, pathing constraints.
 8. **Campaign handoff:** campaign army composition seeds tactical battle; tactical outcome returns casualties and control changes.
 

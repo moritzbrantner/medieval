@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-use medieval_core::{BattlePoint, BattleSide, FlatBattlefield, Formation, TacticalBattle};
+use medieval_core::{
+    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation, TacticalBattle,
+};
 
 use crate::{Camera3d, terrain::terrain_height_mm};
 
@@ -81,6 +83,7 @@ impl RenderUnitInstance {
 pub struct BattleRenderSnapshot {
     pub tick: u64,
     pub battlefield: FlatBattlefield,
+    pub deployment_zones: [DeploymentZone; 2],
     pub camera: Camera3d,
     pub units: Vec<RenderUnitInstance>,
 }
@@ -122,6 +125,7 @@ impl BattleRenderSnapshot {
         Self {
             tick: battle.tick(),
             battlefield,
+            deployment_zones: battle.deployment_zones(),
             camera: view.camera,
             units,
         }
@@ -194,6 +198,7 @@ mod tests {
         let second = BattleRenderSnapshot::capture(&battle, &view);
         assert_eq!(first, second);
         assert_eq!(first, BattleRenderSnapshot::project(&battle, &view));
+        assert_eq!(first.deployment_zones, battle.deployment_zones());
         assert_eq!(first.units[0].soldier_centers_mm.len(), 80);
         assert!(
             first.units[0]

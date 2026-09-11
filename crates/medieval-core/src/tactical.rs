@@ -6,6 +6,8 @@ use std::{
 use physics_engine::{Collider, ColliderShape, Vec3i, collider_contact};
 use serde::{Deserialize, Serialize};
 
+use crate::deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
+
 pub const TACTICAL_TICKS_PER_SECOND: u32 = 20;
 pub const MAX_TACTICAL_FATIGUE: u16 = 1_000;
 pub const MAX_TACTICAL_MORALE: u16 = 1_000;
@@ -278,6 +280,29 @@ impl TacticalBattle {
             battlefield,
             units,
         })
+    }
+
+    pub fn deploy(
+        battlefield: FlatBattlefield,
+        units: Vec<TacticalUnit>,
+    ) -> Result<Self, TacticalError> {
+        let battle = Self::new(battlefield, units)?;
+        for unit in &battle.units {
+            let zone = standard_deployment_zone(battlefield, unit.side);
+            if !zone.contains(unit.position) {
+                return Err(TacticalError::UnitOutsideDeploymentZone {
+                    unit_id: unit.id.clone(),
+                    side: unit.side,
+                    position: unit.position,
+                });
+            }
+        }
+        Ok(battle)
+    }
+
+    #[must_use]
+    pub const fn deployment_zones(&self) -> [DeploymentZone; 2] {
+        standard_deployment_zones(self.battlefield)
     }
 
     #[must_use]
@@ -654,6 +679,11 @@ pub enum TacticalError {
         unit_id: String,
         position: BattlePoint,
     },
+    UnitOutsideDeploymentZone {
+        unit_id: String,
+        side: BattleSide,
+        position: BattlePoint,
+    },
     UnitNotFound(String),
     UnitCannotReceiveOrders {
         unit_id: String,
@@ -694,6 +724,15 @@ impl fmt::Display for TacticalError {
                 formatter,
                 "tactical unit {unit_id} starts outside the battlefield at ({}, {}) mm",
                 position.x_mm, position.y_mm
+            ),
+            Self::UnitOutsideDeploymentZone {
+                unit_id,
+                side,
+                position,
+            } => write!(
+                formatter,
+                "tactical unit {unit_id} starts outside the {:?} deployment zone at ({}, {}) mm",
+                side, position.x_mm, position.y_mm
             ),
             Self::UnitNotFound(unit_id) => {
                 write!(formatter, "tactical unit {unit_id} does not exist")
@@ -915,7 +954,7 @@ mod tests {
     }
 
     fn sample_battle() -> TacticalBattle {
-        TacticalBattle::new(
+        TacticalBattle::deploy(
             FlatBattlefield::new(300_000, 200_000),
             vec![
                 sample_unit(
@@ -1030,6 +1069,50 @@ mod tests {
         assert!(matches!(
             invalid_formation,
             Err(TacticalError::InvalidFormation(_))
+        ));
+    }
+
+    #[test]
+    fn deployment_validation_accepts_own_back_thirds_and_rejects_neutral_setup() {
+        let battlefield = FlatBattlefield::new(90_000, 60_000);
+        let deployed = TacticalBattle::deploy(
+            battlefield,
+            vec![
+                sample_unit(
+                    "attacker",
+                    BattleSide::Attacker,
+                    BattlePoint::new(30_000, 20_000),
+                    Formation::Line { files: 10 },
+                ),
+                sample_unit(
+                    "defender",
+                    BattleSide::Defender,
+                    BattlePoint::new(60_000, 40_000),
+                    Formation::Line { files: 10 },
+                ),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            deployed.deployment_zones(),
+            standard_deployment_zones(battlefield)
+        );
+
+        let invalid = TacticalBattle::deploy(
+            battlefield,
+            vec![sample_unit(
+                "attacker",
+                BattleSide::Attacker,
+                BattlePoint::new(45_000, 30_000),
+                Formation::Line { files: 10 },
+            )],
+        );
+        assert!(matches!(
+            invalid,
+            Err(TacticalError::UnitOutsideDeploymentZone {
+                side: BattleSide::Attacker,
+                ..
+            })
         ));
     }
 

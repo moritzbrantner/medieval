@@ -26,6 +26,12 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
   await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
   await expect(page.locator("#battle-error")).toBeHidden();
 
+  let current = await status(page);
+  expect(current.deploymentZones).toEqual([
+    { side: "attacker", minXMm: 0, maxXMm: 33_333, minYMm: 0, maxYMm: 100_000 },
+    { side: "defender", minXMm: 66_667, maxXMm: 100_000, minYMm: 0, maxYMm: 100_000 },
+  ]);
+
   await clickUnit(page, "attacker-spears");
   await expect(page.locator("#battle-selection")).toContainText("Spears");
   expect((await status(page)).selectedUnits).toEqual(["attacker-spears"]);
@@ -37,7 +43,7 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
   ]);
 
   await clickUnit(page, "defender-spears", { button: "right" });
-  let current = await status(page);
+  current = await status(page);
   for (const unitId of ["attacker-archers", "attacker-spears"]) {
     expect(current.units.find((unit) => unit.id === unitId)?.engagementTarget)
       .toBe("defender-spears");
