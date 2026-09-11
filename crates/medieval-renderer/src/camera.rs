@@ -316,8 +316,13 @@ fn ray_aabb_entry_distance(ray: ViewportRay, minimum: [f32; 3], maximum: [f32; 3
     let mut entry = 0.0_f32;
     let mut exit = f32::INFINITY;
     for axis in 0..3 {
-        let minimum = minimum[axis] - TERRAIN_PICK_EPSILON_MM;
-        let maximum = maximum[axis] + TERRAIN_PICK_EPSILON_MM;
+        let epsilon = if axis == 1 {
+            0.0
+        } else {
+            TERRAIN_PICK_EPSILON_MM
+        };
+        let minimum = minimum[axis] - epsilon;
+        let maximum = maximum[axis] + epsilon;
         let origin = ray.origin_mm[axis];
         let direction = ray.direction[axis];
         if direction.abs() <= f32::EPSILON {
@@ -455,6 +460,20 @@ mod tests {
         let dy = i64::from(round_trip.y_mm) - i64::from(point.y_mm);
         assert!(dx.abs() <= 2);
         assert!(dy.abs() <= 2);
+    }
+
+    #[test]
+    fn horizontal_pick_tolerance_does_not_shift_top_surface_round_trip() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let camera = Camera3d::fit(battlefield);
+        let point = BattlePoint::new(55_000, 45_000);
+        let pixel = camera
+            .project_ground_point(battlefield, point, 1_600.0, 900.0)
+            .unwrap();
+        assert_eq!(
+            camera.ground_point_from_viewport(battlefield, pixel[0], pixel[1], 1_600.0, 900.0,),
+            Some(point)
+        );
     }
 
     #[test]
