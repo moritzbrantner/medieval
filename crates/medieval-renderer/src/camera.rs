@@ -257,8 +257,12 @@ impl Camera3d {
     pub(crate) fn projection(self, battlefield: FlatBattlefield) -> CameraProjection {
         let cos_pitch = self.pitch_radians.cos();
         let target_point = BattlePoint::new(
-            self.target_x_mm.round().clamp(0.0, battlefield.width_mm as f32) as u32,
-            self.target_z_mm.round().clamp(0.0, battlefield.depth_mm as f32) as u32,
+            self.target_x_mm
+                .round()
+                .clamp(0.0, battlefield.width_mm as f32) as u32,
+            self.target_z_mm
+                .round()
+                .clamp(0.0, battlefield.depth_mm as f32) as u32,
         );
         let target = [
             self.target_x_mm,
@@ -466,7 +470,12 @@ mod tests {
         let point = BattlePoint::new(50_000, 50_000);
         let terrain_y = terrain_height_mm(battlefield, point) as f32;
         let ground = camera
-            .project_world_point(battlefield, [50_000.0, terrain_y, 50_000.0], 1_000.0, 1_000.0)
+            .project_world_point(
+                battlefield,
+                [50_000.0, terrain_y, 50_000.0],
+                1_000.0,
+                1_000.0,
+            )
             .unwrap();
         let elevated = camera
             .project_world_point(

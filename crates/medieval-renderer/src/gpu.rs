@@ -309,7 +309,8 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
     let mut instances = Vec::with_capacity(terrain_capacity + soldier_count);
     for cell_z in 0..TERRAIN_GRID_SIZE {
         for cell_x in 0..TERRAIN_GRID_SIZE {
-            if let Some(cell) = GpuWorldInstance::terrain_cell(snapshot.battlefield, cell_x, cell_z) {
+            if let Some(cell) = GpuWorldInstance::terrain_cell(snapshot.battlefield, cell_x, cell_z)
+            {
                 instances.push(cell);
             }
         }

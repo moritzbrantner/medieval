@@ -230,12 +230,7 @@ mod tests {
     #[test]
     fn soldier_centers_follow_the_terrain_surface() {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
-        let centers = soldier_centers(
-            battlefield,
-            BattlePoint::new(50_000, 50_000),
-            1,
-            1,
-        );
+        let centers = soldier_centers(battlefield, BattlePoint::new(50_000, 50_000), 1, 1);
         assert_eq!(centers.len(), 1);
         assert_eq!(
             centers[0][1],

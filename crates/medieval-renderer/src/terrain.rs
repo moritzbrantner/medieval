@@ -65,9 +65,8 @@ fn terrain_cell_index(coordinate_mm: u32, span_mm: u32) -> u32 {
     if span_mm == 0 {
         return 0;
     }
-    ((u64::from(coordinate_mm.min(span_mm)) * u64::from(TERRAIN_GRID_SIZE))
-        / u64::from(span_mm))
-    .min(u64::from(TERRAIN_GRID_SIZE - 1)) as u32
+    ((u64::from(coordinate_mm.min(span_mm)) * u64::from(TERRAIN_GRID_SIZE)) / u64::from(span_mm))
+        .min(u64::from(TERRAIN_GRID_SIZE - 1)) as u32
 }
 
 fn scaled_boundary(span_mm: u32, index: u32) -> u32 {
