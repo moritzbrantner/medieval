@@ -4,12 +4,15 @@ use bytemuck::{Pod, Zeroable};
 use medieval_core::{BattleSide, FlatBattlefield};
 use wgpu::util::DeviceExt;
 
-use crate::{BattleRenderSnapshot, Camera3d};
+use crate::{
+    BattleRenderSnapshot, Camera3d,
+    terrain::{TERRAIN_GRID_SIZE, terrain_cell_bounds_mm, terrain_cell_height_mm},
+};
 
 const SOLDIER_HALF_WIDTH_MM: f32 = 250.0;
 const SOLDIER_HALF_HEIGHT_MM: f32 = 900.0;
 const SOLDIER_HALF_DEPTH_MM: f32 = 250.0;
-const GROUND_HALF_HEIGHT_MM: f32 = 100.0;
+const GROUND_BASE_DEPTH_MM: f32 = 200.0;
 const CUBE_VERTEX_COUNT: u32 = 36;
 const INITIAL_INSTANCE_CAPACITY: usize = 256;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
@@ -26,22 +29,29 @@ struct GpuWorldInstance {
 }
 
 impl GpuWorldInstance {
-    fn ground(battlefield: FlatBattlefield) -> Self {
-        Self {
+    fn terrain_cell(battlefield: FlatBattlefield, cell_x: u32, cell_z: u32) -> Option<Self> {
+        let (x0, x1, z0, z1) = terrain_cell_bounds_mm(battlefield, cell_x, cell_z)?;
+        if x1 <= x0 || z1 <= z0 {
+            return None;
+        }
+        let top = terrain_cell_height_mm(battlefield, cell_x, cell_z) as f32;
+        let bottom = -GROUND_BASE_DEPTH_MM;
+        let half_height = (top - bottom) / 2.0;
+        Some(Self {
             center_material: [
-                battlefield.width_mm as f32 / 2.0,
-                -GROUND_HALF_HEIGHT_MM,
-                battlefield.depth_mm as f32 / 2.0,
+                (x0 as f32 + x1 as f32) / 2.0,
+                bottom + half_height,
+                (z0 as f32 + z1 as f32) / 2.0,
                 2.0,
             ],
             half_extent_routed: [
-                battlefield.width_mm as f32 / 2.0,
-                GROUND_HALF_HEIGHT_MM,
-                battlefield.depth_mm as f32 / 2.0,
+                (x1 - x0) as f32 / 2.0,
+                half_height,
+                (z1 - z0) as f32 / 2.0,
                 0.0,
             ],
             visual: [0.0; 4],
-        }
+        })
     }
 
     fn soldier(
@@ -295,8 +305,15 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
         .iter()
         .map(|unit| unit.soldier_centers_mm.len())
         .sum::<usize>();
-    let mut instances = Vec::with_capacity(1 + soldier_count);
-    instances.push(GpuWorldInstance::ground(snapshot.battlefield));
+    let terrain_capacity = (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE) as usize;
+    let mut instances = Vec::with_capacity(terrain_capacity + soldier_count);
+    for cell_z in 0..TERRAIN_GRID_SIZE {
+        for cell_x in 0..TERRAIN_GRID_SIZE {
+            if let Some(cell) = GpuWorldInstance::terrain_cell(snapshot.battlefield, cell_x, cell_z) {
+                instances.push(cell);
+            }
+        }
+    }
     for unit in &snapshot.units {
         instances.extend(unit.soldier_centers_mm.iter().map(|center| {
             GpuWorldInstance::soldier(
@@ -396,7 +413,7 @@ mod tests {
     use medieval_core::{BattlePoint, FlatBattlefield, Formation, TacticalBattle, TacticalUnit};
 
     #[test]
-    fn gpu_batch_contains_ground_and_individual_soldiers() {
+    fn gpu_batch_contains_terrain_cells_and_individual_soldiers() {
         let battle = TacticalBattle::new(
             FlatBattlefield::new(100_000, 100_000),
             vec![TacticalUnit::new(
@@ -411,7 +428,20 @@ mod tests {
         .unwrap();
         let snapshot =
             BattleRenderSnapshot::capture(&battle, &RenderViewState::fit(battle.battlefield()));
-        assert_eq!(gpu_instances(&snapshot).len(), 81);
+        assert_eq!(
+            gpu_instances(&snapshot).len(),
+            (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE) as usize + 80
+        );
+    }
+
+    #[test]
+    fn terrain_instances_raise_center_cells_above_edge_cells() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let edge = GpuWorldInstance::terrain_cell(battlefield, 0, 0).unwrap();
+        let center = GpuWorldInstance::terrain_cell(battlefield, 4, 4).unwrap();
+        let edge_top = edge.center_material[1] + edge.half_extent_routed[1];
+        let center_top = center.center_material[1] + center.half_extent_routed[1];
+        assert!(center_top > edge_top);
     }
 
     #[test]
