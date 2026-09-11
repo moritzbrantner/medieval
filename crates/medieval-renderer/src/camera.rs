@@ -142,12 +142,7 @@ mod tests {
             .project_world_point(battlefield, [50_000.0, 0.0, 50_000.0], 1_000.0, 1_000.0)
             .unwrap();
         let elevated = camera
-            .project_world_point(
-                battlefield,
-                [50_000.0, 1_800.0, 50_000.0],
-                1_000.0,
-                1_000.0,
-            )
+            .project_world_point(battlefield, [50_000.0, 1_800.0, 50_000.0], 1_000.0, 1_000.0)
             .unwrap();
         assert_eq!(elevated[0], ground[0]);
         assert!(elevated[1] < ground[1]);
