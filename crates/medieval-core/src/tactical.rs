@@ -3,6 +3,7 @@ use std::{
     fmt,
 };
 
+use physics_engine::{Collider, ColliderShape, Vec3i, collider_contact};
 use serde::{Deserialize, Serialize};
 
 pub const TACTICAL_TICKS_PER_SECOND: u32 = 20;
@@ -393,8 +394,7 @@ impl TacticalBattle {
             .filter(|target| target.state != TacticalUnitState::Destroyed);
         if let Some(target) = target
             && target.state == TacticalUnitState::Routed
-            && point_distance_squared(unit.position, target.position)
-                > square_u32(PURSUIT_DISTANCE_MM)
+            && !points_within_distance(unit.position, target.position, PURSUIT_DISTANCE_MM)
         {
             self.units[index].engagement_target = None;
             self.units[index].fatigue = self.units[index]
@@ -414,8 +414,7 @@ impl TacticalBattle {
         };
 
         if unit.engagement_target.is_some()
-            && point_distance_squared(unit.position, destination)
-                <= square_u32(COMBAT_CONTACT_DISTANCE_MM)
+            && points_within_distance(unit.position, destination, COMBAT_CONTACT_DISTANCE_MM)
         {
             self.units[index].fatigue = self.units[index]
                 .fatigue
@@ -506,8 +505,11 @@ impl TacticalBattle {
                 let right = snapshot.iter().find(|unit| unit.id == *right_id).unwrap();
                 left.state == TacticalUnitState::Formed
                     && right.state == TacticalUnitState::Formed
-                    && point_distance_squared(left.position, right.position)
-                        <= square_u32(COMBAT_CONTACT_DISTANCE_MM)
+                    && points_within_distance(
+                        left.position,
+                        right.position,
+                        COMBAT_CONTACT_DISTANCE_MM,
+                    )
             })
             .fold(
                 BTreeMap::<String, u16>::new(),
@@ -524,11 +526,13 @@ impl TacticalBattle {
         for (left_id, right_id) in pairs {
             let left = snapshot.iter().find(|unit| unit.id == left_id).unwrap();
             let right = snapshot.iter().find(|unit| unit.id == right_id).unwrap();
-            let distance_squared = point_distance_squared(left.position, right.position);
-
             match (left.state, right.state) {
                 (TacticalUnitState::Formed, TacticalUnitState::Formed)
-                    if distance_squared <= square_u32(COMBAT_CONTACT_DISTANCE_MM) =>
+                    if points_within_distance(
+                        left.position,
+                        right.position,
+                        COMBAT_CONTACT_DISTANCE_MM,
+                    ) =>
                 {
                     let left_frontage = allocated_frontage(
                         left,
@@ -549,7 +553,11 @@ impl TacticalBattle {
                 }
                 (TacticalUnitState::Formed, TacticalUnitState::Routed)
                     if left.engagement_target.as_deref() == Some(right.id.as_str())
-                        && distance_squared <= square_u32(PURSUIT_DISTANCE_MM) =>
+                        && points_within_distance(
+                            left.position,
+                            right.position,
+                            PURSUIT_DISTANCE_MM,
+                        ) =>
                 {
                     *casualties.entry(right.id.clone()).or_default() +=
                         u32::from(pursuit_casualties(left));
@@ -557,7 +565,11 @@ impl TacticalBattle {
                 }
                 (TacticalUnitState::Routed, TacticalUnitState::Formed)
                     if right.engagement_target.as_deref() == Some(left.id.as_str())
-                        && distance_squared <= square_u32(PURSUIT_DISTANCE_MM) =>
+                        && points_within_distance(
+                            left.position,
+                            right.position,
+                            PURSUIT_DISTANCE_MM,
+                        ) =>
                 {
                     *casualties.entry(left.id.clone()).or_default() +=
                         u32::from(pursuit_casualties(right));
@@ -816,6 +828,35 @@ fn step_vector(dx: i64, dy: i64, speed_mm: u32) -> (i64, i64) {
     (step_x, step_y)
 }
 
+/// Uses the shared physics kernel for exact deterministic tactical proximity.
+///
+/// Tactical positions use the full `u32` battlefield range while the physics kernel's public
+/// vectors are compact `i32` coordinates. Contact is translation invariant, so rebase the left
+/// point to the local origin and map the battle ground plane onto physics X/Z. The cheap axis
+/// rejection keeps every converted delta inside the requested contact radius.
+fn points_within_distance(left: BattlePoint, right: BattlePoint, distance_mm: u32) -> bool {
+    let radius =
+        i32::try_from(distance_mm).expect("tactical contact radius must fit physics Vec3i");
+    let dx = i64::from(right.x_mm) - i64::from(left.x_mm);
+    let dz = i64::from(right.y_mm) - i64::from(left.y_mm);
+    let distance = u64::from(distance_mm);
+    if dx.unsigned_abs() > distance || dz.unsigned_abs() > distance {
+        return false;
+    }
+
+    let offset = Vec3i::new(
+        i32::try_from(dx).expect("contact x delta is bounded by the tactical radius"),
+        0,
+        i32::try_from(dz).expect("contact z delta is bounded by the tactical radius"),
+    );
+    collider_contact(
+        Collider::new(Vec3i::ZERO, ColliderShape::sphere(radius)),
+        Collider::new(offset, ColliderShape::sphere(0)),
+    )
+    .expect("validated tactical contact geometry must be representable")
+    .overlaps()
+}
+
 fn point_distance_squared(left: BattlePoint, right: BattlePoint) -> u128 {
     squared_components(
         i64::from(right.x_mm) - i64::from(left.x_mm),
@@ -823,6 +864,7 @@ fn point_distance_squared(left: BattlePoint, right: BattlePoint) -> u128 {
     )
 }
 
+#[cfg(test)]
 const fn square_u32(value: u32) -> u128 {
     let value = value as u128;
     value * value
@@ -923,6 +965,36 @@ mod tests {
 
     fn engage(battle: &mut TacticalBattle, attacker: &str, defender: &str) {
         battle.issue_engagement_order(attacker, defender).unwrap();
+    }
+
+    #[test]
+    fn physics_contact_preserves_tactical_distance_boundaries() {
+        let origin = BattlePoint::new(0, 0);
+        assert!(points_within_distance(
+            origin,
+            BattlePoint::new(900, 1_200),
+            COMBAT_CONTACT_DISTANCE_MM,
+        ));
+        assert!(!points_within_distance(
+            origin,
+            BattlePoint::new(901, 1_200),
+            COMBAT_CONTACT_DISTANCE_MM,
+        ));
+    }
+
+    #[test]
+    fn physics_contact_rebases_large_battlefield_coordinates() {
+        let edge = BattlePoint::new(u32::MAX, u32::MAX);
+        assert!(points_within_distance(
+            BattlePoint::new(u32::MAX - 900, u32::MAX - 1_200),
+            edge,
+            COMBAT_CONTACT_DISTANCE_MM,
+        ));
+        assert!(!points_within_distance(
+            BattlePoint::new(0, 0),
+            edge,
+            PURSUIT_DISTANCE_MM,
+        ));
     }
 
     #[test]
