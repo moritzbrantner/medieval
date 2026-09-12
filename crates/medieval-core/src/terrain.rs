@@ -12,6 +12,7 @@ const FOREST_MOVEMENT_SPEED_DIVISOR: u32 = 2;
 pub enum TacticalTerrainProfile {
     #[default]
     HeightFoundationV1,
+    ForestMovementV2,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,13 +72,15 @@ impl TacticalTerrain {
     #[must_use]
     pub const fn battlefield_foundation() -> Self {
         Self {
-            profile: TacticalTerrainProfile::HeightFoundationV1,
+            profile: TacticalTerrainProfile::ForestMovementV2,
         }
     }
 
     #[must_use]
     pub const fn height_foundation() -> Self {
-        Self::battlefield_foundation()
+        Self {
+            profile: TacticalTerrainProfile::HeightFoundationV1,
+        }
     }
 
     #[must_use]
@@ -86,9 +89,11 @@ impl TacticalTerrain {
     }
 
     #[must_use]
-    pub const fn forest_cells(self) -> [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] {
-        let _profile = self.profile;
-        TACTICAL_FOREST_CELLS
+    pub const fn forest_cells(self) -> &'static [TacticalTerrainCell] {
+        match self.profile {
+            TacticalTerrainProfile::HeightFoundationV1 => &[],
+            TacticalTerrainProfile::ForestMovementV2 => &TACTICAL_FOREST_CELLS,
+        }
     }
 
     #[must_use]
@@ -105,8 +110,10 @@ impl TacticalTerrain {
 
     #[must_use]
     pub fn cell_ground_cover(self, cell_x: u32, cell_z: u32) -> TacticalGroundCover {
-        let _profile = self.profile;
-        if TACTICAL_FOREST_CELLS.contains(&TacticalTerrainCell { cell_x, cell_z }) {
+        if self
+            .forest_cells()
+            .contains(&TacticalTerrainCell { cell_x, cell_z })
+        {
             TacticalGroundCover::Forest
         } else {
             TacticalGroundCover::Open
@@ -220,6 +227,27 @@ mod tests {
         assert_eq!(decoded, terrain);
         assert_eq!(decoded.height_mm(battlefield, point), first);
         assert_eq!(decoded.forest_cells(), terrain.forest_cells());
+        assert_eq!(decoded.profile(), TacticalTerrainProfile::ForestMovementV2);
+    }
+
+    #[test]
+    fn height_foundation_v1_remains_height_only_for_legacy_replays() {
+        let terrain = TacticalTerrain::height_foundation();
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let former_forest_point = BattlePoint::new(25_000, 15_000);
+        assert_eq!(
+            terrain.profile(),
+            TacticalTerrainProfile::HeightFoundationV1
+        );
+        assert!(terrain.forest_cells().is_empty());
+        assert_eq!(
+            terrain.ground_cover_at(battlefield, former_forest_point),
+            TacticalGroundCover::Open
+        );
+        assert_eq!(
+            terrain.movement_speed_mm_per_tick(battlefield, former_forest_point, 1_201),
+            1_201
+        );
     }
 
     #[test]
