@@ -1,0 +1,40 @@
+name: harden-forest-terrain-profile
+
+on:
+  push:
+    branches:
+      - feature/tactical-forest-movement
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Apply profile hardening
+        run: python3 .github/scripts/harden-forest-terrain-profile.py
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e
+        with:
+          components: rustfmt, clippy
+      - name: Normalize and verify formatting
+        run: |
+          cargo fmt --all
+          cargo fmt --all --check
+      - name: Verify strict Rust workspace
+        run: |
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+          cargo test --locked --workspace
+      - name: Verify structural web contracts
+        run: node --test web-tests/*.test.mjs
+      - name: Commit profile hardening
+        run: |
+          git config user.name "moritzbrantner"
+          git config user.email "31051084+moritzbrantner@users.noreply.github.com"
+          git rm .github/scripts/harden-forest-terrain-profile.py .github/workflows/harden-forest-terrain-profile.yml
+          git add crates/medieval-core/src/terrain.rs crates/medieval-core/src/tactical.rs docs/BATTLE-ARCHITECTURE.md
+          git commit -m "Version tactical forest terrain semantics"
+          git push origin HEAD:feature/tactical-forest-movement
