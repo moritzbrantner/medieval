@@ -3,12 +3,7 @@ use medieval_core::{
     TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalUnit,
 };
 
-fn unit(
-    id: &str,
-    side: BattleSide,
-    position: BattlePoint,
-    formation: Formation,
-) -> TacticalUnit {
+fn unit(id: &str, side: BattleSide, position: BattlePoint, formation: Formation) -> TacticalUnit {
     TacticalUnit::new(id, side, 80, position, formation, 1_200)
 }
 
@@ -25,13 +20,15 @@ fn soldiers(battle: &TacticalBattle, unit_id: &str) -> u16 {
 fn deserialization_rejects_attack_ranges_outside_core_bounds() {
     let battle = TacticalBattle::new(
         FlatBattlefield::new(50_000, 50_000),
-        vec![unit(
-            "archers",
-            BattleSide::Attacker,
-            BattlePoint::new(10_000, 25_000),
-            Formation::Line { files: 24 },
-        )
-        .with_attack_range_mm(20_000)],
+        vec![
+            unit(
+                "archers",
+                BattleSide::Attacker,
+                BattlePoint::new(10_000, 25_000),
+                Formation::Line { files: 24 },
+            )
+            .with_attack_range_mm(20_000),
+        ],
     )
     .unwrap();
     let encoded = serde_json::to_value(&battle).unwrap();
