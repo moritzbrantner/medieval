@@ -396,7 +396,10 @@ impl TacticalBattle {
                 destination: order.destination,
             });
         }
-        if !self.terrain.is_passable_at(self.battlefield, order.destination) {
+        if !self
+            .terrain
+            .is_passable_at(self.battlefield, order.destination)
+        {
             return Err(TacticalError::DestinationImpassable {
                 unit_id: order.unit_id,
                 destination: order.destination,
@@ -547,9 +550,9 @@ impl TacticalBattle {
             unit.position,
             base_movement_speed,
         );
-        let waypoint = self
-            .terrain()
-            .movement_waypoint(self.battlefield, unit.position, destination);
+        let waypoint =
+            self.terrain()
+                .movement_waypoint(self.battlefield, unit.position, destination);
         let next = move_point_toward(unit.position, waypoint, movement_speed);
         debug_assert!(self.terrain().is_passable_at(self.battlefield, next));
         self.units[index].position = next;
@@ -1446,22 +1449,17 @@ mod tests {
             battle.advance_ticks(1);
             let position = unit(&battle, "crossing").position();
             assert!(battle.terrain().is_passable_at(battlefield, position));
-            if battle
-                .terrain()
-                .river_crossing_cells()
-                .iter()
-                .any(|cell| {
-                    battle
-                        .terrain()
-                        .cell_bounds_mm(battlefield, cell.cell_x, cell.cell_z)
-                        .is_some_and(|(x0, x1, z0, z1)| {
-                            position.x_mm >= x0
-                                && position.x_mm < x1
-                                && position.y_mm >= z0
-                                && position.y_mm < z1
-                        })
-                })
-            {
+            if battle.terrain().river_crossing_cells().iter().any(|cell| {
+                battle
+                    .terrain()
+                    .cell_bounds_mm(battlefield, cell.cell_x, cell.cell_z)
+                    .is_some_and(|(x0, x1, z0, z1)| {
+                        position.x_mm >= x0
+                            && position.x_mm < x1
+                            && position.y_mm >= z0
+                            && position.y_mm < z1
+                    })
+            }) {
                 visited_crossing = true;
             }
             if unit(&battle, "crossing").destination().is_none() {
@@ -1587,7 +1585,7 @@ mod tests {
         let mut second = sample_battle();
         let order = MovementOrder {
             unit_id: "attacker-spears".into(),
-            destination: BattlePoint::new(120_000, 140_000),
+            destination: BattlePoint::new(100_000, 140_000),
         };
         first.issue_move_order(order.clone()).unwrap();
         second.issue_move_order(order).unwrap();
