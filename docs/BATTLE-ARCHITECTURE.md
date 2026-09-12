@@ -22,13 +22,13 @@ Keeping the current integer ground coordinates is deliberate. A 3D renderer does
 
 ### `medieval-core`
 
-Owns battle truth: units, positions on the battlefield, formations, movement, combat, morale, fatigue, routing, deterministic ticks, and the deterministic `TacticalTerrain` elevation contract. Terrain effects on gameplay remain separate rules that have not landed yet.
+Owns battle truth: units, positions on the battlefield, formations, movement, combat, morale, fatigue, routing, deterministic ticks, and the deterministic `TacticalTerrain` elevation/ground-cover contract. Forest movement is the first terrain-owned gameplay modifier; additional terrain effects remain explicit core rules.
 
 ### `medieval-renderer`
 
 Owns the 3D scene projection and GPU work: perspective camera, world-space render snapshots, viewport rays, terrain mesh/volume projection, soldier instances, selection/order visualization, lighting, depth, culling/LOD, and `wgpu` resources.
 
-The current terrain-height profile is core-owned and gameplay-neutral. `medieval-core::TacticalTerrain` owns deterministic height and cell-boundary queries; `medieval-renderer` is only a projection adapter for geometry and picking. Movement, combat, morale, routing, and legality still do not depend on elevation.
+The current terrain profile is core-owned. `medieval-core::TacticalTerrain` owns deterministic height, cell-boundary, and ground-cover queries; `medieval-renderer` is only a projection adapter for geometry and picking. Elevation is still gameplay-neutral, while forest cover now applies one explicit movement-speed rule in core. Combat, morale, and line-of-sight remain independent of terrain.
 
 A render snapshot may copy authoritative metadata needed to draw the battle, but it must not contain precomputed pixel or clip-space positions.
 
@@ -65,7 +65,7 @@ The original tactical preview assumptions have now been removed or contained at 
 | `Camera2d` existed in shared controls | Removed. Semantic controls own a `Camera3d` directly. |
 | Browser used adapter-local affine projection/inverse math | Removed. Visible-unit picking uses `Camera3d::project_world_point`; orders use `ground_point_from_viewport`. |
 | Native input used affine viewport conversion and ground-distance hit radii | Removed. Native click/drag selection uses projected visible anchors; orders use the same viewport-ray terrain intersection. |
-| Flat renderer ground had no elevation source | Replaced by the core-owned deterministic `TacticalTerrain::HeightFoundationV1` profile. wgpu geometry, unit elevation, camera targeting, and viewport picking consume the same contract while gameplay remains terrain-neutral. |
+| Flat renderer ground had no elevation source | Replaced by the core-owned deterministic `TacticalTerrain::HeightFoundationV1` profile. wgpu geometry, unit elevation, camera targeting, viewport picking, and forest projection consume the same contract; forest cover now also feeds an explicit core movement modifier. |
 | `BattlePoint` has two ground axes | Kept. It is deterministic ground-domain state, not a 2D rendering commitment. |
 
 ## Perspective camera contract
@@ -99,19 +99,19 @@ Terrain picking intersects each rendered cell volume directly, including visible
 
 Deployment legality is also core-owned. `medieval-core` deterministically defines the attacker and defender back-third deployment zones and `TacticalBattle::deploy` rejects initial units outside their side's zone. Renderers consume those exact zones and may visualize their inner boundaries, but they do not decide legal setup positions. Arbitrary `TacticalBattle::new` construction remains available for deterministic mid-battle fixtures and replay/state reconstruction where deployment-phase validation is not applicable.
 
-This makes terrain elevation authoritative data, but **not yet a tactical modifier**. Movement, combat, morale, routing, and legality remain independent of elevation until explicit core rules consume the terrain contract.
+Forest cover is the first tactical terrain modifier. `ForestMovementV2` owns six deterministic forest cells. A unit that starts a simulation tick in a forest cell receives half of its normal movement budget for that tick, rounded up; the same rule is applied to normal, pursuit, and routed movement. `TacticalBattle` serializes the terrain profile so replay semantics stay explicit, while legacy battle documents that predate the field default to `HeightFoundationV1`, which remains height-only. The renderer consumes the exact forest cells and draws primitive tree proxies, but those proxies do not own collision or movement rules. Forests currently do not modify combat, morale, line-of-sight, or deployment legality, and elevation itself remains gameplay-neutral.
 
 ## Next vertical slices
 
 The next work should deepen the same architecture rather than add another compatibility layer:
 
-1. Add forests and rivers as core-owned terrain features with renderer projection kept separate from effects.
+1. Add rivers as the next core-owned terrain feature, with crossing legality/effects defined before renderer decoration.
 2. Derive chokepoints from explicit movement/pathing legality rather than renderer geometry.
 3. Add explicit orbit/rotation input using the existing yaw/pitch camera state.
 4. Add formation facing so soldier geometry and movement direction can become meaningful in 3D.
 5. Replace primitive soldier cuboids incrementally with asset-tooling-backed meshes/animation while retaining instancing/LOD boundaries.
 
-Terrain height is now authoritative through the explicit deterministic `TacticalTerrain` interface. Hills must remain gameplay-neutral until movement, combat, or line-of-sight effects are introduced as separate core rules.
+Terrain height and forest cover are authoritative through the explicit deterministic `TacticalTerrain` interface. Hills remain gameplay-neutral; any future hill, river, combat, or line-of-sight effects must land as separate core rules rather than renderer behavior.
 
 ## Acceptance rules
 

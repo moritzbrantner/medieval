@@ -44,6 +44,8 @@ test("browser sandbox renders through wgpu and advances the real tactical core",
   assert.match(wasmRust, /TacticalControls/);
   assert.match(wasmRust, /TacticalBattle::deploy/);
   assert.match(wasmRust, /deployment_zones/);
+  assert.match(wasmRust, /forest_cells/);
+  assert.match(wasmRust, /battle\.terrain\(\)\.forest_cells\(\)/);
   assert.match(wasmRust, /issue_engagement_order/);
   assert.match(wasmRust, /battle_sandbox_start/);
   assert.match(wasmRust, /battle_sandbox_pointer/);

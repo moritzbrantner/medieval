@@ -7,6 +7,7 @@ use physics_engine::{Collider, ColliderShape, Vec3i, collider_contact};
 use serde::{Deserialize, Serialize};
 
 use crate::deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
+use crate::terrain::TacticalTerrain;
 
 pub const TACTICAL_TICKS_PER_SECOND: u32 = 20;
 pub const MAX_TACTICAL_FATIGUE: u16 = 1_000;
@@ -215,6 +216,7 @@ impl TacticalUnit {
 pub struct TacticalBattle {
     tick: u64,
     battlefield: FlatBattlefield,
+    terrain: TacticalTerrain,
     units: Vec<TacticalUnit>,
 }
 
@@ -223,6 +225,8 @@ pub struct TacticalBattle {
 struct TacticalBattleWire {
     tick: u64,
     battlefield: FlatBattlefield,
+    #[serde(default)]
+    terrain: TacticalTerrain,
     units: Vec<TacticalUnit>,
 }
 
@@ -232,6 +236,7 @@ impl From<TacticalBattleWire> for TacticalBattle {
         Self {
             tick: wire.tick,
             battlefield: wire.battlefield,
+            terrain: wire.terrain,
             units: wire.units,
         }
     }
@@ -278,6 +283,7 @@ impl TacticalBattle {
         Ok(Self {
             tick: 0,
             battlefield,
+            terrain: TacticalTerrain::battlefield_foundation(),
             units,
         })
     }
@@ -303,6 +309,11 @@ impl TacticalBattle {
     #[must_use]
     pub const fn deployment_zones(&self) -> [DeploymentZone; 2] {
         standard_deployment_zones(self.battlefield)
+    }
+
+    #[must_use]
+    pub const fn terrain(&self) -> TacticalTerrain {
+        self.terrain
     }
 
     #[must_use]
@@ -447,12 +458,17 @@ impl TacticalBattle {
             return;
         }
 
-        let movement_speed =
+        let base_movement_speed =
             if target.is_some_and(|target| target.state == TacticalUnitState::Routed) {
                 unit.speed_mm_per_tick.saturating_mul(2)
             } else {
                 unit.speed_mm_per_tick
             };
+        let movement_speed = self.terrain().movement_speed_mm_per_tick(
+            self.battlefield,
+            unit.position,
+            base_movement_speed,
+        );
         let next = move_point_toward(unit.position, destination, movement_speed);
         self.units[index].position = next;
         if self.units[index].destination == Some(destination) && next == destination {
@@ -482,7 +498,11 @@ impl TacticalBattle {
         let Some(enemy) = nearest_enemy else {
             return;
         };
-        let route_speed = unit.speed_mm_per_tick.saturating_mul(2);
+        let route_speed = self.terrain().movement_speed_mm_per_tick(
+            self.battlefield,
+            unit.position,
+            unit.speed_mm_per_tick.saturating_mul(2),
+        );
         let next = move_point_away(
             unit.position,
             enemy.position,
@@ -1117,6 +1137,55 @@ mod tests {
     }
 
     #[test]
+    fn forest_ground_cover_reduces_tick_movement_without_changing_orders() {
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let destination = BattlePoint::new(35_000, 15_000);
+        let mut forest = TacticalBattle::new(
+            battlefield,
+            vec![sample_unit(
+                "forest",
+                BattleSide::Attacker,
+                BattlePoint::new(25_000, 15_000),
+                Formation::Line { files: 10 },
+            )],
+        )
+        .unwrap();
+        forest
+            .issue_move_order(MovementOrder {
+                unit_id: "forest".into(),
+                destination,
+            })
+            .unwrap();
+        forest.advance_ticks(1);
+        assert_eq!(
+            unit(&forest, "forest").position(),
+            BattlePoint::new(25_600, 15_000)
+        );
+        assert_eq!(unit(&forest, "forest").destination(), Some(destination));
+
+        let mut open = TacticalBattle::new(
+            battlefield,
+            vec![sample_unit(
+                "open",
+                BattleSide::Attacker,
+                BattlePoint::new(5_000, 15_000),
+                Formation::Line { files: 10 },
+            )],
+        )
+        .unwrap();
+        open.issue_move_order(MovementOrder {
+            unit_id: "open".into(),
+            destination: BattlePoint::new(15_000, 15_000),
+        })
+        .unwrap();
+        open.advance_ticks(1);
+        assert_eq!(
+            unit(&open, "open").position(),
+            BattlePoint::new(6_200, 15_000)
+        );
+    }
+
+    #[test]
     fn rejected_orders_do_not_mutate_authoritative_state() {
         let mut battle = sample_battle();
         let before = battle.clone();
@@ -1175,6 +1244,20 @@ mod tests {
             unit(&decoded, "attacker-spears").engagement_target(),
             Some("defender-spears")
         );
+    }
+
+    #[test]
+    fn legacy_battle_without_terrain_preserves_height_only_v1_semantics() {
+        let battle = sample_battle();
+        let mut encoded = serde_json::to_value(&battle).unwrap();
+        encoded.as_object_mut().unwrap().remove("terrain");
+
+        let decoded: TacticalBattle = serde_json::from_value(encoded).unwrap();
+        assert_eq!(
+            decoded.terrain().profile(),
+            crate::terrain::TacticalTerrainProfile::HeightFoundationV1
+        );
+        assert!(decoded.terrain().forest_cells().is_empty());
     }
 
     #[test]

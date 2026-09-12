@@ -3,20 +3,65 @@ use serde::{Deserialize, Serialize};
 use crate::{BattlePoint, FlatBattlefield};
 
 pub const TACTICAL_TERRAIN_GRID_SIZE: u32 = 8;
+pub const TACTICAL_FOREST_CELL_COUNT: usize = 6;
 const TERRAIN_MAX_HEIGHT_DIVISOR: u32 = 25;
+const FOREST_MOVEMENT_SPEED_DIVISOR: u32 = 2;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TacticalTerrainProfile {
     #[default]
     HeightFoundationV1,
+    ForestMovementV2,
 }
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TacticalGroundCover {
+    Open,
+    Forest,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TacticalTerrainCell {
+    pub cell_x: u32,
+    pub cell_z: u32,
+}
+
+const TACTICAL_FOREST_CELLS: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] = [
+    TacticalTerrainCell {
+        cell_x: 2,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 3,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 3,
+        cell_z: 2,
+    },
+    TacticalTerrainCell {
+        cell_x: 4,
+        cell_z: 5,
+    },
+    TacticalTerrainCell {
+        cell_x: 4,
+        cell_z: 6,
+    },
+    TacticalTerrainCell {
+        cell_x: 5,
+        cell_z: 6,
+    },
+];
 
 /// Deterministic tactical terrain authority.
 ///
-/// The current profile owns elevation data/query semantics in `medieval-core`
-/// while movement, combat, morale, and legality deliberately remain terrain-neutral.
-/// Renderers may project this contract but must not reproduce its generation rules.
+/// The current profile owns elevation, cell boundaries, and ground-cover query
+/// semantics in `medieval-core`. Forest cover is the first gameplay modifier:
+/// movement starting a tick in forest is reduced deterministically. Renderers
+/// may project this contract but must not reproduce its generation or effects.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TacticalTerrain {
@@ -24,6 +69,13 @@ pub struct TacticalTerrain {
 }
 
 impl TacticalTerrain {
+    #[must_use]
+    pub const fn battlefield_foundation() -> Self {
+        Self {
+            profile: TacticalTerrainProfile::ForestMovementV2,
+        }
+    }
+
     #[must_use]
     pub const fn height_foundation() -> Self {
         Self {
@@ -34,6 +86,59 @@ impl TacticalTerrain {
     #[must_use]
     pub const fn profile(self) -> TacticalTerrainProfile {
         self.profile
+    }
+
+    #[must_use]
+    pub const fn forest_cells(self) -> &'static [TacticalTerrainCell] {
+        match self.profile {
+            TacticalTerrainProfile::HeightFoundationV1 => &[],
+            TacticalTerrainProfile::ForestMovementV2 => &TACTICAL_FOREST_CELLS,
+        }
+    }
+
+    #[must_use]
+    pub fn ground_cover_at(
+        self,
+        battlefield: FlatBattlefield,
+        point: BattlePoint,
+    ) -> TacticalGroundCover {
+        self.cell_ground_cover(
+            terrain_cell_index(point.x_mm, battlefield.width_mm),
+            terrain_cell_index(point.y_mm, battlefield.depth_mm),
+        )
+    }
+
+    #[must_use]
+    pub fn cell_ground_cover(self, cell_x: u32, cell_z: u32) -> TacticalGroundCover {
+        if self
+            .forest_cells()
+            .contains(&TacticalTerrainCell { cell_x, cell_z })
+        {
+            TacticalGroundCover::Forest
+        } else {
+            TacticalGroundCover::Open
+        }
+    }
+
+    /// Returns the movement budget for one tactical tick.
+    ///
+    /// Forest movement is half the base budget, rounded up so a valid unit
+    /// always retains forward progress. The cover is sampled at the unit's
+    /// authoritative position at the start of the tick.
+    #[must_use]
+    pub fn movement_speed_mm_per_tick(
+        self,
+        battlefield: FlatBattlefield,
+        position: BattlePoint,
+        base_speed_mm_per_tick: u32,
+    ) -> u32 {
+        match self.ground_cover_at(battlefield, position) {
+            TacticalGroundCover::Open => base_speed_mm_per_tick,
+            TacticalGroundCover::Forest => {
+                base_speed_mm_per_tick / FOREST_MOVEMENT_SPEED_DIVISOR
+                    + base_speed_mm_per_tick % FOREST_MOVEMENT_SPEED_DIVISOR
+            }
+        }
     }
 
     #[must_use]
@@ -109,7 +214,7 @@ mod tests {
 
     #[test]
     fn height_foundation_is_deterministic_and_serializable() {
-        let terrain = TacticalTerrain::height_foundation();
+        let terrain = TacticalTerrain::battlefield_foundation();
         let battlefield = FlatBattlefield::new(100_000, 80_000);
         let point = BattlePoint::new(50_000, 40_000);
         let first = terrain.height_mm(battlefield, point);
@@ -121,11 +226,33 @@ mod tests {
         let decoded: TacticalTerrain = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, terrain);
         assert_eq!(decoded.height_mm(battlefield, point), first);
+        assert_eq!(decoded.forest_cells(), terrain.forest_cells());
+        assert_eq!(decoded.profile(), TacticalTerrainProfile::ForestMovementV2);
+    }
+
+    #[test]
+    fn height_foundation_v1_remains_height_only_for_legacy_replays() {
+        let terrain = TacticalTerrain::height_foundation();
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let former_forest_point = BattlePoint::new(25_000, 15_000);
+        assert_eq!(
+            terrain.profile(),
+            TacticalTerrainProfile::HeightFoundationV1
+        );
+        assert!(terrain.forest_cells().is_empty());
+        assert_eq!(
+            terrain.ground_cover_at(battlefield, former_forest_point),
+            TacticalGroundCover::Open
+        );
+        assert_eq!(
+            terrain.movement_speed_mm_per_tick(battlefield, former_forest_point, 1_201),
+            1_201
+        );
     }
 
     #[test]
     fn height_lookup_uses_the_same_floored_boundaries_as_cell_geometry() {
-        let terrain = TacticalTerrain::height_foundation();
+        let terrain = TacticalTerrain::battlefield_foundation();
         let battlefield = FlatBattlefield::new(100_003, 80_005);
         let boundary_x = scaled_boundary(battlefield.width_mm, 1);
         let boundary_z = scaled_boundary(battlefield.depth_mm, 4);
@@ -144,7 +271,7 @@ mod tests {
 
     #[test]
     fn cell_bounds_cover_the_exact_battlefield_extent() {
-        let terrain = TacticalTerrain::height_foundation();
+        let terrain = TacticalTerrain::battlefield_foundation();
         let battlefield = FlatBattlefield::new(100_003, 80_005);
         assert_eq!(
             terrain.cell_bounds_mm(battlefield, 0, 0),
@@ -158,9 +285,43 @@ mod tests {
 
     #[test]
     fn terrain_is_flat_at_the_outer_edge_and_elevated_in_the_center() {
-        let terrain = TacticalTerrain::height_foundation();
+        let terrain = TacticalTerrain::battlefield_foundation();
         let battlefield = FlatBattlefield::new(100_000, 80_000);
         assert_eq!(terrain.height_mm(battlefield, BattlePoint::new(0, 0)), 0);
         assert!(terrain.height_mm(battlefield, BattlePoint::new(50_000, 40_000)) > 0);
+    }
+
+    #[test]
+    fn forest_ground_cover_uses_the_same_floored_cell_boundaries() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let battlefield = FlatBattlefield::new(100_003, 80_005);
+        let (x0, _, z0, _) = terrain.cell_bounds_mm(battlefield, 2, 1).unwrap();
+        assert_eq!(
+            terrain.ground_cover_at(battlefield, BattlePoint::new(x0, z0)),
+            TacticalGroundCover::Forest
+        );
+        assert_eq!(
+            terrain.ground_cover_at(battlefield, BattlePoint::new(x0 - 1, z0)),
+            TacticalGroundCover::Open
+        );
+    }
+
+    #[test]
+    fn forest_movement_budget_is_half_speed_rounded_up() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        assert_eq!(
+            terrain.movement_speed_mm_per_tick(
+                battlefield,
+                BattlePoint::new(25_000, 15_000),
+                1_201,
+            ),
+            601
+        );
+        assert_eq!(
+            terrain
+                .movement_speed_mm_per_tick(battlefield, BattlePoint::new(5_000, 15_000), 1_201,),
+            1_201
+        );
     }
 }

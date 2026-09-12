@@ -1,7 +1,9 @@
 use std::cell::RefCell;
 
 use bytemuck::{Pod, Zeroable};
-use medieval_core::{BattlePoint, BattleSide, DeploymentZone, FlatBattlefield};
+use medieval_core::{
+    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, TacticalTerrainCell,
+};
 use wgpu::util::DeviceExt;
 
 use crate::{
@@ -17,6 +19,7 @@ const SOLDIER_HALF_DEPTH_MM: f32 = 250.0;
 const GROUND_BASE_DEPTH_MM: f32 = 200.0;
 const DEPLOYMENT_BOUNDARY_HALF_WIDTH_MM: f32 = 180.0;
 const DEPLOYMENT_BOUNDARY_HEIGHT_MM: f32 = 40.0;
+const FOREST_TREES_PER_CELL: u32 = 4;
 const CUBE_VERTEX_COUNT: u32 = 36;
 const INITIAL_INSTANCE_CAPACITY: usize = 256;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
@@ -91,6 +94,37 @@ impl GpuWorldInstance {
                 (z1 - z0) as f32 / 2.0,
                 0.0,
             ],
+            visual: [0.0; 4],
+        })
+    }
+
+    fn forest_tree(
+        cell: TacticalTerrainCell,
+        battlefield: FlatBattlefield,
+        tree_index: u32,
+    ) -> Option<Self> {
+        if tree_index >= FOREST_TREES_PER_CELL {
+            return None;
+        }
+        let (x0, x1, z0, z1) = terrain_cell_bounds_mm(battlefield, cell.cell_x, cell.cell_z)?;
+        if x1 <= x0 || z1 <= z0 {
+            return None;
+        }
+        let slot_x = tree_index % 2;
+        let slot_z = tree_index / 2;
+        let tree_x = x0
+            + u32::try_from(u64::from(x1 - x0) * u64::from(slot_x * 2 + 1) / 4)
+                .expect("forest tree X offset fits in u32");
+        let tree_z = z0
+            + u32::try_from(u64::from(z1 - z0) * u64::from(slot_z * 2 + 1) / 4)
+                .expect("forest tree Z offset fits in u32");
+        let terrain_y = terrain_height_mm(battlefield, BattlePoint::new(tree_x, tree_z)) as f32;
+        let minimum_span = (x1 - x0).min(z1 - z0) as f32;
+        let half_width = (minimum_span * 0.06).clamp(120.0, 700.0);
+        let half_height = (half_width * 3.0).clamp(700.0, 2_600.0);
+        Some(Self {
+            center_material: [tree_x as f32, terrain_y + half_height, tree_z as f32, 5.0],
+            half_extent_routed: [half_width, half_height, half_width, 0.0],
             visual: [0.0; 4],
         })
     }
@@ -348,12 +382,24 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
         .sum::<usize>();
     let terrain_capacity = (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE) as usize;
     let deployment_capacity = (2 * TERRAIN_GRID_SIZE) as usize;
-    let mut instances = Vec::with_capacity(terrain_capacity + deployment_capacity + soldier_count);
+    let forest_capacity = snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize;
+    let mut instances = Vec::with_capacity(
+        terrain_capacity + deployment_capacity + forest_capacity + soldier_count,
+    );
     for cell_z in 0..TERRAIN_GRID_SIZE {
         for cell_x in 0..TERRAIN_GRID_SIZE {
             if let Some(cell) = GpuWorldInstance::terrain_cell(snapshot.battlefield, cell_x, cell_z)
             {
                 instances.push(cell);
+            }
+        }
+    }
+    for cell in &snapshot.forest_cells {
+        for tree_index in 0..FOREST_TREES_PER_CELL {
+            if let Some(tree) =
+                GpuWorldInstance::forest_tree(*cell, snapshot.battlefield, tree_index)
+            {
+                instances.push(tree);
             }
         }
     }
@@ -482,7 +528,9 @@ mod tests {
             BattleRenderSnapshot::capture(&battle, &RenderViewState::fit(battle.battlefield()));
         assert_eq!(
             gpu_instances(&snapshot).len(),
-            (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE + 2 * TERRAIN_GRID_SIZE) as usize + 80
+            (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE + 2 * TERRAIN_GRID_SIZE) as usize
+                + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
+                + 80
         );
     }
 
@@ -498,6 +546,32 @@ mod tests {
         assert_eq!(defender.center_material[0], zones[1].min_x_mm as f32);
         assert_eq!(attacker.center_material[3], 3.0);
         assert_eq!(defender.center_material[3], 4.0);
+    }
+
+    #[test]
+    fn forest_instances_are_projected_from_core_cells() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let battle = TacticalBattle::new(
+            battlefield,
+            vec![TacticalUnit::new(
+                "attacker",
+                BattleSide::Attacker,
+                1,
+                BattlePoint::new(10_000, 10_000),
+                Formation::Line { files: 1 },
+                1_000,
+            )],
+        )
+        .unwrap();
+        let snapshot = BattleRenderSnapshot::capture(&battle, &RenderViewState::fit(battlefield));
+        let cell = snapshot.forest_cells[0];
+        let tree = GpuWorldInstance::forest_tree(cell, battlefield, 0).unwrap();
+        let (x0, x1, z0, z1) =
+            terrain_cell_bounds_mm(battlefield, cell.cell_x, cell.cell_z).unwrap();
+        assert_eq!(tree.center_material[3], 5.0);
+        assert!(tree.center_material[0] > x0 as f32 && tree.center_material[0] < x1 as f32);
+        assert!(tree.center_material[2] > z0 as f32 && tree.center_material[2] < z1 as f32);
+        assert!(tree.half_extent_routed[1] > tree.half_extent_routed[0]);
     }
 
     #[test]
