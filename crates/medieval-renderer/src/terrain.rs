@@ -5,7 +5,7 @@ pub(crate) const TERRAIN_GRID_SIZE: u32 = TACTICAL_TERRAIN_GRID_SIZE;
 pub(crate) const TERRAIN_BASE_DEPTH_MM: f32 = 200.0;
 
 const fn terrain() -> TacticalTerrain {
-    TacticalTerrain::height_foundation()
+    TacticalTerrain::battlefield_foundation()
 }
 
 #[must_use]

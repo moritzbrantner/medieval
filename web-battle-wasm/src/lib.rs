@@ -2,7 +2,7 @@ use std::{cell::RefCell, cmp::Ordering, collections::BTreeSet};
 
 use medieval_core::{
     BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation,
-    TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalUnit,
+    TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalTerrainCell, TacticalUnit,
 };
 use medieval_renderer::{BattleRenderSnapshot, GpuBattleRenderer};
 use serde::Serialize;
@@ -36,6 +36,7 @@ struct SandboxStatus {
     outcome: Option<&'static str>,
     selected_units: Vec<String>,
     deployment_zones: [DeploymentZone; 2],
+    forest_cells: Vec<TacticalTerrainCell>,
     camera: CameraStatus,
     units: Vec<UnitStatus>,
 }
@@ -322,6 +323,7 @@ impl BrowserSandbox {
             outcome: self.outcome(),
             selected_units: selected.into_iter().map(str::to_owned).collect(),
             deployment_zones: self.battle.deployment_zones(),
+            forest_cells: self.battle.terrain().forest_cells().to_vec(),
             camera: CameraStatus {
                 target_x_mm: snapshot.camera.target_x_mm(),
                 target_z_mm: snapshot.camera.target_z_mm(),

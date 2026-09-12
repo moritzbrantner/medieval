@@ -31,6 +31,14 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
     { side: "attacker", minXMm: 0, maxXMm: 33_333, minYMm: 0, maxYMm: 100_000 },
     { side: "defender", minXMm: 66_667, maxXMm: 100_000, minYMm: 0, maxYMm: 100_000 },
   ]);
+  expect(current.forestCells).toEqual([
+    { cellX: 2, cellZ: 1 },
+    { cellX: 3, cellZ: 1 },
+    { cellX: 3, cellZ: 2 },
+    { cellX: 4, cellZ: 5 },
+    { cellX: 4, cellZ: 6 },
+    { cellX: 5, cellZ: 6 },
+  ]);
 
   await clickUnit(page, "attacker-spears");
   await expect(page.locator("#battle-selection")).toContainText("Spears");
