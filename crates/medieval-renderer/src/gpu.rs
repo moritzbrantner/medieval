@@ -420,11 +420,7 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
     let forest_capacity = snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize;
     let river_capacity = snapshot.river_cells.len();
     let mut instances = Vec::with_capacity(
-        terrain_capacity
-            + deployment_capacity
-            + forest_capacity
-            + river_capacity
-            + soldier_count,
+        terrain_capacity + deployment_capacity + forest_capacity + river_capacity + soldier_count,
     );
     for cell_z in 0..TERRAIN_GRID_SIZE {
         for cell_x in 0..TERRAIN_GRID_SIZE {
