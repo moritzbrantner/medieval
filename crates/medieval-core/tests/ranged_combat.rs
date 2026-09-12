@@ -1,6 +1,6 @@
 use medieval_core::{
-    BattlePoint, BattleSide, COMBAT_CONTACT_DISTANCE_MM, FlatBattlefield, Formation,
-    TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalUnit,
+    BattlePoint, BattleSide, FlatBattlefield, Formation, TACTICAL_TICKS_PER_SECOND, TacticalBattle,
+    TacticalUnit,
 };
 
 fn unit(id: &str, side: BattleSide, position: BattlePoint, formation: Formation) -> TacticalUnit {
@@ -32,9 +32,10 @@ fn deserialization_rejects_attack_ranges_outside_core_bounds() {
     )
     .unwrap();
     let encoded = serde_json::to_value(&battle).unwrap();
+    let below_contact_distance = 1_499;
     let above_physics_limit = u32::try_from(i32::MAX).unwrap() + 1;
 
-    for invalid_range in [COMBAT_CONTACT_DISTANCE_MM - 1, above_physics_limit] {
+    for invalid_range in [below_contact_distance, above_physics_limit] {
         let mut invalid = encoded.clone();
         invalid["units"][0]["attackRangeMm"] = serde_json::json!(invalid_range);
         assert!(serde_json::from_value::<TacticalBattle>(invalid).is_err());
