@@ -28,6 +28,24 @@ const fn default_attack_range_mm() -> u32 {
     COMBAT_CONTACT_DISTANCE_MM
 }
 
+const fn valid_attack_range_mm(attack_range_mm: u32) -> bool {
+    attack_range_mm >= COMBAT_CONTACT_DISTANCE_MM && attack_range_mm <= i32::MAX as u32
+}
+
+fn deserialize_attack_range_mm<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let attack_range_mm = u32::deserialize(deserializer)?;
+    if valid_attack_range_mm(attack_range_mm) {
+        Ok(attack_range_mm)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "invalid tactical attack range {attack_range_mm} mm"
+        )))
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BattlePoint {
@@ -118,7 +136,10 @@ pub struct TacticalUnit {
     position: BattlePoint,
     formation: Formation,
     speed_mm_per_tick: u32,
-    #[serde(default = "default_attack_range_mm")]
+    #[serde(
+        default = "default_attack_range_mm",
+        deserialize_with = "deserialize_attack_range_mm"
+    )]
     attack_range_mm: u32,
     destination: Option<BattlePoint>,
     engagement_target: Option<String>,
@@ -290,9 +311,7 @@ impl TacticalBattle {
             if unit.speed_mm_per_tick == 0 {
                 return Err(TacticalError::ZeroMovementSpeed(unit.id.clone()));
             }
-            if unit.attack_range_mm < COMBAT_CONTACT_DISTANCE_MM
-                || unit.attack_range_mm > i32::MAX as u32
-            {
+            if !valid_attack_range_mm(unit.attack_range_mm) {
                 return Err(TacticalError::InvalidAttackRange {
                     unit_id: unit.id.clone(),
                     attack_range_mm: unit.attack_range_mm,
@@ -617,6 +636,7 @@ impl TacticalBattle {
         for attacker in &snapshot {
             if attacker.state != TacticalUnitState::Formed
                 || attacker.attack_range_mm <= COMBAT_CONTACT_DISTANCE_MM
+                || formed_contacts.contains_key(&attacker.id)
             {
                 continue;
             }
