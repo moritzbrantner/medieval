@@ -39,6 +39,10 @@
               <button id="stop-units" type="button" class="secondary">Stop selected</button>
             </div>
             <div class="button-row">
+              <button id="line-formation" type="button" class="secondary">Line formation</button>
+              <button id="column-formation" type="button" class="secondary">Column formation</button>
+            </div>
+            <div class="button-row">
               <button id="fit-camera" type="button" class="secondary">Fit camera</button>
               <button id="reset-battle" type="button" class="secondary">Reset battle</button>
             </div>
@@ -46,9 +50,9 @@
 
           <section class="instructions">
             <p class="eyebrow">Controls</p>
-            <p><strong>Left click</strong> a player unit to select it. Hold <strong>Shift</strong> to add or remove a unit.</p>
-            <p><strong>Right click</strong> the field to move selected units, or an opponent unit to engage it.</p>
-            <p><strong>WASD / arrows</strong> pan. <strong>Mouse wheel / + / −</strong> zoom. <strong>Space</strong> stops selected units. <strong>0</strong> fits the camera. <strong>P</strong> pauses.</p>
+            <p><strong>Left click</strong> anywhere on a player formation to select it. Hold <strong>Shift</strong> to add or remove a unit.</p>
+            <p><strong>Right click</strong> the field to move selected units, or an opponent unit to engage it. Archers stop and fire once their target is in range.</p>
+            <p><strong>L / C</strong> switch selected units to line or column formation. <strong>WASD / arrows</strong> pan. <strong>Mouse wheel / + / −</strong> zoom. <strong>Space</strong> stops selected units. <strong>0</strong> fits the camera. <strong>P</strong> pauses.</p>
           </section>
 
           <section>
@@ -57,7 +61,7 @@
           </section>
 
           <p class="runtime-note">
-            Simulation, orders, casualties, morale, fatigue, routing, and rendering are Rust-owned. JavaScript only adapts browser input and updates this status panel.
+            Simulation, orders, formations, ranged and melee combat, casualties, morale, fatigue, routing, and rendering are Rust-owned. JavaScript only adapts browser input and updates this status panel.
           </p>
         </aside>
       </section>
