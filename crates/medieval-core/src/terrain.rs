@@ -235,9 +235,9 @@ impl TacticalTerrain {
     /// The current river profile uses one explicit river column with two
     /// adjacent crossing cells. Units whose final target lies across the river
     /// first align with the cheapest crossing while remaining on their own bank,
-    /// then enter the crossing, and finally continue toward the original target.
-    /// This keeps pathing in authoritative integer simulation state without
-    /// introducing a renderer/navmesh dependency.
+    /// enter the crossing, exit horizontally onto the far bank, and only then
+    /// continue toward the original target. This keeps every interpolated step
+    /// inside passable cells without introducing a renderer/navmesh dependency.
     #[must_use]
     pub fn movement_waypoint(
         self,
@@ -258,12 +258,28 @@ impl TacticalTerrain {
             cell_z: terrain_cell_index(destination.y_mm, battlefield.depth_mm),
         };
 
-        if !self.cell_is_passable(destination_cell.cell_x, destination_cell.cell_z) {
-            return self.bank_waypoint_for_crossing(battlefield, from, destination);
+        if from_cell.cell_x == RIVER_CELL_X {
+            if destination_cell.cell_x < RIVER_CELL_X {
+                let (x0, _, _, _) = self
+                    .cell_bounds_mm(battlefield, from_cell.cell_x, from_cell.cell_z)
+                    .expect("river cell is inside the terrain grid");
+                return BattlePoint::new(x0.saturating_sub(1), from.y_mm);
+            }
+            if destination_cell.cell_x > RIVER_CELL_X {
+                let (_, x1, _, _) = self
+                    .cell_bounds_mm(battlefield, from_cell.cell_x, from_cell.cell_z)
+                    .expect("river cell is inside the terrain grid");
+                return BattlePoint::new(x1, from.y_mm);
+            }
+            return if self.cell_is_passable(destination_cell.cell_x, destination_cell.cell_z) {
+                destination
+            } else {
+                from
+            };
         }
 
-        if from_cell.cell_x == RIVER_CELL_X {
-            return destination;
+        if !self.cell_is_passable(destination_cell.cell_x, destination_cell.cell_z) {
+            return self.bank_waypoint_for_crossing(battlefield, from, destination);
         }
 
         let opposite_banks = (from_cell.cell_x < RIVER_CELL_X
@@ -552,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    fn opposite_bank_routes_align_then_enter_the_nearest_crossing() {
+    fn opposite_bank_routes_align_enter_and_exit_the_crossing_before_turning() {
         let terrain = TacticalTerrain::battlefield_foundation();
         let battlefield = FlatBattlefield::new(80_000, 80_000);
         let from = BattlePoint::new(10_000, 10_000);
@@ -565,10 +581,24 @@ mod tests {
         assert_eq!(crossing, BattlePoint::new(35_000, 35_000));
 
         let inside_crossing = BattlePoint::new(35_000, 35_000);
+        let east_bank = terrain.movement_waypoint(battlefield, inside_crossing, destination);
+        assert_eq!(east_bank, BattlePoint::new(40_000, 35_000));
+        assert!(terrain.is_passable_at(battlefield, east_bank));
         assert_eq!(
-            terrain.movement_waypoint(battlefield, inside_crossing, destination),
+            terrain.movement_waypoint(battlefield, east_bank, destination),
             destination
         );
+    }
+
+    #[test]
+    fn crossing_exit_stays_in_the_ford_until_the_unit_reaches_a_bank() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let from = BattlePoint::new(35_000, 35_000);
+        let destination = BattlePoint::new(70_000, 10_000);
+        let exit = terrain.movement_waypoint(battlefield, from, destination);
+        assert_eq!(exit.y_mm, from.y_mm);
+        assert_eq!(exit, BattlePoint::new(40_000, 35_000));
     }
 
     #[test]
