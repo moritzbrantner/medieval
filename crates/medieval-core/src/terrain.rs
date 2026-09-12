@@ -33,7 +33,7 @@ pub struct TacticalTerrainCell {
     pub cell_z: u32,
 }
 
-const TACTICAL_FOREST_CELLS: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] = [
+const TACTICAL_FOREST_CELLS_V2: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] = [
     TacticalTerrainCell {
         cell_x: 2,
         cell_z: 1,
@@ -45,6 +45,33 @@ const TACTICAL_FOREST_CELLS: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] =
     TacticalTerrainCell {
         cell_x: 3,
         cell_z: 2,
+    },
+    TacticalTerrainCell {
+        cell_x: 4,
+        cell_z: 5,
+    },
+    TacticalTerrainCell {
+        cell_x: 4,
+        cell_z: 6,
+    },
+    TacticalTerrainCell {
+        cell_x: 5,
+        cell_z: 6,
+    },
+];
+
+const TACTICAL_FOREST_CELLS_V3: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] = [
+    TacticalTerrainCell {
+        cell_x: 2,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 2,
+        cell_z: 2,
+    },
+    TacticalTerrainCell {
+        cell_x: 2,
+        cell_z: 3,
     },
     TacticalTerrainCell {
         cell_x: 4,
@@ -95,8 +122,7 @@ const TACTICAL_RIVER_CELLS: [TacticalTerrainCell; TACTICAL_RIVER_CELL_COUNT] = [
     },
 ];
 
-const TACTICAL_RIVER_CROSSING_CELLS: [TacticalTerrainCell;
-    TACTICAL_RIVER_CROSSING_CELL_COUNT] = [
+const TACTICAL_RIVER_CROSSING_CELLS: [TacticalTerrainCell; TACTICAL_RIVER_CROSSING_CELL_COUNT] = [
     TacticalTerrainCell {
         cell_x: RIVER_CELL_X,
         cell_z: 3,
@@ -143,9 +169,8 @@ impl TacticalTerrain {
     pub const fn forest_cells(self) -> &'static [TacticalTerrainCell] {
         match self.profile {
             TacticalTerrainProfile::HeightFoundationV1 => &[],
-            TacticalTerrainProfile::ForestMovementV2 | TacticalTerrainProfile::RiverCrossingsV3 => {
-                &TACTICAL_FOREST_CELLS
-            }
+            TacticalTerrainProfile::ForestMovementV2 => &TACTICAL_FOREST_CELLS_V2,
+            TacticalTerrainProfile::RiverCrossingsV3 => &TACTICAL_FOREST_CELLS_V3,
         }
     }
 
@@ -153,9 +178,8 @@ impl TacticalTerrain {
     pub const fn river_cells(self) -> &'static [TacticalTerrainCell] {
         match self.profile {
             TacticalTerrainProfile::RiverCrossingsV3 => &TACTICAL_RIVER_CELLS,
-            TacticalTerrainProfile::HeightFoundationV1 | TacticalTerrainProfile::ForestMovementV2 => {
-                &[]
-            }
+            TacticalTerrainProfile::HeightFoundationV1
+            | TacticalTerrainProfile::ForestMovementV2 => &[],
         }
     }
 
@@ -163,9 +187,8 @@ impl TacticalTerrain {
     pub const fn river_crossing_cells(self) -> &'static [TacticalTerrainCell] {
         match self.profile {
             TacticalTerrainProfile::RiverCrossingsV3 => &TACTICAL_RIVER_CROSSING_CELLS,
-            TacticalTerrainProfile::HeightFoundationV1 | TacticalTerrainProfile::ForestMovementV2 => {
-                &[]
-            }
+            TacticalTerrainProfile::HeightFoundationV1
+            | TacticalTerrainProfile::ForestMovementV2 => &[],
         }
     }
 
@@ -245,8 +268,7 @@ impl TacticalTerrain {
 
         let opposite_banks = (from_cell.cell_x < RIVER_CELL_X
             && destination_cell.cell_x > RIVER_CELL_X)
-            || (from_cell.cell_x > RIVER_CELL_X
-                && destination_cell.cell_x < RIVER_CELL_X);
+            || (from_cell.cell_x > RIVER_CELL_X && destination_cell.cell_x < RIVER_CELL_X);
         if !opposite_banks {
             return destination;
         }
@@ -426,9 +448,17 @@ mod tests {
         let terrain: TacticalTerrain =
             serde_json::from_str(r#"{"profile":"forestMovementV2"}"#).unwrap();
         assert_eq!(terrain.profile(), TacticalTerrainProfile::ForestMovementV2);
-        assert_eq!(terrain.forest_cells(), &TACTICAL_FOREST_CELLS);
+        assert_eq!(terrain.forest_cells(), &TACTICAL_FOREST_CELLS_V2);
         assert!(terrain.river_cells().is_empty());
         assert!(terrain.river_crossing_cells().is_empty());
+    }
+
+    #[test]
+    fn current_forests_do_not_overlap_blocked_river_cells() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        assert!(terrain.forest_cells().iter().all(|forest| {
+            !terrain.river_cells().contains(forest) || terrain.river_crossing_cells().contains(forest)
+        }));
     }
 
     #[test]
