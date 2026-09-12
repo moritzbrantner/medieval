@@ -1199,13 +1199,15 @@ mod tests {
 
         let invalid_range = TacticalBattle::new(
             FlatBattlefield::new(10_000, 10_000),
-            vec![sample_unit(
-                "archers",
-                BattleSide::Attacker,
-                BattlePoint::new(1_000, 1_000),
-                Formation::Line { files: 10 },
-            )
-            .with_attack_range_mm(COMBAT_CONTACT_DISTANCE_MM - 1)],
+            vec![
+                sample_unit(
+                    "archers",
+                    BattleSide::Attacker,
+                    BattlePoint::new(1_000, 1_000),
+                    Formation::Line { files: 10 },
+                )
+                .with_attack_range_mm(COMBAT_CONTACT_DISTANCE_MM - 1),
+            ],
         );
         assert!(matches!(
             invalid_range,
@@ -1379,13 +1381,11 @@ mod tests {
         assert_eq!(unit(&battle, "archers").position(), start);
         assert_eq!(unit(&battle, "archers").attack_range_mm(), 20_000);
         assert!(unit(&battle, "defender").soldiers() < 80);
-        assert!(
-            !points_within_distance(
-                unit(&battle, "archers").position(),
-                unit(&battle, "defender").position(),
-                COMBAT_CONTACT_DISTANCE_MM,
-            )
-        );
+        assert!(!points_within_distance(
+            unit(&battle, "archers").position(),
+            unit(&battle, "defender").position(),
+            COMBAT_CONTACT_DISTANCE_MM,
+        ));
     }
 
     #[test]
