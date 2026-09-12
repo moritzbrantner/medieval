@@ -4,8 +4,11 @@ use crate::{BattlePoint, FlatBattlefield};
 
 pub const TACTICAL_TERRAIN_GRID_SIZE: u32 = 8;
 pub const TACTICAL_FOREST_CELL_COUNT: usize = 6;
+pub const TACTICAL_RIVER_CELL_COUNT: usize = TACTICAL_TERRAIN_GRID_SIZE as usize;
+pub const TACTICAL_RIVER_CROSSING_CELL_COUNT: usize = 2;
 const TERRAIN_MAX_HEIGHT_DIVISOR: u32 = 25;
 const FOREST_MOVEMENT_SPEED_DIVISOR: u32 = 2;
+const RIVER_CELL_X: u32 = 3;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,6 +16,7 @@ pub enum TacticalTerrainProfile {
     #[default]
     HeightFoundationV1,
     ForestMovementV2,
+    RiverCrossingsV3,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,7 +33,7 @@ pub struct TacticalTerrainCell {
     pub cell_z: u32,
 }
 
-const TACTICAL_FOREST_CELLS: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] = [
+const TACTICAL_FOREST_CELLS_V2: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] = [
     TacticalTerrainCell {
         cell_x: 2,
         cell_z: 1,
@@ -56,12 +60,85 @@ const TACTICAL_FOREST_CELLS: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] =
     },
 ];
 
+const TACTICAL_FOREST_CELLS_V3: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] = [
+    TacticalTerrainCell {
+        cell_x: 2,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 2,
+        cell_z: 2,
+    },
+    TacticalTerrainCell {
+        cell_x: 2,
+        cell_z: 3,
+    },
+    TacticalTerrainCell {
+        cell_x: 4,
+        cell_z: 5,
+    },
+    TacticalTerrainCell {
+        cell_x: 4,
+        cell_z: 6,
+    },
+    TacticalTerrainCell {
+        cell_x: 5,
+        cell_z: 6,
+    },
+];
+
+const TACTICAL_RIVER_CELLS: [TacticalTerrainCell; TACTICAL_RIVER_CELL_COUNT] = [
+    TacticalTerrainCell {
+        cell_x: RIVER_CELL_X,
+        cell_z: 0,
+    },
+    TacticalTerrainCell {
+        cell_x: RIVER_CELL_X,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: RIVER_CELL_X,
+        cell_z: 2,
+    },
+    TacticalTerrainCell {
+        cell_x: RIVER_CELL_X,
+        cell_z: 3,
+    },
+    TacticalTerrainCell {
+        cell_x: RIVER_CELL_X,
+        cell_z: 4,
+    },
+    TacticalTerrainCell {
+        cell_x: RIVER_CELL_X,
+        cell_z: 5,
+    },
+    TacticalTerrainCell {
+        cell_x: RIVER_CELL_X,
+        cell_z: 6,
+    },
+    TacticalTerrainCell {
+        cell_x: RIVER_CELL_X,
+        cell_z: 7,
+    },
+];
+
+const TACTICAL_RIVER_CROSSING_CELLS: [TacticalTerrainCell; TACTICAL_RIVER_CROSSING_CELL_COUNT] = [
+    TacticalTerrainCell {
+        cell_x: RIVER_CELL_X,
+        cell_z: 3,
+    },
+    TacticalTerrainCell {
+        cell_x: RIVER_CELL_X,
+        cell_z: 4,
+    },
+];
+
 /// Deterministic tactical terrain authority.
 ///
-/// The current profile owns elevation, cell boundaries, and ground-cover query
-/// semantics in `medieval-core`. Forest cover is the first gameplay modifier:
-/// movement starting a tick in forest is reduced deterministically. Renderers
-/// may project this contract but must not reproduce its generation or effects.
+/// Terrain versioning preserves historical replay semantics. The current
+/// profile owns elevation, forests, river placement, crossing legality, and the
+/// first deterministic chokepoint-routing rule. Renderers may project this
+/// contract but must not reproduce terrain generation, passability, or pathing.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TacticalTerrain {
@@ -72,7 +149,7 @@ impl TacticalTerrain {
     #[must_use]
     pub const fn battlefield_foundation() -> Self {
         Self {
-            profile: TacticalTerrainProfile::ForestMovementV2,
+            profile: TacticalTerrainProfile::RiverCrossingsV3,
         }
     }
 
@@ -92,7 +169,26 @@ impl TacticalTerrain {
     pub const fn forest_cells(self) -> &'static [TacticalTerrainCell] {
         match self.profile {
             TacticalTerrainProfile::HeightFoundationV1 => &[],
-            TacticalTerrainProfile::ForestMovementV2 => &TACTICAL_FOREST_CELLS,
+            TacticalTerrainProfile::ForestMovementV2 => &TACTICAL_FOREST_CELLS_V2,
+            TacticalTerrainProfile::RiverCrossingsV3 => &TACTICAL_FOREST_CELLS_V3,
+        }
+    }
+
+    #[must_use]
+    pub const fn river_cells(self) -> &'static [TacticalTerrainCell] {
+        match self.profile {
+            TacticalTerrainProfile::RiverCrossingsV3 => &TACTICAL_RIVER_CELLS,
+            TacticalTerrainProfile::HeightFoundationV1
+            | TacticalTerrainProfile::ForestMovementV2 => &[],
+        }
+    }
+
+    #[must_use]
+    pub const fn river_crossing_cells(self) -> &'static [TacticalTerrainCell] {
+        match self.profile {
+            TacticalTerrainProfile::RiverCrossingsV3 => &TACTICAL_RIVER_CROSSING_CELLS,
+            TacticalTerrainProfile::HeightFoundationV1
+            | TacticalTerrainProfile::ForestMovementV2 => &[],
         }
     }
 
@@ -117,6 +213,117 @@ impl TacticalTerrain {
             TacticalGroundCover::Forest
         } else {
             TacticalGroundCover::Open
+        }
+    }
+
+    #[must_use]
+    pub fn is_passable_at(self, battlefield: FlatBattlefield, point: BattlePoint) -> bool {
+        self.cell_is_passable(
+            terrain_cell_index(point.x_mm, battlefield.width_mm),
+            terrain_cell_index(point.y_mm, battlefield.depth_mm),
+        )
+    }
+
+    #[must_use]
+    pub fn cell_is_passable(self, cell_x: u32, cell_z: u32) -> bool {
+        let cell = TacticalTerrainCell { cell_x, cell_z };
+        !self.river_cells().contains(&cell) || self.river_crossing_cells().contains(&cell)
+    }
+
+    /// Returns the deterministic intermediate target for one movement leg.
+    ///
+    /// The current river profile uses one explicit river column with two
+    /// adjacent crossing cells. Units whose final target lies across the river
+    /// first align with the cheapest crossing while remaining on their own bank,
+    /// enter the crossing, exit horizontally onto the far bank, and only then
+    /// continue toward the original target. This keeps every interpolated step
+    /// inside passable cells without introducing a renderer/navmesh dependency.
+    #[must_use]
+    pub fn movement_waypoint(
+        self,
+        battlefield: FlatBattlefield,
+        from: BattlePoint,
+        destination: BattlePoint,
+    ) -> BattlePoint {
+        if self.profile != TacticalTerrainProfile::RiverCrossingsV3 {
+            return destination;
+        }
+
+        let from_cell = TacticalTerrainCell {
+            cell_x: terrain_cell_index(from.x_mm, battlefield.width_mm),
+            cell_z: terrain_cell_index(from.y_mm, battlefield.depth_mm),
+        };
+        let destination_cell = TacticalTerrainCell {
+            cell_x: terrain_cell_index(destination.x_mm, battlefield.width_mm),
+            cell_z: terrain_cell_index(destination.y_mm, battlefield.depth_mm),
+        };
+
+        if from_cell.cell_x == RIVER_CELL_X {
+            if destination_cell.cell_x < RIVER_CELL_X {
+                let (x0, _, _, _) = self
+                    .cell_bounds_mm(battlefield, from_cell.cell_x, from_cell.cell_z)
+                    .expect("river cell is inside the terrain grid");
+                return BattlePoint::new(x0.saturating_sub(1), from.y_mm);
+            }
+            if destination_cell.cell_x > RIVER_CELL_X {
+                let (_, x1, _, _) = self
+                    .cell_bounds_mm(battlefield, from_cell.cell_x, from_cell.cell_z)
+                    .expect("river cell is inside the terrain grid");
+                return BattlePoint::new(x1, from.y_mm);
+            }
+            return if self.cell_is_passable(destination_cell.cell_x, destination_cell.cell_z) {
+                destination
+            } else {
+                from
+            };
+        }
+
+        if !self.cell_is_passable(destination_cell.cell_x, destination_cell.cell_z) {
+            return self.bank_waypoint_for_crossing(battlefield, from, destination);
+        }
+
+        let opposite_banks = (from_cell.cell_x < RIVER_CELL_X
+            && destination_cell.cell_x > RIVER_CELL_X)
+            || (from_cell.cell_x > RIVER_CELL_X && destination_cell.cell_x < RIVER_CELL_X);
+        if !opposite_banks {
+            return destination;
+        }
+
+        self.bank_waypoint_for_crossing(battlefield, from, destination)
+    }
+
+    fn bank_waypoint_for_crossing(
+        self,
+        battlefield: FlatBattlefield,
+        from: BattlePoint,
+        destination: BattlePoint,
+    ) -> BattlePoint {
+        let crossing = self
+            .river_crossing_cells()
+            .iter()
+            .copied()
+            .min_by_key(|cell| {
+                let (_, _, z0, z1) = self
+                    .cell_bounds_mm(battlefield, cell.cell_x, cell.cell_z)
+                    .expect("configured crossing cell is inside the terrain grid");
+                let center_z = z0 + (z1 - z0) / 2;
+                (
+                    u64::from(from.y_mm.abs_diff(center_z))
+                        + u64::from(destination.y_mm.abs_diff(center_z)),
+                    cell.cell_z,
+                )
+            })
+            .expect("river profile always has a crossing");
+        let (x0, x1, z0, z1) = self
+            .cell_bounds_mm(battlefield, crossing.cell_x, crossing.cell_z)
+            .expect("configured crossing cell is inside the terrain grid");
+        let center_x = x0 + (x1 - x0) / 2;
+        let center_z = z0 + (z1 - z0) / 2;
+
+        if from.y_mm < z0 || from.y_mm >= z1 {
+            BattlePoint::new(from.x_mm, center_z)
+        } else {
+            BattlePoint::new(center_x, center_z)
         }
     }
 
@@ -213,7 +420,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn height_foundation_is_deterministic_and_serializable() {
+    fn battlefield_foundation_is_deterministic_and_serializable() {
         let terrain = TacticalTerrain::battlefield_foundation();
         let battlefield = FlatBattlefield::new(100_000, 80_000);
         let point = BattlePoint::new(50_000, 40_000);
@@ -227,7 +434,8 @@ mod tests {
         assert_eq!(decoded, terrain);
         assert_eq!(decoded.height_mm(battlefield, point), first);
         assert_eq!(decoded.forest_cells(), terrain.forest_cells());
-        assert_eq!(decoded.profile(), TacticalTerrainProfile::ForestMovementV2);
+        assert_eq!(decoded.river_cells(), terrain.river_cells());
+        assert_eq!(decoded.profile(), TacticalTerrainProfile::RiverCrossingsV3);
     }
 
     #[test]
@@ -240,6 +448,7 @@ mod tests {
             TacticalTerrainProfile::HeightFoundationV1
         );
         assert!(terrain.forest_cells().is_empty());
+        assert!(terrain.river_cells().is_empty());
         assert_eq!(
             terrain.ground_cover_at(battlefield, former_forest_point),
             TacticalGroundCover::Open
@@ -248,6 +457,25 @@ mod tests {
             terrain.movement_speed_mm_per_tick(battlefield, former_forest_point, 1_201),
             1_201
         );
+    }
+
+    #[test]
+    fn forest_movement_v2_remains_river_free_for_legacy_replays() {
+        let terrain: TacticalTerrain =
+            serde_json::from_str(r#"{"profile":"forestMovementV2"}"#).unwrap();
+        assert_eq!(terrain.profile(), TacticalTerrainProfile::ForestMovementV2);
+        assert_eq!(terrain.forest_cells(), &TACTICAL_FOREST_CELLS_V2);
+        assert!(terrain.river_cells().is_empty());
+        assert!(terrain.river_crossing_cells().is_empty());
+    }
+
+    #[test]
+    fn current_forests_do_not_overlap_blocked_river_cells() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        assert!(terrain.forest_cells().iter().all(|forest| {
+            !terrain.river_cells().contains(forest)
+                || terrain.river_crossing_cells().contains(forest)
+        }));
     }
 
     #[test]
@@ -322,6 +550,67 @@ mod tests {
             terrain
                 .movement_speed_mm_per_tick(battlefield, BattlePoint::new(5_000, 15_000), 1_201,),
             1_201
+        );
+    }
+
+    #[test]
+    fn river_cells_are_impassable_except_for_explicit_crossings() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        assert_eq!(terrain.river_cells().len(), TACTICAL_RIVER_CELL_COUNT);
+        assert_eq!(
+            terrain.river_crossing_cells().len(),
+            TACTICAL_RIVER_CROSSING_CELL_COUNT
+        );
+        assert!(!terrain.cell_is_passable(RIVER_CELL_X, 1));
+        assert!(terrain.cell_is_passable(RIVER_CELL_X, 3));
+        assert!(terrain.cell_is_passable(RIVER_CELL_X, 4));
+        assert!(terrain.cell_is_passable(RIVER_CELL_X - 1, 1));
+    }
+
+    #[test]
+    fn opposite_bank_routes_align_enter_and_exit_the_crossing_before_turning() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let from = BattlePoint::new(10_000, 10_000);
+        let destination = BattlePoint::new(70_000, 10_000);
+        let align = terrain.movement_waypoint(battlefield, from, destination);
+        assert_eq!(align, BattlePoint::new(10_000, 35_000));
+
+        let aligned = BattlePoint::new(10_000, 35_000);
+        let crossing = terrain.movement_waypoint(battlefield, aligned, destination);
+        assert_eq!(crossing, BattlePoint::new(35_000, 35_000));
+
+        let inside_crossing = BattlePoint::new(35_000, 35_000);
+        let east_bank = terrain.movement_waypoint(battlefield, inside_crossing, destination);
+        assert_eq!(east_bank, BattlePoint::new(40_000, 35_000));
+        assert!(terrain.is_passable_at(battlefield, east_bank));
+        assert_eq!(
+            terrain.movement_waypoint(battlefield, east_bank, destination),
+            destination
+        );
+    }
+
+    #[test]
+    fn crossing_exit_stays_in_the_ford_until_the_unit_reaches_a_bank() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let from = BattlePoint::new(35_000, 35_000);
+        let destination = BattlePoint::new(70_000, 10_000);
+        let exit = terrain.movement_waypoint(battlefield, from, destination);
+        assert_eq!(exit.y_mm, from.y_mm);
+        assert_eq!(exit, BattlePoint::new(40_000, 35_000));
+    }
+
+    #[test]
+    fn blocked_river_target_routes_toward_a_crossing_instead_of_water() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let from = BattlePoint::new(10_000, 10_000);
+        let blocked = BattlePoint::new(35_000, 15_000);
+        assert!(!terrain.is_passable_at(battlefield, blocked));
+        assert_eq!(
+            terrain.movement_waypoint(battlefield, from, blocked),
+            BattlePoint::new(10_000, 35_000)
         );
     }
 }

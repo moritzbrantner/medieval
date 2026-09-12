@@ -37,8 +37,8 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
   ]);
   expect(current.forestCells).toEqual([
     { cellX: 2, cellZ: 1 },
-    { cellX: 3, cellZ: 1 },
-    { cellX: 3, cellZ: 2 },
+    { cellX: 2, cellZ: 2 },
+    { cellX: 2, cellZ: 3 },
     { cellX: 4, cellZ: 5 },
     { cellX: 4, cellZ: 6 },
     { cellX: 5, cellZ: 6 },
@@ -89,14 +89,16 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
     expect(unit?.destination).toBeNull();
   }
 
+  // Send a physical right-click order to the opposite bank. Core pathing must
+  // preserve the final target while routing the unit through the explicit ford.
   await clickUnit(page, "attacker-spears");
-  const ground = await canvasPoint(page, "groundViewport", 35_000, 35_000);
+  const ground = await canvasPoint(page, "groundViewport", 70_000, 10_000);
   await page.mouse.click(ground.x, ground.y, { button: "right" });
   current = await status(page);
   const destination = current.units.find((unit) => unit.id === "attacker-spears")?.destination;
   expect(destination).not.toBeNull();
-  expect(Math.abs(destination.xMm - 35_000)).toBeLessThanOrEqual(2);
-  expect(Math.abs(destination.yMm - 35_000)).toBeLessThanOrEqual(2);
+  expect(Math.abs(destination.xMm - 70_000)).toBeLessThanOrEqual(2);
+  expect(Math.abs(destination.yMm - 10_000)).toBeLessThanOrEqual(2);
 
   const beforeCamera = structuredClone(current.camera);
   await page.keyboard.press("KeyP");
@@ -119,6 +121,22 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
 
   await page.keyboard.press("KeyP");
   expect((await status(page)).paused).toBe(false);
+
+  await expect.poll(
+    async () => {
+      const spear = (await status(page)).units.find((unit) => unit.id === "attacker-spears");
+      if (!spear) return false;
+      return spear.xMm >= 37_500 && spear.xMm < 50_000
+        && spear.yMm >= 37_500 && spear.yMm < 50_000;
+    },
+    { timeout: 10_000, intervals: [100, 200, 400] },
+  ).toBe(true);
+
+  current = await status(page);
+  const crossingSpears = current.units.find((unit) => unit.id === "attacker-spears");
+  expect(crossingSpears?.destination).not.toBeNull();
+  expect(Math.abs(crossingSpears.destination.xMm - 70_000)).toBeLessThanOrEqual(2);
+  expect(Math.abs(crossingSpears.destination.yMm - 10_000)).toBeLessThanOrEqual(2);
 
   await page.getByRole("button", { name: "Reset battle" }).click();
   current = await status(page);
