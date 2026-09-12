@@ -6,6 +6,10 @@ pub const TACTICAL_TERRAIN_GRID_SIZE: u32 = 8;
 pub const TACTICAL_FOREST_CELL_COUNT: usize = 6;
 pub const TACTICAL_RIVER_CELL_COUNT: usize = TACTICAL_TERRAIN_GRID_SIZE as usize;
 pub const TACTICAL_RIVER_CROSSING_CELL_COUNT: usize = 2;
+pub const COMBAT_FACTOR_BASE_MILLI: u32 = 1_000;
+pub const FOREST_RANGED_DAMAGE_FACTOR_MILLI: u32 = 750;
+const MAX_ELEVATION_COMBAT_MODIFIER_MILLI: u32 = 100;
+const ELEVATION_COMBAT_SCALE_MM: u32 = 4_000;
 const TERRAIN_MAX_HEIGHT_DIVISOR: u32 = 25;
 const FOREST_MOVEMENT_SPEED_DIVISOR: u32 = 2;
 const RIVER_CELL_X: u32 = 3;
@@ -17,6 +21,7 @@ pub enum TacticalTerrainProfile {
     HeightFoundationV1,
     ForestMovementV2,
     RiverCrossingsV3,
+    CombatTerrainV4,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,9 +141,10 @@ const TACTICAL_RIVER_CROSSING_CELLS: [TacticalTerrainCell; TACTICAL_RIVER_CROSSI
 /// Deterministic tactical terrain authority.
 ///
 /// Terrain versioning preserves historical replay semantics. The current
-/// profile owns elevation, forests, river placement, crossing legality, and the
-/// first deterministic chokepoint-routing rule. Renderers may project this
-/// contract but must not reproduce terrain generation, passability, or pathing.
+/// profile owns elevation, forests, river placement, crossing legality,
+/// deterministic chokepoint routing, and bounded terrain combat modifiers.
+/// Renderers may project this contract but must not reproduce terrain
+/// generation, passability, pathing, or combat rules.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TacticalTerrain {
@@ -149,7 +155,7 @@ impl TacticalTerrain {
     #[must_use]
     pub const fn battlefield_foundation() -> Self {
         Self {
-            profile: TacticalTerrainProfile::RiverCrossingsV3,
+            profile: TacticalTerrainProfile::CombatTerrainV4,
         }
     }
 
@@ -170,14 +176,18 @@ impl TacticalTerrain {
         match self.profile {
             TacticalTerrainProfile::HeightFoundationV1 => &[],
             TacticalTerrainProfile::ForestMovementV2 => &TACTICAL_FOREST_CELLS_V2,
-            TacticalTerrainProfile::RiverCrossingsV3 => &TACTICAL_FOREST_CELLS_V3,
+            TacticalTerrainProfile::RiverCrossingsV3 | TacticalTerrainProfile::CombatTerrainV4 => {
+                &TACTICAL_FOREST_CELLS_V3
+            }
         }
     }
 
     #[must_use]
     pub const fn river_cells(self) -> &'static [TacticalTerrainCell] {
         match self.profile {
-            TacticalTerrainProfile::RiverCrossingsV3 => &TACTICAL_RIVER_CELLS,
+            TacticalTerrainProfile::RiverCrossingsV3 | TacticalTerrainProfile::CombatTerrainV4 => {
+                &TACTICAL_RIVER_CELLS
+            }
             TacticalTerrainProfile::HeightFoundationV1
             | TacticalTerrainProfile::ForestMovementV2 => &[],
         }
@@ -186,7 +196,9 @@ impl TacticalTerrain {
     #[must_use]
     pub const fn river_crossing_cells(self) -> &'static [TacticalTerrainCell] {
         match self.profile {
-            TacticalTerrainProfile::RiverCrossingsV3 => &TACTICAL_RIVER_CROSSING_CELLS,
+            TacticalTerrainProfile::RiverCrossingsV3 | TacticalTerrainProfile::CombatTerrainV4 => {
+                &TACTICAL_RIVER_CROSSING_CELLS
+            }
             TacticalTerrainProfile::HeightFoundationV1
             | TacticalTerrainProfile::ForestMovementV2 => &[],
         }
@@ -232,12 +244,10 @@ impl TacticalTerrain {
 
     /// Returns the deterministic intermediate target for one movement leg.
     ///
-    /// The current river profile uses one explicit river column with two
-    /// adjacent crossing cells. Units whose final target lies across the river
-    /// first align with the cheapest crossing while remaining on their own bank,
-    /// then enter the crossing, and finally continue toward the original target.
-    /// This keeps pathing in authoritative integer simulation state without
-    /// introducing a renderer/navmesh dependency.
+    /// River profiles use one explicit river column with two adjacent crossing
+    /// cells. Units whose final target lies across the river first align with
+    /// the cheapest crossing while remaining on their own bank, then enter the
+    /// crossing, and finally continue toward the original target.
     #[must_use]
     pub fn movement_waypoint(
         self,
@@ -245,7 +255,10 @@ impl TacticalTerrain {
         from: BattlePoint,
         destination: BattlePoint,
     ) -> BattlePoint {
-        if self.profile != TacticalTerrainProfile::RiverCrossingsV3 {
+        if !matches!(
+            self.profile,
+            TacticalTerrainProfile::RiverCrossingsV3 | TacticalTerrainProfile::CombatTerrainV4
+        ) {
             return destination;
         }
 
@@ -329,6 +342,51 @@ impl TacticalTerrain {
                 base_speed_mm_per_tick / FOREST_MOVEMENT_SPEED_DIVISOR
                     + base_speed_mm_per_tick % FOREST_MOVEMENT_SPEED_DIVISOR
             }
+        }
+    }
+
+    /// Symmetric bounded elevation factor for damage caused by `attacker` to
+    /// `defender`. V1-V3 return the neutral factor so historical replays retain
+    /// their old combat outcomes.
+    #[must_use]
+    pub fn elevation_damage_factor_milli(
+        self,
+        battlefield: FlatBattlefield,
+        attacker: BattlePoint,
+        defender: BattlePoint,
+    ) -> u32 {
+        if self.profile != TacticalTerrainProfile::CombatTerrainV4 {
+            return COMBAT_FACTOR_BASE_MILLI;
+        }
+        let attacker_height = self.height_mm(battlefield, attacker);
+        let defender_height = self.height_mm(battlefield, defender);
+        let difference = attacker_height.abs_diff(defender_height);
+        let modifier = difference
+            .saturating_mul(MAX_ELEVATION_COMBAT_MODIFIER_MILLI)
+            .checked_div(ELEVATION_COMBAT_SCALE_MM)
+            .unwrap_or(0)
+            .min(MAX_ELEVATION_COMBAT_MODIFIER_MILLI);
+        match attacker_height.cmp(&defender_height) {
+            std::cmp::Ordering::Greater => COMBAT_FACTOR_BASE_MILLI + modifier,
+            std::cmp::Ordering::Less => COMBAT_FACTOR_BASE_MILLI - modifier,
+            std::cmp::Ordering::Equal => COMBAT_FACTOR_BASE_MILLI,
+        }
+    }
+
+    /// Ranged damage multiplier for the target's ground cover. Forest cover is
+    /// intentionally defensive-only in this slice and does not alter melee.
+    #[must_use]
+    pub fn ranged_target_damage_factor_milli(
+        self,
+        battlefield: FlatBattlefield,
+        defender: BattlePoint,
+    ) -> u32 {
+        if self.profile == TacticalTerrainProfile::CombatTerrainV4
+            && self.ground_cover_at(battlefield, defender) == TacticalGroundCover::Forest
+        {
+            FOREST_RANGED_DAMAGE_FACTOR_MILLI
+        } else {
+            COMBAT_FACTOR_BASE_MILLI
         }
     }
 
@@ -419,7 +477,7 @@ mod tests {
         assert_eq!(decoded.height_mm(battlefield, point), first);
         assert_eq!(decoded.forest_cells(), terrain.forest_cells());
         assert_eq!(decoded.river_cells(), terrain.river_cells());
-        assert_eq!(decoded.profile(), TacticalTerrainProfile::RiverCrossingsV3);
+        assert_eq!(decoded.profile(), TacticalTerrainProfile::CombatTerrainV4);
     }
 
     #[test]
@@ -451,6 +509,30 @@ mod tests {
         assert_eq!(terrain.forest_cells(), &TACTICAL_FOREST_CELLS_V2);
         assert!(terrain.river_cells().is_empty());
         assert!(terrain.river_crossing_cells().is_empty());
+    }
+
+    #[test]
+    fn river_v3_preserves_pre_combat_modifier_semantics() {
+        let terrain: TacticalTerrain =
+            serde_json::from_str(r#"{"profile":"riverCrossingsV3"}"#).unwrap();
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let high = BattlePoint::new(55_000, 55_000);
+        let low = BattlePoint::new(5_000, 5_000);
+        assert_eq!(
+            terrain.elevation_damage_factor_milli(battlefield, high, low),
+            COMBAT_FACTOR_BASE_MILLI
+        );
+        assert_eq!(
+            terrain.ranged_target_damage_factor_milli(
+                battlefield,
+                BattlePoint::new(30_000, 20_000),
+            ),
+            COMBAT_FACTOR_BASE_MILLI
+        );
+        assert_eq!(
+            terrain.movement_waypoint(battlefield, low, BattlePoint::new(70_000, 5_000)),
+            BattlePoint::new(5_000, 43_750)
+        );
     }
 
     #[test]
@@ -501,6 +583,44 @@ mod tests {
         let battlefield = FlatBattlefield::new(100_000, 80_000);
         assert_eq!(terrain.height_mm(battlefield, BattlePoint::new(0, 0)), 0);
         assert!(terrain.height_mm(battlefield, BattlePoint::new(50_000, 40_000)) > 0);
+    }
+
+    #[test]
+    fn elevation_combat_factor_is_symmetric_and_bounded() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let high = BattlePoint::new(55_000, 55_000);
+        let low = BattlePoint::new(5_000, 5_000);
+        assert_eq!(terrain.height_mm(battlefield, high), 4_000);
+        assert_eq!(terrain.height_mm(battlefield, low), 0);
+        assert_eq!(
+            terrain.elevation_damage_factor_milli(battlefield, high, low),
+            1_100
+        );
+        assert_eq!(
+            terrain.elevation_damage_factor_milli(battlefield, low, high),
+            900
+        );
+        assert_eq!(
+            terrain.elevation_damage_factor_milli(battlefield, high, high),
+            COMBAT_FACTOR_BASE_MILLI
+        );
+    }
+
+    #[test]
+    fn forest_cover_reduces_ranged_damage_only_in_v4() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let forest = BattlePoint::new(25_000, 15_000);
+        let open = BattlePoint::new(5_000, 15_000);
+        assert_eq!(
+            terrain.ranged_target_damage_factor_milli(battlefield, forest),
+            FOREST_RANGED_DAMAGE_FACTOR_MILLI
+        );
+        assert_eq!(
+            terrain.ranged_target_damage_factor_milli(battlefield, open),
+            COMBAT_FACTOR_BASE_MILLI
+        );
     }
 
     #[test]
