@@ -22,6 +22,29 @@ const IDLE_FATIGUE_RECOVERY_PER_TICK: u16 = 1;
 const COMBAT_FATIGUE_PER_PULSE: u16 = 30;
 const PURSUIT_CASUALTY_DIVISOR: u32 = 4;
 const MELEE_CASUALTY_DIVISOR: u32 = 8;
+const RANGED_CASUALTY_DIVISOR: u32 = 12;
+
+const fn default_attack_range_mm() -> u32 {
+    COMBAT_CONTACT_DISTANCE_MM
+}
+
+const fn valid_attack_range_mm(attack_range_mm: u32) -> bool {
+    attack_range_mm >= COMBAT_CONTACT_DISTANCE_MM && attack_range_mm <= i32::MAX as u32
+}
+
+fn deserialize_attack_range_mm<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let attack_range_mm = u32::deserialize(deserializer)?;
+    if valid_attack_range_mm(attack_range_mm) {
+        Ok(attack_range_mm)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "invalid tactical attack range {attack_range_mm} mm"
+        )))
+    }
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -113,6 +136,11 @@ pub struct TacticalUnit {
     position: BattlePoint,
     formation: Formation,
     speed_mm_per_tick: u32,
+    #[serde(
+        default = "default_attack_range_mm",
+        deserialize_with = "deserialize_attack_range_mm"
+    )]
+    attack_range_mm: u32,
     destination: Option<BattlePoint>,
     engagement_target: Option<String>,
     fatigue: u16,
@@ -137,12 +165,19 @@ impl TacticalUnit {
             position,
             formation,
             speed_mm_per_tick,
+            attack_range_mm: COMBAT_CONTACT_DISTANCE_MM,
             destination: None,
             engagement_target: None,
             fatigue: 0,
             morale: MAX_TACTICAL_MORALE,
             state: TacticalUnitState::Formed,
         }
+    }
+
+    #[must_use]
+    pub const fn with_attack_range_mm(mut self, attack_range_mm: u32) -> Self {
+        self.attack_range_mm = attack_range_mm;
+        self
     }
 
     #[must_use]
@@ -178,6 +213,11 @@ impl TacticalUnit {
     #[must_use]
     pub const fn speed_mm_per_tick(&self) -> u32 {
         self.speed_mm_per_tick
+    }
+
+    #[must_use]
+    pub const fn attack_range_mm(&self) -> u32 {
+        self.attack_range_mm
     }
 
     #[must_use]
@@ -270,6 +310,12 @@ impl TacticalBattle {
             }
             if unit.speed_mm_per_tick == 0 {
                 return Err(TacticalError::ZeroMovementSpeed(unit.id.clone()));
+            }
+            if !valid_attack_range_mm(unit.attack_range_mm) {
+                return Err(TacticalError::InvalidAttackRange {
+                    unit_id: unit.id.clone(),
+                    attack_range_mm: unit.attack_range_mm,
+                });
             }
             if !battlefield.contains(unit.position) {
                 return Err(TacticalError::UnitOutOfBounds {
@@ -379,6 +425,22 @@ impl TacticalBattle {
         Ok(())
     }
 
+    pub fn issue_formation_order(
+        &mut self,
+        unit_id: &str,
+        formation: Formation,
+    ) -> Result<(), TacticalError> {
+        let unit_index = self
+            .unit_index(unit_id)
+            .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
+        self.ensure_can_receive_orders(unit_index)?;
+        if formation.files() == 0 {
+            return Err(TacticalError::InvalidFormation(unit_id.to_owned()));
+        }
+        self.units[unit_index].formation = formation;
+        Ok(())
+    }
+
     pub fn advance_ticks(&mut self, ticks: u32) {
         for _ in 0..ticks {
             self.advance_movement_phase();
@@ -449,8 +511,11 @@ impl TacticalBattle {
             return;
         };
 
+        let engagement_stop_distance = target
+            .filter(|target| target.state == TacticalUnitState::Formed)
+            .map_or(COMBAT_CONTACT_DISTANCE_MM, |_| unit.attack_range_mm);
         if unit.engagement_target.is_some()
-            && points_within_distance(unit.position, destination, COMBAT_CONTACT_DISTANCE_MM)
+            && points_within_distance(unit.position, destination, engagement_stop_distance)
         {
             self.units[index].fatigue = self.units[index]
                 .fatigue
@@ -567,6 +632,41 @@ impl TacticalBattle {
 
         let mut casualties: BTreeMap<String, u32> = BTreeMap::new();
         let mut engaged_units = BTreeSet::new();
+
+        for attacker in &snapshot {
+            if attacker.state != TacticalUnitState::Formed
+                || attacker.attack_range_mm <= COMBAT_CONTACT_DISTANCE_MM
+                || formed_contacts.contains_key(&attacker.id)
+            {
+                continue;
+            }
+            let Some(target_id) = attacker.engagement_target.as_deref() else {
+                continue;
+            };
+            let Some(target) = snapshot.iter().find(|target| target.id == target_id) else {
+                continue;
+            };
+            if target.state != TacticalUnitState::Formed || target.side == attacker.side {
+                continue;
+            }
+            if points_within_distance(
+                attacker.position,
+                target.position,
+                COMBAT_CONTACT_DISTANCE_MM,
+            ) || !points_within_distance(
+                attacker.position,
+                target.position,
+                attacker.attack_range_mm,
+            ) {
+                continue;
+            }
+            let losses = ranged_casualties(attacker, target);
+            if losses > 0 {
+                *casualties.entry(target.id.clone()).or_default() += u32::from(losses);
+                engaged_units.insert(attacker.id.clone());
+            }
+        }
+
         let mut contacts_assigned = BTreeMap::<String, u16>::new();
         for (left_id, right_id) in pairs {
             let left = snapshot.iter().find(|unit| unit.id == left_id).unwrap();
@@ -695,6 +795,10 @@ pub enum TacticalError {
     ZeroSoldiers(String),
     InvalidFormation(String),
     ZeroMovementSpeed(String),
+    InvalidAttackRange {
+        unit_id: String,
+        attack_range_mm: u32,
+    },
     UnitOutOfBounds {
         unit_id: String,
         position: BattlePoint,
@@ -739,6 +843,13 @@ impl fmt::Display for TacticalError {
             Self::ZeroMovementSpeed(unit_id) => write!(
                 formatter,
                 "tactical unit {unit_id} must have a positive movement speed"
+            ),
+            Self::InvalidAttackRange {
+                unit_id,
+                attack_range_mm,
+            } => write!(
+                formatter,
+                "tactical unit {unit_id} has invalid attack range {attack_range_mm} mm"
             ),
             Self::UnitOutOfBounds { unit_id, position } => write!(
                 formatter,
@@ -807,6 +918,21 @@ fn melee_casualties(attacker: &TacticalUnit, defender: &TacticalUnit, frontage: 
         .saturating_mul(morale_factor)
         / 1_000_000;
     let losses = (effective_frontage / MELEE_CASUALTY_DIVISOR).max(1);
+    u16::try_from(losses.min(u32::from(defender.soldiers))).unwrap()
+}
+
+fn ranged_casualties(attacker: &TacticalUnit, defender: &TacticalUnit) -> u16 {
+    if attacker.state != TacticalUnitState::Formed || defender.soldiers == 0 {
+        return 0;
+    }
+    let frontage = u32::from(attacker.frontage_slots());
+    let fatigue_factor = 1_000_u32.saturating_sub(u32::from(attacker.fatigue) / 2);
+    let morale_factor = 750_u32.saturating_add(u32::from(attacker.morale) / 4);
+    let effective_frontage = frontage
+        .saturating_mul(fatigue_factor)
+        .saturating_mul(morale_factor)
+        / 1_000_000;
+    let losses = (effective_frontage / RANGED_CASUALTY_DIVISOR).max(1);
     u16::try_from(losses.min(u32::from(defender.soldiers))).unwrap()
 }
 
@@ -1090,6 +1216,23 @@ mod tests {
             invalid_formation,
             Err(TacticalError::InvalidFormation(_))
         ));
+
+        let invalid_range = TacticalBattle::new(
+            FlatBattlefield::new(10_000, 10_000),
+            vec![
+                sample_unit(
+                    "archers",
+                    BattleSide::Attacker,
+                    BattlePoint::new(1_000, 1_000),
+                    Formation::Line { files: 10 },
+                )
+                .with_attack_range_mm(COMBAT_CONTACT_DISTANCE_MM - 1),
+            ],
+        );
+        assert!(matches!(
+            invalid_range,
+            Err(TacticalError::InvalidAttackRange { .. })
+        ));
     }
 
     #[test]
@@ -1206,6 +1349,79 @@ mod tests {
             Err(TacticalError::DestinationOutOfBounds { .. })
         ));
         assert_eq!(battle, before);
+    }
+
+    #[test]
+    fn formation_orders_change_core_formation_without_replacing_other_orders() {
+        let mut battle = sample_battle();
+        battle
+            .issue_move_order(MovementOrder {
+                unit_id: "attacker-spears".into(),
+                destination: BattlePoint::new(80_000, 120_000),
+            })
+            .unwrap();
+        battle
+            .issue_formation_order("attacker-spears", Formation::Column { files: 20 })
+            .unwrap();
+        assert_eq!(
+            unit(&battle, "attacker-spears").formation(),
+            Formation::Column { files: 20 }
+        );
+        assert_eq!(
+            unit(&battle, "attacker-spears").destination(),
+            Some(BattlePoint::new(80_000, 120_000))
+        );
+    }
+
+    #[test]
+    fn ranged_units_hold_at_range_and_inflict_losses_before_contact() {
+        let battlefield = FlatBattlefield::new(50_000, 50_000);
+        let mut battle = TacticalBattle::new(
+            battlefield,
+            vec![
+                sample_unit(
+                    "archers",
+                    BattleSide::Attacker,
+                    BattlePoint::new(10_000, 25_000),
+                    Formation::Line { files: 24 },
+                )
+                .with_attack_range_mm(20_000),
+                sample_unit(
+                    "defender",
+                    BattleSide::Defender,
+                    BattlePoint::new(25_000, 25_000),
+                    Formation::Line { files: 20 },
+                ),
+            ],
+        )
+        .unwrap();
+        engage(&mut battle, "archers", "defender");
+        let start = unit(&battle, "archers").position();
+        battle.advance_ticks(TACTICAL_TICKS_PER_SECOND);
+        assert_eq!(unit(&battle, "archers").position(), start);
+        assert_eq!(unit(&battle, "archers").attack_range_mm(), 20_000);
+        assert!(unit(&battle, "defender").soldiers() < 80);
+        assert!(!points_within_distance(
+            unit(&battle, "archers").position(),
+            unit(&battle, "defender").position(),
+            COMBAT_CONTACT_DISTANCE_MM,
+        ));
+    }
+
+    #[test]
+    fn legacy_units_without_attack_range_default_to_melee_contact() {
+        let battle = sample_battle();
+        let mut encoded = serde_json::to_value(&battle).unwrap();
+        for unit in encoded["units"].as_array_mut().unwrap() {
+            unit.as_object_mut().unwrap().remove("attackRangeMm");
+        }
+        let decoded: TacticalBattle = serde_json::from_value(encoded).unwrap();
+        assert!(
+            decoded
+                .units()
+                .iter()
+                .all(|unit| unit.attack_range_mm() == COMBAT_CONTACT_DISTANCE_MM)
+        );
     }
 
     #[test]
@@ -1504,6 +1720,7 @@ mod tests {
         assert_eq!(after.side(), before.side());
         assert_eq!(after.formation(), before.formation());
         assert_eq!(after.soldiers(), before.soldiers());
+        assert_eq!(after.attack_range_mm(), before.attack_range_mm());
         assert_ne!(after.position(), before.position());
     }
 }

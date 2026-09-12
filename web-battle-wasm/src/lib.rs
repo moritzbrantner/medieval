@@ -15,7 +15,9 @@ use controls::{TacticalControlRequest, TacticalControls};
 const MAX_FRAME_DELTA_MS: f64 = 250.0;
 const MAX_TICKS_PER_FRAME: u32 = 5;
 const OPPONENT_REPLAN_TICKS: u64 = TACTICAL_TICKS_PER_SECOND as u64;
-const PICK_RADIUS_PX: f64 = 34.0;
+const PICK_PADDING_PX: f64 = 14.0;
+const PICK_FALLBACK_RADIUS_PX: f64 = 44.0;
+const ARCHER_RANGE_MM: u32 = 25_000;
 const CAMERA_PAN_MM: f32 = 5_000.0;
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.055,
@@ -64,6 +66,9 @@ struct UnitStatus {
     soldiers: u16,
     morale: u16,
     fatigue: u16,
+    formation: &'static str,
+    formation_files: u16,
+    attack_range_mm: u32,
     routed: bool,
     destroyed: bool,
     selected: bool,
@@ -266,6 +271,45 @@ impl BrowserSandbox {
         Ok(())
     }
 
+    fn set_selected_formation(&mut self, kind: &str) -> Result<(), String> {
+        let line = match kind {
+            "line" => true,
+            "column" => false,
+            _ => return Err(format!("unknown formation {kind}")),
+        };
+        let selected = self
+            .snapshot()
+            .units
+            .into_iter()
+            .filter(|unit| unit.selected)
+            .map(|unit| unit.unit_id)
+            .collect::<Vec<_>>();
+        if selected.is_empty() {
+            return Err("no tactical units are selected".to_owned());
+        }
+
+        let mut next = self.battle.clone();
+        for unit_id in selected {
+            let files = next
+                .units()
+                .iter()
+                .find(|unit| unit.id() == unit_id)
+                .map(|unit| match unit.formation() {
+                    Formation::Line { files } | Formation::Column { files } => files,
+                })
+                .ok_or_else(|| format!("selected tactical unit {unit_id} no longer exists"))?;
+            let formation = if line {
+                Formation::Line { files }
+            } else {
+                Formation::Column { files }
+            };
+            next.issue_formation_order(&unit_id, formation)
+                .map_err(|error| error.to_string())?;
+        }
+        self.battle = next;
+        self.render()
+    }
+
     fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
         self.last_frame_ms = None;
@@ -302,19 +346,25 @@ impl BrowserSandbox {
             .battle
             .units()
             .iter()
-            .map(|unit| UnitStatus {
-                id: unit.id().to_owned(),
-                side: side_name(unit.side()),
-                soldiers: unit.soldiers(),
-                morale: unit.morale(),
-                fatigue: unit.fatigue(),
-                routed: unit.is_routed(),
-                destroyed: unit.is_destroyed(),
-                selected: selected.contains(unit.id()),
-                engagement_target: unit.engagement_target().map(str::to_owned),
-                destination: unit.destination(),
-                x_mm: unit.position().x_mm,
-                y_mm: unit.position().y_mm,
+            .map(|unit| {
+                let (formation, formation_files) = formation_status(unit.formation());
+                UnitStatus {
+                    id: unit.id().to_owned(),
+                    side: side_name(unit.side()),
+                    soldiers: unit.soldiers(),
+                    morale: unit.morale(),
+                    fatigue: unit.fatigue(),
+                    formation,
+                    formation_files,
+                    attack_range_mm: unit.attack_range_mm(),
+                    routed: unit.is_routed(),
+                    destroyed: unit.is_destroyed(),
+                    selected: selected.contains(unit.id()),
+                    engagement_target: unit.engagement_target().map(str::to_owned),
+                    destination: unit.destination(),
+                    x_mm: unit.position().x_mm,
+                    y_mm: unit.position().y_mm,
+                }
             })
             .collect();
         serde_json::to_string(&SandboxStatus {
@@ -385,12 +435,62 @@ fn sample_battle() -> Result<TacticalBattle, String> {
     TacticalBattle::deploy(
         FlatBattlefield::new(100_000, 100_000),
         vec![
-            unit("attacker-spears", BattleSide::Attacker, 110, 22_000, 24_000, Formation::Line { files: 28 }, 450),
-            unit("attacker-archers", BattleSide::Attacker, 80, 18_000, 50_000, Formation::Line { files: 24 }, 420),
-            unit("attacker-knights", BattleSide::Attacker, 44, 22_000, 76_000, Formation::Column { files: 12 }, 850),
-            unit("defender-spears", BattleSide::Defender, 110, 78_000, 24_000, Formation::Line { files: 28 }, 430),
-            unit("defender-archers", BattleSide::Defender, 80, 82_000, 50_000, Formation::Line { files: 24 }, 400),
-            unit("defender-knights", BattleSide::Defender, 44, 78_000, 76_000, Formation::Column { files: 12 }, 800),
+            unit(
+                "attacker-spears",
+                BattleSide::Attacker,
+                110,
+                22_000,
+                24_000,
+                Formation::Line { files: 28 },
+                450,
+            ),
+            unit(
+                "attacker-archers",
+                BattleSide::Attacker,
+                80,
+                18_000,
+                50_000,
+                Formation::Line { files: 24 },
+                420,
+            )
+            .with_attack_range_mm(ARCHER_RANGE_MM),
+            unit(
+                "attacker-knights",
+                BattleSide::Attacker,
+                44,
+                22_000,
+                76_000,
+                Formation::Column { files: 12 },
+                850,
+            ),
+            unit(
+                "defender-spears",
+                BattleSide::Defender,
+                110,
+                78_000,
+                24_000,
+                Formation::Line { files: 28 },
+                430,
+            ),
+            unit(
+                "defender-archers",
+                BattleSide::Defender,
+                80,
+                82_000,
+                50_000,
+                Formation::Line { files: 24 },
+                400,
+            )
+            .with_attack_range_mm(ARCHER_RANGE_MM),
+            unit(
+                "defender-knights",
+                BattleSide::Defender,
+                44,
+                78_000,
+                76_000,
+                Formation::Column { files: 12 },
+                800,
+            ),
         ],
     )
     .map_err(|error| error.to_string())
@@ -507,17 +607,54 @@ fn pick_unit(
         .iter()
         .filter(|unit| !unit.routed)
         .filter_map(|unit| {
-            let (unit_x, unit_y) = projected_pixel(
+            let (anchor_x, anchor_y) = projected_pixel(
                 snapshot,
                 unit.interaction_anchor_mm(),
                 width_px,
                 height_px,
             )?;
-            let dx = unit_x - x_px;
-            let dy = unit_y - y_px;
-            let distance = dx * dx + dy * dy;
-            (distance <= PICK_RADIUS_PX * PICK_RADIUS_PX)
-                .then_some((distance, unit.unit_id.as_str()))
+            let anchor_dx = anchor_x - x_px;
+            let anchor_dy = anchor_y - y_px;
+            let anchor_distance = anchor_dx * anchor_dx + anchor_dy * anchor_dy;
+
+            let mut min_x = f64::INFINITY;
+            let mut max_x = f64::NEG_INFINITY;
+            let mut min_y = f64::INFINITY;
+            let mut max_y = f64::NEG_INFINITY;
+            let mut nearest_soldier_distance = f64::INFINITY;
+            let mut projected_soldiers = 0_u16;
+            for center in &unit.soldier_centers_mm {
+                let Some((soldier_x, soldier_y)) =
+                    projected_pixel(snapshot, *center, width_px, height_px)
+                else {
+                    continue;
+                };
+                projected_soldiers = projected_soldiers.saturating_add(1);
+                min_x = min_x.min(soldier_x);
+                max_x = max_x.max(soldier_x);
+                min_y = min_y.min(soldier_y);
+                max_y = max_y.max(soldier_y);
+                let dx = soldier_x - x_px;
+                let dy = soldier_y - y_px;
+                nearest_soldier_distance = nearest_soldier_distance.min(dx * dx + dy * dy);
+            }
+
+            let inside_formation = projected_soldiers > 0
+                && x_px >= min_x - PICK_PADDING_PX
+                && x_px <= max_x + PICK_PADDING_PX
+                && y_px >= min_y - PICK_PADDING_PX
+                && y_px <= max_y + PICK_PADDING_PX;
+            let anchor_hit =
+                anchor_distance <= PICK_FALLBACK_RADIUS_PX * PICK_FALLBACK_RADIUS_PX;
+            if !inside_formation && !anchor_hit {
+                return None;
+            }
+            let distance = if inside_formation {
+                nearest_soldier_distance.min(anchor_distance)
+            } else {
+                anchor_distance
+            };
+            Some((distance, unit.unit_id.as_str()))
         })
         .min_by(|left, right| {
             left.0
@@ -548,6 +685,13 @@ const fn side_name(side: BattleSide) -> &'static str {
     match side {
         BattleSide::Attacker => "player",
         BattleSide::Defender => "opponent",
+    }
+}
+
+const fn formation_status(formation: Formation) -> (&'static str, u16) {
+    match formation {
+        Formation::Line { files } => ("line", files),
+        Formation::Column { files } => ("column", files),
     }
 }
 
@@ -669,6 +813,14 @@ pub fn battle_sandbox_control(request_json: &str) -> Result<String, JsValue> {
         .map_err(|error| js_error(format!("invalid tactical control request: {error}")))?;
     with_sandbox(|sandbox| {
         sandbox.apply_control(request)?;
+        sandbox.status_json()
+    })
+}
+
+#[wasm_bindgen]
+pub fn battle_sandbox_set_formation(kind: &str) -> Result<String, JsValue> {
+    with_sandbox(|sandbox| {
+        sandbox.set_selected_formation(kind)?;
         sandbox.status_json()
     })
 }

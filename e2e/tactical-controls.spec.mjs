@@ -17,7 +17,11 @@ async function canvasPoint(page, kind, ...args) {
 async function clickUnit(page, unitId, options = {}) {
   const point = await canvasPoint(page, "unitViewport", unitId);
   if (options.shift) await page.keyboard.down("Shift");
-  await page.mouse.click(point.x, point.y, { button: options.button ?? "left" });
+  await page.mouse.click(
+    point.x + (options.offsetX ?? 0),
+    point.y + (options.offsetY ?? 0),
+    { button: options.button ?? "left" },
+  );
   if (options.shift) await page.keyboard.up("Shift");
 }
 
@@ -39,10 +43,30 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
     { cellX: 4, cellZ: 6 },
     { cellX: 5, cellZ: 6 },
   ]);
+  expect(current.units.find((unit) => unit.id === "attacker-archers")).toMatchObject({
+    formation: "line",
+    formationFiles: 24,
+    attackRangeMm: 25_000,
+  });
+  expect(current.units.find((unit) => unit.id === "attacker-spears")?.attackRangeMm).toBe(1_500);
 
-  await clickUnit(page, "attacker-spears");
+  // Select well away from the old 34 px anchor-only radius. This exercises the
+  // rendered formation footprint that now defines the unit's browser hit target.
+  await clickUnit(page, "attacker-spears", { offsetX: 40 });
   await expect(page.locator("#battle-selection")).toContainText("Spears");
   expect((await status(page)).selectedUnits).toEqual(["attacker-spears"]);
+
+  await page.getByRole("button", { name: "Column formation" }).click();
+  current = await status(page);
+  expect(current.units.find((unit) => unit.id === "attacker-spears")).toMatchObject({
+    formation: "column",
+    formationFiles: 28,
+  });
+  await page.getByRole("button", { name: "Line formation" }).click();
+  expect((await status(page)).units.find((unit) => unit.id === "attacker-spears")).toMatchObject({
+    formation: "line",
+    formationFiles: 28,
+  });
 
   await clickUnit(page, "attacker-archers", { shift: true });
   expect((await status(page)).selectedUnits).toEqual([
@@ -100,6 +124,12 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
   current = await status(page);
   expect(current.selectedUnits).toEqual([]);
   const resetSpears = current.units.find((unit) => unit.id === "attacker-spears");
-  expect(resetSpears).toMatchObject({ xMm: 22_000, yMm: 24_000 });
+  expect(resetSpears).toMatchObject({
+    xMm: 22_000,
+    yMm: 24_000,
+    formation: "line",
+    formationFiles: 28,
+    attackRangeMm: 1_500,
+  });
   await expect(page.locator("#battle-error")).toBeHidden();
 });
