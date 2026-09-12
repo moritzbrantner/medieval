@@ -20,6 +20,8 @@ const GROUND_BASE_DEPTH_MM: f32 = 200.0;
 const DEPLOYMENT_BOUNDARY_HALF_WIDTH_MM: f32 = 180.0;
 const DEPLOYMENT_BOUNDARY_HEIGHT_MM: f32 = 40.0;
 const FOREST_TREES_PER_CELL: u32 = 4;
+const RIVER_SURFACE_HEIGHT_MM: f32 = 30.0;
+const CROSSING_SURFACE_HEIGHT_MM: f32 = 90.0;
 const CUBE_VERTEX_COUNT: u32 = 36;
 const INITIAL_INSTANCE_CAPACITY: usize = 256;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
@@ -125,6 +127,39 @@ impl GpuWorldInstance {
         Some(Self {
             center_material: [tree_x as f32, terrain_y + half_height, tree_z as f32, 5.0],
             half_extent_routed: [half_width, half_height, half_width, 0.0],
+            visual: [0.0; 4],
+        })
+    }
+
+    fn river_cell(
+        cell: TacticalTerrainCell,
+        battlefield: FlatBattlefield,
+        crossing: bool,
+    ) -> Option<Self> {
+        let (x0, x1, z0, z1) = terrain_cell_bounds_mm(battlefield, cell.cell_x, cell.cell_z)?;
+        if x1 <= x0 || z1 <= z0 {
+            return None;
+        }
+        let terrain_y = terrain_cell_height_mm(battlefield, cell.cell_x, cell.cell_z) as f32;
+        let height = if crossing {
+            CROSSING_SURFACE_HEIGHT_MM
+        } else {
+            RIVER_SURFACE_HEIGHT_MM
+        };
+        let half_height = height / 2.0;
+        Some(Self {
+            center_material: [
+                (x0 as f32 + x1 as f32) / 2.0,
+                terrain_y + half_height,
+                (z0 as f32 + z1 as f32) / 2.0,
+                if crossing { 7.0 } else { 6.0 },
+            ],
+            half_extent_routed: [
+                (x1 - x0) as f32 / 2.0,
+                half_height,
+                (z1 - z0) as f32 / 2.0,
+                0.0,
+            ],
             visual: [0.0; 4],
         })
     }
@@ -383,8 +418,13 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
     let terrain_capacity = (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE) as usize;
     let deployment_capacity = (2 * TERRAIN_GRID_SIZE) as usize;
     let forest_capacity = snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize;
+    let river_capacity = snapshot.river_cells.len();
     let mut instances = Vec::with_capacity(
-        terrain_capacity + deployment_capacity + forest_capacity + soldier_count,
+        terrain_capacity
+            + deployment_capacity
+            + forest_capacity
+            + river_capacity
+            + soldier_count,
     );
     for cell_z in 0..TERRAIN_GRID_SIZE {
         for cell_x in 0..TERRAIN_GRID_SIZE {
@@ -392,6 +432,12 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
             {
                 instances.push(cell);
             }
+        }
+    }
+    for cell in &snapshot.river_cells {
+        let crossing = snapshot.river_crossing_cells.contains(cell);
+        if let Some(river) = GpuWorldInstance::river_cell(*cell, snapshot.battlefield, crossing) {
+            instances.push(river);
         }
     }
     for cell in &snapshot.forest_cells {
@@ -511,7 +557,7 @@ mod tests {
     use medieval_core::{BattlePoint, FlatBattlefield, Formation, TacticalBattle, TacticalUnit};
 
     #[test]
-    fn gpu_batch_contains_terrain_cells_and_individual_soldiers() {
+    fn gpu_batch_contains_terrain_cells_river_and_individual_soldiers() {
         let battle = TacticalBattle::new(
             FlatBattlefield::new(100_000, 100_000),
             vec![TacticalUnit::new(
@@ -530,6 +576,7 @@ mod tests {
             gpu_instances(&snapshot).len(),
             (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE + 2 * TERRAIN_GRID_SIZE) as usize
                 + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
+                + snapshot.river_cells.len()
                 + 80
         );
     }
@@ -572,6 +619,43 @@ mod tests {
         assert!(tree.center_material[0] > x0 as f32 && tree.center_material[0] < x1 as f32);
         assert!(tree.center_material[2] > z0 as f32 && tree.center_material[2] < z1 as f32);
         assert!(tree.half_extent_routed[1] > tree.half_extent_routed[0]);
+    }
+
+    #[test]
+    fn river_instances_distinguish_blocked_water_from_crossings() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let battle = TacticalBattle::new(
+            battlefield,
+            vec![TacticalUnit::new(
+                "attacker",
+                BattleSide::Attacker,
+                1,
+                BattlePoint::new(10_000, 10_000),
+                Formation::Line { files: 1 },
+                1_000,
+            )],
+        )
+        .unwrap();
+        let snapshot = BattleRenderSnapshot::capture(&battle, &RenderViewState::fit(battlefield));
+        let blocked = snapshot
+            .river_cells
+            .iter()
+            .copied()
+            .find(|cell| !snapshot.river_crossing_cells.contains(cell))
+            .unwrap();
+        let crossing = snapshot.river_crossing_cells[0];
+        assert_eq!(
+            GpuWorldInstance::river_cell(blocked, battlefield, false)
+                .unwrap()
+                .center_material[3],
+            6.0
+        );
+        assert_eq!(
+            GpuWorldInstance::river_cell(crossing, battlefield, true)
+                .unwrap()
+                .center_material[3],
+            7.0
+        );
     }
 
     #[test]
