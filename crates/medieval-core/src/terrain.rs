@@ -457,7 +457,8 @@ mod tests {
     fn current_forests_do_not_overlap_blocked_river_cells() {
         let terrain = TacticalTerrain::battlefield_foundation();
         assert!(terrain.forest_cells().iter().all(|forest| {
-            !terrain.river_cells().contains(forest) || terrain.river_crossing_cells().contains(forest)
+            !terrain.river_cells().contains(forest)
+                || terrain.river_crossing_cells().contains(forest)
         }));
     }
 
