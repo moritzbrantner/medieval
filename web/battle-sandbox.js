@@ -5,6 +5,7 @@ import init, {
   battle_sandbox_pan,
   battle_sandbox_pointer,
   battle_sandbox_reset,
+  battle_sandbox_set_formation,
   battle_sandbox_set_paused,
   battle_sandbox_start,
   battle_sandbox_status,
@@ -18,6 +19,8 @@ const unitList = document.querySelector("#unit-list");
 const errorBox = document.querySelector("#battle-error");
 const pauseButton = document.querySelector("#pause-battle");
 const stopButton = document.querySelector("#stop-units");
+const lineFormationButton = document.querySelector("#line-formation");
+const columnFormationButton = document.querySelector("#column-formation");
 const fitButton = document.querySelector("#fit-camera");
 const resetButton = document.querySelector("#reset-battle");
 
@@ -59,6 +62,16 @@ function unitState(unit) {
   return "formed";
 }
 
+function readableFormation(unit) {
+  const name = unit.formation === "column" ? "column" : "line";
+  return `${name} · ${unit.formationFiles} files`;
+}
+
+function readableRange(rangeMm) {
+  const metres = rangeMm / 1000;
+  return Number.isInteger(metres) ? `${metres} m` : `${metres.toFixed(1)} m`;
+}
+
 function renderStatus(rawStatus) {
   currentStatus = typeof rawStatus === "string" ? JSON.parse(rawStatus) : rawStatus;
   const outcomeText = {
@@ -74,7 +87,10 @@ function renderStatus(rawStatus) {
     : "No units selected.";
   pauseButton.textContent = currentStatus.paused && !currentStatus.outcome ? "Resume" : "Pause";
   pauseButton.disabled = Boolean(currentStatus.outcome);
-  stopButton.disabled = currentStatus.selectedUnits.length === 0 || Boolean(currentStatus.outcome);
+  const selectionDisabled = currentStatus.selectedUnits.length === 0 || Boolean(currentStatus.outcome);
+  stopButton.disabled = selectionDisabled;
+  lineFormationButton.disabled = selectionDisabled;
+  columnFormationButton.disabled = selectionDisabled;
 
   const fragment = document.createDocumentFragment();
   for (const unit of currentStatus.units) {
@@ -94,7 +110,7 @@ function renderStatus(rawStatus) {
     const order = unit.engagementTarget
       ? ` · engaging ${readableUnitName(unit.engagementTarget)}`
       : "";
-    detail.textContent = `${unitState(unit)} · ${unit.soldiers} soldiers · morale ${unit.morale} · fatigue ${unit.fatigue}${order}`;
+    detail.textContent = `${unitState(unit)} · ${unit.soldiers} soldiers · ${readableFormation(unit)} · range ${readableRange(unit.attackRangeMm)} · morale ${unit.morale} · fatigue ${unit.fatigue}${order}`;
 
     row.append(name, side, detail);
     fragment.append(row);
@@ -123,6 +139,16 @@ function runControl(request) {
   clearError();
   try {
     renderStatus(battle_sandbox_control(JSON.stringify(request)));
+  } catch (error) {
+    reportError(error);
+  }
+}
+
+function setFormation(kind) {
+  if (!currentStatus?.selectedUnits.length || currentStatus.outcome) return;
+  clearError();
+  try {
+    renderStatus(battle_sandbox_set_formation(kind));
   } catch (error) {
     reportError(error);
   }
@@ -218,6 +244,12 @@ canvas.addEventListener("keydown", (event) => {
   } else if (event.code === "Space") {
     event.preventDefault();
     runControl({ kind: "stopSelected" });
+  } else if (event.code === "KeyL") {
+    event.preventDefault();
+    setFormation("line");
+  } else if (event.code === "KeyC") {
+    event.preventDefault();
+    setFormation("column");
   } else if (event.code === "Digit0") {
     event.preventDefault();
     runControl({ kind: "fitCamera" });
@@ -229,6 +261,8 @@ canvas.addEventListener("keydown", (event) => {
 
 pauseButton.addEventListener("click", togglePause);
 stopButton.addEventListener("click", () => runControl({ kind: "stopSelected" }));
+lineFormationButton.addEventListener("click", () => setFormation("line"));
+columnFormationButton.addEventListener("click", () => setFormation("column"));
 fitButton.addEventListener("click", () => runControl({ kind: "fitCamera" }));
 resetButton.addEventListener("click", () => {
   clearError();
