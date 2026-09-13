@@ -7,7 +7,7 @@ use physics_engine::{Collider, ColliderShape, Vec3i, collider_contact};
 use serde::{Deserialize, Serialize};
 
 use crate::deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
-use crate::terrain::TacticalTerrain;
+use crate::terrain::{COMBAT_FACTOR_BASE_MILLI, TacticalTerrain};
 
 pub const TACTICAL_TICKS_PER_SECOND: u32 = 20;
 pub const MAX_TACTICAL_FATIGUE: u16 = 1_000;
@@ -685,7 +685,12 @@ impl TacticalBattle {
             ) {
                 continue;
             }
-            let losses = ranged_casualties(attacker, target);
+            let losses = ranged_casualties(
+                attacker,
+                target,
+                self.terrain,
+                self.battlefield,
+            );
             if losses > 0 {
                 *casualties.entry(target.id.clone()).or_default() += u32::from(losses);
                 engaged_units.insert(attacker.id.clone());
@@ -714,8 +719,20 @@ impl TacticalBattle {
                         formed_contacts[&right.id],
                         contacts_assigned.entry(right.id.clone()).or_default(),
                     );
-                    let left_losses = melee_casualties(right, left, right_frontage);
-                    let right_losses = melee_casualties(left, right, left_frontage);
+                    let left_losses = melee_casualties(
+                        right,
+                        left,
+                        right_frontage,
+                        self.terrain,
+                        self.battlefield,
+                    );
+                    let right_losses = melee_casualties(
+                        left,
+                        right,
+                        left_frontage,
+                        self.terrain,
+                        self.battlefield,
+                    );
                     *casualties.entry(left.id.clone()).or_default() += u32::from(left_losses);
                     *casualties.entry(right.id.clone()).or_default() += u32::from(right_losses);
                     engaged_units.insert(left.id.clone());
@@ -729,8 +746,9 @@ impl TacticalBattle {
                             PURSUIT_DISTANCE_MM,
                         ) =>
                 {
-                    *casualties.entry(right.id.clone()).or_default() +=
-                        u32::from(pursuit_casualties(left));
+                    *casualties.entry(right.id.clone()).or_default() += u32::from(
+                        pursuit_casualties(left, right, self.terrain, self.battlefield),
+                    );
                     engaged_units.insert(left.id.clone());
                 }
                 (TacticalUnitState::Routed, TacticalUnitState::Formed)
@@ -741,8 +759,9 @@ impl TacticalBattle {
                             PURSUIT_DISTANCE_MM,
                         ) =>
                 {
-                    *casualties.entry(left.id.clone()).or_default() +=
-                        u32::from(pursuit_casualties(right));
+                    *casualties.entry(left.id.clone()).or_default() += u32::from(
+                        pursuit_casualties(right, left, self.terrain, self.battlefield),
+                    );
                     engaged_units.insert(right.id.clone());
                 }
                 _ => {}
@@ -952,7 +971,29 @@ fn allocated_frontage(attacker: &TacticalUnit, contacts: u16, assigned: &mut u16
     allocation
 }
 
-fn melee_casualties(attacker: &TacticalUnit, defender: &TacticalUnit, frontage: u16) -> u16 {
+fn terrain_adjusted_frontage(
+    effective_frontage: u32,
+    attacker: &TacticalUnit,
+    defender: &TacticalUnit,
+    terrain: TacticalTerrain,
+    battlefield: FlatBattlefield,
+) -> u32 {
+    effective_frontage
+        .saturating_mul(terrain.elevation_damage_factor_milli(
+            battlefield,
+            attacker.position,
+            defender.position,
+        ))
+        / COMBAT_FACTOR_BASE_MILLI
+}
+
+fn melee_casualties(
+    attacker: &TacticalUnit,
+    defender: &TacticalUnit,
+    frontage: u16,
+    terrain: TacticalTerrain,
+    battlefield: FlatBattlefield,
+) -> u16 {
     if attacker.state != TacticalUnitState::Formed || defender.soldiers == 0 || frontage == 0 {
         return 0;
     }
@@ -963,11 +1004,18 @@ fn melee_casualties(attacker: &TacticalUnit, defender: &TacticalUnit, frontage: 
         .saturating_mul(fatigue_factor)
         .saturating_mul(morale_factor)
         / 1_000_000;
+    let effective_frontage =
+        terrain_adjusted_frontage(effective_frontage, attacker, defender, terrain, battlefield);
     let losses = (effective_frontage / MELEE_CASUALTY_DIVISOR).max(1);
     u16::try_from(losses.min(u32::from(defender.soldiers))).unwrap()
 }
 
-fn ranged_casualties(attacker: &TacticalUnit, defender: &TacticalUnit) -> u16 {
+fn ranged_casualties(
+    attacker: &TacticalUnit,
+    defender: &TacticalUnit,
+    terrain: TacticalTerrain,
+    battlefield: FlatBattlefield,
+) -> u16 {
     if attacker.state != TacticalUnitState::Formed || defender.soldiers == 0 {
         return 0;
     }
@@ -978,14 +1026,27 @@ fn ranged_casualties(attacker: &TacticalUnit, defender: &TacticalUnit) -> u16 {
         .saturating_mul(fatigue_factor)
         .saturating_mul(morale_factor)
         / 1_000_000;
+    let effective_frontage =
+        terrain_adjusted_frontage(effective_frontage, attacker, defender, terrain, battlefield)
+            .saturating_mul(
+                terrain.ranged_target_damage_factor_milli(battlefield, defender.position),
+            )
+            / COMBAT_FACTOR_BASE_MILLI;
     let losses = (effective_frontage / RANGED_CASUALTY_DIVISOR).max(1);
     u16::try_from(losses.min(u32::from(defender.soldiers))).unwrap()
 }
 
-fn pursuit_casualties(pursuer: &TacticalUnit) -> u16 {
+fn pursuit_casualties(
+    pursuer: &TacticalUnit,
+    target: &TacticalUnit,
+    terrain: TacticalTerrain,
+    battlefield: FlatBattlefield,
+) -> u16 {
     let frontage = u32::from(pursuer.frontage_slots());
     let fatigue_factor = 1_000_u32.saturating_sub(u32::from(pursuer.fatigue) / 2);
     let effective_frontage = frontage.saturating_mul(fatigue_factor) / 1_000;
+    let effective_frontage =
+        terrain_adjusted_frontage(effective_frontage, pursuer, target, terrain, battlefield);
     u16::try_from((effective_frontage / PURSUIT_CASUALTY_DIVISOR).max(1)).unwrap()
 }
 
@@ -1561,6 +1622,65 @@ mod tests {
             unit(&battle, "defender").position(),
             COMBAT_CONTACT_DISTANCE_MM,
         ));
+    }
+
+    #[test]
+    fn higher_ground_increases_melee_and_pursuit_effectiveness() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let high = sample_unit(
+            "high",
+            BattleSide::Attacker,
+            BattlePoint::new(55_000, 55_000),
+            Formation::Line { files: 80 },
+        );
+        let low = sample_unit(
+            "low",
+            BattleSide::Defender,
+            BattlePoint::new(5_000, 5_000),
+            Formation::Line { files: 80 },
+        );
+
+        assert!(
+            melee_casualties(&high, &low, 80, terrain, battlefield)
+                > melee_casualties(&low, &high, 80, terrain, battlefield)
+        );
+        assert!(
+            pursuit_casualties(&high, &low, terrain, battlefield)
+                > pursuit_casualties(&low, &high, terrain, battlefield)
+        );
+    }
+
+    #[test]
+    fn forest_cover_reduces_ranged_losses_at_equal_elevation() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let archers = sample_unit(
+            "archers",
+            BattleSide::Attacker,
+            BattlePoint::new(15_000, 5_000),
+            Formation::Line { files: 48 },
+        );
+        let open = sample_unit(
+            "open",
+            BattleSide::Defender,
+            BattlePoint::new(15_000, 15_000),
+            Formation::Line { files: 20 },
+        );
+        let forest = sample_unit(
+            "forest",
+            BattleSide::Defender,
+            BattlePoint::new(25_000, 15_000),
+            Formation::Line { files: 20 },
+        );
+        assert_eq!(
+            terrain.height_mm(battlefield, open.position),
+            terrain.height_mm(battlefield, forest.position)
+        );
+        assert!(
+            ranged_casualties(&archers, &forest, terrain, battlefield)
+                < ranged_casualties(&archers, &open, terrain, battlefield)
+        );
     }
 
     #[test]
