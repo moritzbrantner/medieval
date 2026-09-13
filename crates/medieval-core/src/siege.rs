@@ -119,10 +119,7 @@ impl SiegeLayout {
         let wall_center_x = wall_min_x + (wall_max_x - wall_min_x) / 2;
         let tower_radius = battlefield.width_mm.min(battlefield.depth_mm) / 50;
         let towers = [15_u32, 35, 65, 85].map(|percent_y| SiegeTower {
-            center: BattlePoint::new(
-                wall_center_x,
-                scale(battlefield.depth_mm, percent_y, 100),
-            ),
+            center: BattlePoint::new(wall_center_x, scale(battlefield.depth_mm, percent_y, 100)),
             radius_mm: tower_radius,
         });
         let capture_point = SiegeCapturePoint {
@@ -349,7 +346,10 @@ mod tests {
                 && tower.center.y_mm <= battlefield.depth_mm
                 && tower.radius_mm > 0
         }));
-        assert_eq!(first.layout.capture_point.center, BattlePoint::new(80_000, 40_000));
+        assert_eq!(
+            first.layout.capture_point.center,
+            BattlePoint::new(80_000, 40_000)
+        );
 
         let encoded = serde_json::to_string(&first).unwrap();
         let decoded: SiegeBattleState = serde_json::from_str(&encoded).unwrap();
