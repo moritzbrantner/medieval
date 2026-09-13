@@ -259,26 +259,33 @@ impl TacticalTerrain {
         };
 
         if from_cell.cell_x == RIVER_CELL_X {
+            let (x0, x1, _, _) = self
+                .cell_bounds_mm(battlefield, from_cell.cell_x, from_cell.cell_z)
+                .expect("river cell is inside the terrain grid");
             if destination_cell.cell_x < RIVER_CELL_X {
-                let (x0, _, _, _) = self
-                    .cell_bounds_mm(battlefield, from_cell.cell_x, from_cell.cell_z)
-                    .expect("river cell is inside the terrain grid");
                 return BattlePoint::new(x0.saturating_sub(1), from.y_mm);
             }
             if destination_cell.cell_x > RIVER_CELL_X {
-                let (_, x1, _, _) = self
-                    .cell_bounds_mm(battlefield, from_cell.cell_x, from_cell.cell_z)
-                    .expect("river cell is inside the terrain grid");
                 return BattlePoint::new(x1, from.y_mm);
             }
-            return if self.cell_is_passable(destination_cell.cell_x, destination_cell.cell_z) {
-                destination
-            } else {
-                from
-            };
+            if !self.cell_is_passable(destination_cell.cell_x, destination_cell.cell_z) {
+                let west_x = x0.saturating_sub(1);
+                let east_x = x1;
+                let exit_x = if from.x_mm.abs_diff(west_x) <= from.x_mm.abs_diff(east_x) {
+                    west_x
+                } else {
+                    east_x
+                };
+                return BattlePoint::new(exit_x, from.y_mm);
+            }
+            return destination;
         }
 
         if !self.cell_is_passable(destination_cell.cell_x, destination_cell.cell_z) {
+            return self.bank_waypoint_for_crossing(battlefield, from, destination);
+        }
+
+        if destination_cell.cell_x == RIVER_CELL_X {
             return self.bank_waypoint_for_crossing(battlefield, from, destination);
         }
 
@@ -599,6 +606,41 @@ mod tests {
         let exit = terrain.movement_waypoint(battlefield, from, destination);
         assert_eq!(exit.y_mm, from.y_mm);
         assert_eq!(exit, BattlePoint::new(40_000, 35_000));
+    }
+
+    #[test]
+    fn crossing_destination_aligns_on_the_bank_before_entering_the_ford() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let from = BattlePoint::new(41_000, 0);
+        let destination = BattlePoint::new(35_000, 35_000);
+
+        let align = terrain.movement_waypoint(battlefield, from, destination);
+        assert_eq!(align, BattlePoint::new(41_000, 35_000));
+        assert!(terrain.is_passable_at(battlefield, align));
+        assert_eq!(
+            terrain.movement_waypoint(battlefield, align, destination),
+            destination
+        );
+    }
+
+    #[test]
+    fn routed_movement_can_leave_a_crossing_when_the_flee_target_is_blocked_water() {
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let from = BattlePoint::new(35_000, 30_100);
+        let blocked_flee_target = BattlePoint::new(35_000, 29_000);
+        assert!(terrain.is_passable_at(battlefield, from));
+        assert!(!terrain.is_passable_at(battlefield, blocked_flee_target));
+
+        let exit = terrain.movement_waypoint(battlefield, from, blocked_flee_target);
+        assert_ne!(exit, from);
+        assert_eq!(exit.y_mm, from.y_mm);
+        assert!(terrain.is_passable_at(battlefield, exit));
+        assert_eq!(
+            terrain.movement_waypoint(battlefield, from, blocked_flee_target),
+            exit
+        );
     }
 
     #[test]
