@@ -35,6 +35,7 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
     { side: "attacker", minXMm: 0, maxXMm: 33_333, minYMm: 0, maxYMm: 100_000 },
     { side: "defender", minXMm: 66_667, maxXMm: 100_000, minYMm: 0, maxYMm: 100_000 },
   ]);
+  expect(current.terrainProfile).toBe("combatTerrainV4");
   expect(current.forestCells).toEqual([
     { cellX: 2, cellZ: 1 },
     { cellX: 2, cellZ: 2 },
@@ -43,11 +44,30 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
     { cellX: 4, cellZ: 6 },
     { cellX: 5, cellZ: 6 },
   ]);
-  expect(current.units.find((unit) => unit.id === "attacker-archers")).toMatchObject({
+  expect(current.riverCells).toEqual([
+    { cellX: 3, cellZ: 0 },
+    { cellX: 3, cellZ: 1 },
+    { cellX: 3, cellZ: 2 },
+    { cellX: 3, cellZ: 3 },
+    { cellX: 3, cellZ: 4 },
+    { cellX: 3, cellZ: 5 },
+    { cellX: 3, cellZ: 6 },
+    { cellX: 3, cellZ: 7 },
+  ]);
+  expect(current.riverCrossingCells).toEqual([
+    { cellX: 3, cellZ: 3 },
+    { cellX: 3, cellZ: 4 },
+  ]);
+  const initialArchers = current.units.find((unit) => unit.id === "attacker-archers");
+  expect(initialArchers).toMatchObject({
     formation: "line",
     formationFiles: 24,
     attackRangeMm: 25_000,
+    groundCover: "open",
+    rangedTargetDamageFactorMilli: 1_000,
+    engagementElevationDamageFactorMilli: null,
   });
+  expect(Number.isInteger(initialArchers?.terrainElevationMm)).toBe(true);
   expect(current.units.find((unit) => unit.id === "attacker-spears")?.attackRangeMm).toBe(1_500);
 
   // Select well away from the old 34 px anchor-only radius. This exercises the
@@ -77,8 +97,10 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
   await clickUnit(page, "defender-spears", { button: "right" });
   current = await status(page);
   for (const unitId of ["attacker-archers", "attacker-spears"]) {
-    expect(current.units.find((unit) => unit.id === unitId)?.engagementTarget)
-      .toBe("defender-spears");
+    const unit = current.units.find((candidate) => candidate.id === unitId);
+    expect(unit?.engagementTarget).toBe("defender-spears");
+    expect(unit?.engagementElevationDamageFactorMilli).toBeGreaterThanOrEqual(900);
+    expect(unit?.engagementElevationDamageFactorMilli).toBeLessThanOrEqual(1_100);
   }
 
   await page.keyboard.press("Space");
@@ -87,6 +109,7 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
     const unit = current.units.find((candidate) => candidate.id === unitId);
     expect(unit?.engagementTarget).toBeNull();
     expect(unit?.destination).toBeNull();
+    expect(unit?.engagementElevationDamageFactorMilli).toBeNull();
   }
 
   // Send a physical right-click order to the opposite bank. Core pathing must
@@ -141,6 +164,7 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
   await page.getByRole("button", { name: "Reset battle" }).click();
   current = await status(page);
   expect(current.selectedUnits).toEqual([]);
+  expect(current.terrainProfile).toBe("combatTerrainV4");
   const resetSpears = current.units.find((unit) => unit.id === "attacker-spears");
   expect(resetSpears).toMatchObject({
     xMm: 22_000,
@@ -148,6 +172,8 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
     formation: "line",
     formationFiles: 28,
     attackRangeMm: 1_500,
+    groundCover: "open",
+    rangedTargetDamageFactorMilli: 1_000,
   });
   await expect(page.locator("#battle-error")).toBeHidden();
 });
