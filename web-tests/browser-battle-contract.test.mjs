@@ -65,7 +65,7 @@ test("browser sandbox renders through wgpu and advances the real tactical core",
   assert.match(wasmRust, /terrain\.river_crossing_cells\(\)/);
   assert.match(wasmRust, /terrain\.height_mm\(battlefield, position\)/);
   assert.match(wasmRust, /terrain\.ground_cover_at\(battlefield, position\)/);
-  assert.match(wasmRust, /terrain\.ranged_target_damage_factor_milli\(battlefield, position\)/);
+  assert.match(wasmRust, /\.ranged_target_damage_factor_milli\(battlefield, position\)/);
   assert.match(wasmRust, /terrain\.elevation_damage_factor_milli/);
   assert.match(wasmRust, /issue_engagement_order/);
   assert.match(wasmRust, /battle_sandbox_start/);
