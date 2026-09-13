@@ -548,10 +548,8 @@ mod tests {
             COMBAT_FACTOR_BASE_MILLI
         );
         assert_eq!(
-            terrain.ranged_target_damage_factor_milli(
-                battlefield,
-                BattlePoint::new(30_000, 20_000),
-            ),
+            terrain
+                .ranged_target_damage_factor_milli(battlefield, BattlePoint::new(30_000, 20_000),),
             COMBAT_FACTOR_BASE_MILLI
         );
         assert_eq!(
