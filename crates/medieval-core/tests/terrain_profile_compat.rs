@@ -19,8 +19,9 @@ fn legacy_battle_documents_keep_height_only_terrain_semantics() {
     .unwrap();
     assert_eq!(
         battle.terrain().profile(),
-        TacticalTerrainProfile::ForestMovementV2
+        TacticalTerrainProfile::RiverCrossingsV3
     );
+    assert!(!battle.terrain().river_cells().is_empty());
 
     let mut legacy_document = serde_json::to_value(&battle).unwrap();
     legacy_document
@@ -35,4 +36,5 @@ fn legacy_battle_documents_keep_height_only_terrain_semantics() {
         TacticalTerrainProfile::HeightFoundationV1
     );
     assert!(restored.terrain().forest_cells().is_empty());
+    assert!(restored.terrain().river_cells().is_empty());
 }

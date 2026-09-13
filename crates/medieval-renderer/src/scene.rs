@@ -86,6 +86,8 @@ pub struct BattleRenderSnapshot {
     pub battlefield: FlatBattlefield,
     pub deployment_zones: [DeploymentZone; 2],
     pub forest_cells: Vec<TacticalTerrainCell>,
+    pub river_cells: Vec<TacticalTerrainCell>,
+    pub river_crossing_cells: Vec<TacticalTerrainCell>,
     pub camera: Camera3d,
     pub units: Vec<RenderUnitInstance>,
 }
@@ -129,6 +131,8 @@ impl BattleRenderSnapshot {
             battlefield,
             deployment_zones: battle.deployment_zones(),
             forest_cells: battle.terrain().forest_cells().to_vec(),
+            river_cells: battle.terrain().river_cells().to_vec(),
+            river_crossing_cells: battle.terrain().river_crossing_cells().to_vec(),
             camera: view.camera,
             units,
         }
@@ -203,6 +207,11 @@ mod tests {
         assert_eq!(first, BattleRenderSnapshot::project(&battle, &view));
         assert_eq!(first.deployment_zones, battle.deployment_zones());
         assert_eq!(first.forest_cells, battle.terrain().forest_cells().to_vec());
+        assert_eq!(first.river_cells, battle.terrain().river_cells().to_vec());
+        assert_eq!(
+            first.river_crossing_cells,
+            battle.terrain().river_crossing_cells().to_vec()
+        );
         assert_eq!(first.units[0].soldier_centers_mm.len(), 80);
         assert!(
             first.units[0]

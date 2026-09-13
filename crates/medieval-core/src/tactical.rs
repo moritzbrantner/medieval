@@ -294,6 +294,7 @@ impl TacticalBattle {
             });
         }
 
+        let terrain = TacticalTerrain::battlefield_foundation();
         let mut unit_ids = HashSet::with_capacity(units.len());
         for unit in &units {
             if unit.id.trim().is_empty() {
@@ -323,13 +324,19 @@ impl TacticalBattle {
                     position: unit.position,
                 });
             }
+            if !terrain.is_passable_at(battlefield, unit.position) {
+                return Err(TacticalError::UnitOnImpassableTerrain {
+                    unit_id: unit.id.clone(),
+                    position: unit.position,
+                });
+            }
         }
 
         units.sort_by(|left, right| left.id.cmp(&right.id));
         Ok(Self {
             tick: 0,
             battlefield,
-            terrain: TacticalTerrain::battlefield_foundation(),
+            terrain,
             units,
         })
     }
@@ -385,6 +392,15 @@ impl TacticalBattle {
 
         if !self.battlefield.contains(order.destination) {
             return Err(TacticalError::DestinationOutOfBounds {
+                unit_id: order.unit_id,
+                destination: order.destination,
+            });
+        }
+        if !self
+            .terrain
+            .is_passable_at(self.battlefield, order.destination)
+        {
+            return Err(TacticalError::DestinationImpassable {
                 unit_id: order.unit_id,
                 destination: order.destination,
             });
@@ -534,7 +550,11 @@ impl TacticalBattle {
             unit.position,
             base_movement_speed,
         );
-        let next = move_point_toward(unit.position, destination, movement_speed);
+        let waypoint =
+            self.terrain()
+                .movement_waypoint(self.battlefield, unit.position, destination);
+        let next = move_point_toward(unit.position, waypoint, movement_speed);
+        debug_assert!(self.terrain().is_passable_at(self.battlefield, next));
         self.units[index].position = next;
         if self.units[index].destination == Some(destination) && next == destination {
             self.units[index].destination = None;
@@ -568,13 +588,18 @@ impl TacticalBattle {
             unit.position,
             unit.speed_mm_per_tick.saturating_mul(2),
         );
-        let next = move_point_away(
+        let desired = move_point_away(
             unit.position,
             enemy.position,
             route_speed,
             self.battlefield,
             unit.side,
         );
+        let waypoint = self
+            .terrain()
+            .movement_waypoint(self.battlefield, unit.position, desired);
+        let next = move_point_toward(unit.position, waypoint, route_speed);
+        debug_assert!(self.terrain().is_passable_at(self.battlefield, next));
         self.units[index].position = next;
         if next != unit.position {
             self.units[index].fatigue = self.units[index]
@@ -803,6 +828,10 @@ pub enum TacticalError {
         unit_id: String,
         position: BattlePoint,
     },
+    UnitOnImpassableTerrain {
+        unit_id: String,
+        position: BattlePoint,
+    },
     UnitOutsideDeploymentZone {
         unit_id: String,
         side: BattleSide,
@@ -813,6 +842,10 @@ pub enum TacticalError {
         unit_id: String,
     },
     DestinationOutOfBounds {
+        unit_id: String,
+        destination: BattlePoint,
+    },
+    DestinationImpassable {
         unit_id: String,
         destination: BattlePoint,
     },
@@ -856,6 +889,11 @@ impl fmt::Display for TacticalError {
                 "tactical unit {unit_id} starts outside the battlefield at ({}, {}) mm",
                 position.x_mm, position.y_mm
             ),
+            Self::UnitOnImpassableTerrain { unit_id, position } => write!(
+                formatter,
+                "tactical unit {unit_id} starts on impassable terrain at ({}, {}) mm",
+                position.x_mm, position.y_mm
+            ),
             Self::UnitOutsideDeploymentZone {
                 unit_id,
                 side,
@@ -877,6 +915,14 @@ impl fmt::Display for TacticalError {
             } => write!(
                 formatter,
                 "movement order for {unit_id} leaves the battlefield at ({}, {}) mm",
+                destination.x_mm, destination.y_mm
+            ),
+            Self::DestinationImpassable {
+                unit_id,
+                destination,
+            } => write!(
+                formatter,
+                "movement order for {unit_id} targets impassable terrain at ({}, {}) mm",
                 destination.x_mm, destination.y_mm
             ),
             Self::FriendlyEngagement {
@@ -1236,6 +1282,23 @@ mod tests {
     }
 
     #[test]
+    fn setup_rejects_units_on_blocked_river_cells() {
+        let battle = TacticalBattle::new(
+            FlatBattlefield::new(80_000, 80_000),
+            vec![sample_unit(
+                "river-unit",
+                BattleSide::Attacker,
+                BattlePoint::new(35_000, 15_000),
+                Formation::Line { files: 10 },
+            )],
+        );
+        assert!(matches!(
+            battle,
+            Err(TacticalError::UnitOnImpassableTerrain { .. })
+        ));
+    }
+
+    #[test]
     fn deployment_validation_accepts_own_back_thirds_and_rejects_neutral_setup() {
         let battlefield = FlatBattlefield::new(90_000, 60_000);
         let deployed = TacticalBattle::deploy(
@@ -1282,7 +1345,7 @@ mod tests {
     #[test]
     fn forest_ground_cover_reduces_tick_movement_without_changing_orders() {
         let battlefield = FlatBattlefield::new(80_000, 80_000);
-        let destination = BattlePoint::new(35_000, 15_000);
+        let destination = BattlePoint::new(29_000, 15_000);
         let mut forest = TacticalBattle::new(
             battlefield,
             vec![sample_unit(
@@ -1349,6 +1412,98 @@ mod tests {
             Err(TacticalError::DestinationOutOfBounds { .. })
         ));
         assert_eq!(battle, before);
+
+        assert!(matches!(
+            battle.issue_move_order(MovementOrder {
+                unit_id: "attacker-spears".into(),
+                destination: BattlePoint::new(130_000, 25_000),
+            }),
+            Err(TacticalError::DestinationImpassable { .. })
+        ));
+        assert_eq!(battle, before);
+    }
+
+    #[test]
+    fn move_orders_route_through_crossing_without_entering_blocked_water() {
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let destination = BattlePoint::new(70_000, 10_000);
+        let mut battle = TacticalBattle::new(
+            battlefield,
+            vec![sample_unit(
+                "crossing",
+                BattleSide::Attacker,
+                BattlePoint::new(10_000, 10_000),
+                Formation::Line { files: 10 },
+            )],
+        )
+        .unwrap();
+        battle
+            .issue_move_order(MovementOrder {
+                unit_id: "crossing".into(),
+                destination,
+            })
+            .unwrap();
+
+        let mut visited_crossing = false;
+        for _ in 0..200 {
+            battle.advance_ticks(1);
+            let position = unit(&battle, "crossing").position();
+            assert!(battle.terrain().is_passable_at(battlefield, position));
+            if battle.terrain().river_crossing_cells().iter().any(|cell| {
+                battle
+                    .terrain()
+                    .cell_bounds_mm(battlefield, cell.cell_x, cell.cell_z)
+                    .is_some_and(|(x0, x1, z0, z1)| {
+                        position.x_mm >= x0
+                            && position.x_mm < x1
+                            && position.y_mm >= z0
+                            && position.y_mm < z1
+                    })
+            }) {
+                visited_crossing = true;
+            }
+            if unit(&battle, "crossing").destination().is_none() {
+                break;
+            }
+        }
+        assert!(visited_crossing);
+        assert_eq!(unit(&battle, "crossing").position(), destination);
+    }
+
+    #[test]
+    fn engagement_across_river_uses_the_same_crossing_path() {
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let mut battle = TacticalBattle::new(
+            battlefield,
+            vec![
+                sample_unit(
+                    "attacker",
+                    BattleSide::Attacker,
+                    BattlePoint::new(10_000, 10_000),
+                    Formation::Line { files: 10 },
+                ),
+                sample_unit(
+                    "defender",
+                    BattleSide::Defender,
+                    BattlePoint::new(70_000, 10_000),
+                    Formation::Line { files: 10 },
+                ),
+            ],
+        )
+        .unwrap();
+        engage(&mut battle, "attacker", "defender");
+
+        let mut visited_crossing = false;
+        for _ in 0..100 {
+            battle.advance_ticks(1);
+            let position = unit(&battle, "attacker").position();
+            assert!(battle.terrain().is_passable_at(battlefield, position));
+            if position.x_mm >= 30_000 && position.x_mm < 40_000 && position.y_mm >= 30_000 {
+                visited_crossing = true;
+                break;
+            }
+        }
+        assert!(visited_crossing);
     }
 
     #[test]
@@ -1430,7 +1585,7 @@ mod tests {
         let mut second = sample_battle();
         let order = MovementOrder {
             unit_id: "attacker-spears".into(),
-            destination: BattlePoint::new(120_000, 140_000),
+            destination: BattlePoint::new(100_000, 140_000),
         };
         first.issue_move_order(order.clone()).unwrap();
         second.issue_move_order(order).unwrap();
@@ -1474,6 +1629,7 @@ mod tests {
             crate::terrain::TacticalTerrainProfile::HeightFoundationV1
         );
         assert!(decoded.terrain().forest_cells().is_empty());
+        assert!(decoded.terrain().river_cells().is_empty());
     }
 
     #[test]
@@ -1666,6 +1822,7 @@ mod tests {
         ));
         battle.advance_ticks(1);
         let after = unit(&battle, "defender").position();
+        assert!(battle.terrain().is_passable_at(battle.battlefield(), after));
         assert!(
             point_distance_squared(after, BattlePoint::new(24_500, 25_000))
                 > point_distance_squared(before, BattlePoint::new(24_500, 25_000))
