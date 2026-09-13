@@ -685,12 +685,7 @@ impl TacticalBattle {
             ) {
                 continue;
             }
-            let losses = ranged_casualties(
-                attacker,
-                target,
-                self.terrain,
-                self.battlefield,
-            );
+            let losses = ranged_casualties(attacker, target, self.terrain, self.battlefield);
             if losses > 0 {
                 *casualties.entry(target.id.clone()).or_default() += u32::from(losses);
                 engaged_units.insert(attacker.id.clone());
@@ -978,13 +973,11 @@ fn terrain_adjusted_frontage(
     terrain: TacticalTerrain,
     battlefield: FlatBattlefield,
 ) -> u32 {
-    effective_frontage
-        .saturating_mul(terrain.elevation_damage_factor_milli(
-            battlefield,
-            attacker.position,
-            defender.position,
-        ))
-        / COMBAT_FACTOR_BASE_MILLI
+    effective_frontage.saturating_mul(terrain.elevation_damage_factor_milli(
+        battlefield,
+        attacker.position,
+        defender.position,
+    )) / COMBAT_FACTOR_BASE_MILLI
 }
 
 fn melee_casualties(
