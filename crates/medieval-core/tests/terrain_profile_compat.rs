@@ -19,7 +19,7 @@ fn legacy_battle_documents_keep_height_only_terrain_semantics() {
     .unwrap();
     assert_eq!(
         battle.terrain().profile(),
-        TacticalTerrainProfile::RiverCrossingsV3
+        TacticalTerrainProfile::CombatTerrainV4
     );
     assert!(!battle.terrain().river_cells().is_empty());
 
