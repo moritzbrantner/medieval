@@ -2,7 +2,8 @@ use std::{cell::RefCell, cmp::Ordering, collections::BTreeSet};
 
 use medieval_core::{
     BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation,
-    TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalTerrainCell, TacticalUnit,
+    TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalGroundCover, TacticalTerrainCell,
+    TacticalTerrainProfile, TacticalUnit,
 };
 use medieval_renderer::{BattleRenderSnapshot, GpuBattleRenderer};
 use serde::Serialize;
@@ -38,7 +39,10 @@ struct SandboxStatus {
     outcome: Option<&'static str>,
     selected_units: Vec<String>,
     deployment_zones: [DeploymentZone; 2],
+    terrain_profile: TacticalTerrainProfile,
     forest_cells: Vec<TacticalTerrainCell>,
+    river_cells: Vec<TacticalTerrainCell>,
+    river_crossing_cells: Vec<TacticalTerrainCell>,
     camera: CameraStatus,
     units: Vec<UnitStatus>,
 }
@@ -76,6 +80,10 @@ struct UnitStatus {
     destination: Option<BattlePoint>,
     x_mm: u32,
     y_mm: u32,
+    terrain_elevation_mm: u32,
+    ground_cover: TacticalGroundCover,
+    ranged_target_damage_factor_milli: u32,
+    engagement_elevation_damage_factor_milli: Option<u32>,
 }
 
 struct BrowserSandbox {
@@ -342,12 +350,30 @@ impl BrowserSandbox {
             .filter(|unit| unit.selected)
             .map(|unit| unit.unit_id.as_str())
             .collect::<BTreeSet<_>>();
+        let terrain = self.battle.terrain();
+        let battlefield = self.battle.battlefield();
         let units = self
             .battle
             .units()
             .iter()
             .map(|unit| {
                 let (formation, formation_files) = formation_status(unit.formation());
+                let position = unit.position();
+                let engagement_elevation_damage_factor_milli = unit
+                    .engagement_target()
+                    .and_then(|target_id| {
+                        self.battle
+                            .units()
+                            .iter()
+                            .find(|target| target.id() == target_id)
+                    })
+                    .map(|target| {
+                        terrain.elevation_damage_factor_milli(
+                            battlefield,
+                            position,
+                            target.position(),
+                        )
+                    });
                 UnitStatus {
                     id: unit.id().to_owned(),
                     side: side_name(unit.side()),
@@ -362,8 +388,13 @@ impl BrowserSandbox {
                     selected: selected.contains(unit.id()),
                     engagement_target: unit.engagement_target().map(str::to_owned),
                     destination: unit.destination(),
-                    x_mm: unit.position().x_mm,
-                    y_mm: unit.position().y_mm,
+                    x_mm: position.x_mm,
+                    y_mm: position.y_mm,
+                    terrain_elevation_mm: terrain.height_mm(battlefield, position),
+                    ground_cover: terrain.ground_cover_at(battlefield, position),
+                    ranged_target_damage_factor_milli: terrain
+                        .ranged_target_damage_factor_milli(battlefield, position),
+                    engagement_elevation_damage_factor_milli,
                 }
             })
             .collect();
@@ -373,7 +404,10 @@ impl BrowserSandbox {
             outcome: self.outcome(),
             selected_units: selected.into_iter().map(str::to_owned).collect(),
             deployment_zones: self.battle.deployment_zones(),
-            forest_cells: self.battle.terrain().forest_cells().to_vec(),
+            terrain_profile: terrain.profile(),
+            forest_cells: terrain.forest_cells().to_vec(),
+            river_cells: terrain.river_cells().to_vec(),
+            river_crossing_cells: terrain.river_crossing_cells().to_vec(),
             camera: CameraStatus {
                 target_x_mm: snapshot.camera.target_x_mm(),
                 target_z_mm: snapshot.camera.target_z_mm(),

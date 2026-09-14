@@ -60,8 +60,13 @@ test("browser sandbox renders through wgpu and advances the real tactical core",
   assert.match(wasmRust, /TacticalControls/);
   assert.match(wasmRust, /TacticalBattle::deploy/);
   assert.match(wasmRust, /deployment_zones/);
-  assert.match(wasmRust, /forest_cells/);
-  assert.match(wasmRust, /battle\.terrain\(\)\.forest_cells\(\)/);
+  assert.match(wasmRust, /terrain\.forest_cells\(\)/);
+  assert.match(wasmRust, /terrain\.river_cells\(\)/);
+  assert.match(wasmRust, /terrain\.river_crossing_cells\(\)/);
+  assert.match(wasmRust, /terrain\.height_mm\(battlefield, position\)/);
+  assert.match(wasmRust, /terrain\.ground_cover_at\(battlefield, position\)/);
+  assert.match(wasmRust, /\.ranged_target_damage_factor_milli\(battlefield, position\)/);
+  assert.match(wasmRust, /terrain\.elevation_damage_factor_milli/);
   assert.match(wasmRust, /issue_engagement_order/);
   assert.match(wasmRust, /battle_sandbox_start/);
   assert.match(wasmRust, /battle_sandbox_pointer/);
@@ -77,6 +82,14 @@ test("river legality and chokepoint routing stay core-owned while the renderer o
   assert.match(rendererScene, /river_cells: Vec<TacticalTerrainCell>/);
   assert.match(rendererScene, /river_crossing_cells: Vec<TacticalTerrainCell>/);
   assert.doesNotMatch(rendererScene, /fn movement_waypoint|fn cell_is_passable/);
+});
+
+test("terrain combat modifiers stay Rust-owned while browser status only projects them", () => {
+  assert.match(terrainCore, /CombatTerrainV4/);
+  assert.match(terrainCore, /fn elevation_damage_factor_milli/);
+  assert.match(terrainCore, /fn ranged_target_damage_factor_milli/);
+  assert.match(tacticalCore, /terrain_adjusted_frontage/);
+  assert.doesNotMatch(script, /FOREST_RANGED_DAMAGE_FACTOR|COMBAT_FACTOR_BASE|elevation_damage_factor/);
 });
 
 test("native and browser runtimes consume one tactical control implementation", () => {
