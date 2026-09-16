@@ -6,8 +6,8 @@ use std::{
 use physics_engine::{Collider, ColliderShape, Vec3i, collider_contact};
 use serde::{Deserialize, Serialize};
 
-use crate::deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
 use crate::deployment::siege::{SiegeBattleState, SiegeGateState};
+use crate::deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
 use crate::terrain::{COMBAT_FACTOR_BASE_MILLI, TacticalTerrain};
 
 pub const TACTICAL_TICKS_PER_SECOND: u32 = 20;
@@ -366,7 +366,7 @@ impl TacticalBattle {
         Ok(battle)
     }
 
-    pub(crate) fn deploy_siege(
+    pub fn deploy_siege(
         battlefield: FlatBattlefield,
         units: Vec<TacticalUnit>,
     ) -> Result<Self, TacticalError> {
@@ -425,10 +425,19 @@ impl TacticalBattle {
         &self.units
     }
 
-    pub(crate) fn set_siege_gate_state(
-        &mut self,
-        gate_state: SiegeGateState,
-    ) -> Result<(), TacticalError> {
+    pub fn open_siege_gate(&mut self) -> Result<(), TacticalError> {
+        self.set_siege_gate_state(SiegeGateState::Open)
+    }
+
+    pub fn close_siege_gate(&mut self) -> Result<(), TacticalError> {
+        self.set_siege_gate_state(SiegeGateState::Closed)
+    }
+
+    pub fn destroy_siege_gate(&mut self) -> Result<(), TacticalError> {
+        self.set_siege_gate_state(SiegeGateState::Destroyed)
+    }
+
+    fn set_siege_gate_state(&mut self, gate_state: SiegeGateState) -> Result<(), TacticalError> {
         let Some(siege) = &mut self.siege else {
             return Err(TacticalError::NotSiegeBattle);
         };
@@ -1552,7 +1561,7 @@ mod tests {
         assert!(closed_position.x_mm < gate.min_x_mm);
         assert!(unit(&battle, "attacker").destination().is_some());
 
-        battle.set_siege_gate_state(SiegeGateState::Open).unwrap();
+        battle.open_siege_gate().unwrap();
         battle.advance_ticks(200);
         assert_eq!(unit(&battle, "attacker").position(), destination);
         assert!(unit(&battle, "attacker").destination().is_none());
@@ -1561,7 +1570,8 @@ mod tests {
     #[test]
     fn siege_capture_advances_on_combat_pulses_and_contention_fails_closed() {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
-        let siege = SiegeBattleState::test_siege(battlefield).with_gate_state(SiegeGateState::Open);
+        let mut siege = SiegeBattleState::test_siege(battlefield);
+        siege.gate_state = SiegeGateState::Open;
         let point = siege.layout.capture_point.center;
         let mut uncontested = TacticalBattle::new(
             battlefield,
