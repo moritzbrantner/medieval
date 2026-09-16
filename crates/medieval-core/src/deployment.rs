@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::tactical::{BattlePoint, BattleSide, FlatBattlefield};
 
+#[path = "siege.rs"]
+pub(crate) mod siege;
+
 const DEPLOYMENT_ZONE_DIVISOR: u32 = 3;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
