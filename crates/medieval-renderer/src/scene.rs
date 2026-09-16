@@ -333,12 +333,15 @@ mod tests {
             .siege
             .expect("siege battle projects siege state");
         assert_eq!(closed.wall_segments.len(), 2);
-        assert_eq!(closed.gate, RenderSiegeArea {
-            min_x_mm: 49_000,
-            max_x_mm: 51_000,
-            min_y_mm: 45_000,
-            max_y_mm: 55_000,
-        });
+        assert_eq!(
+            closed.gate,
+            RenderSiegeArea {
+                min_x_mm: 49_000,
+                max_x_mm: 51_000,
+                min_y_mm: 45_000,
+                max_y_mm: 55_000,
+            }
+        );
         assert_eq!(closed.towers.len(), 4);
         assert_eq!(closed.capture.center, BattlePoint::new(80_000, 50_000));
         assert_eq!(closed.capture.progress, 0);
