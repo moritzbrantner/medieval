@@ -42,16 +42,10 @@ fn run_battle() -> TacticalBattle {
         .expect("performance fixture must remain a valid deployed battle");
     for index in 0..UNITS_PER_SIDE {
         battle
-            .issue_engagement_order(
-                &format!("attacker-{index}"),
-                &format!("defender-{index}"),
-            )
+            .issue_engagement_order(&format!("attacker-{index}"), &format!("defender-{index}"))
             .expect("attacker engagement must remain valid");
         battle
-            .issue_engagement_order(
-                &format!("defender-{index}"),
-                &format!("attacker-{index}"),
-            )
+            .issue_engagement_order(&format!("defender-{index}"), &format!("attacker-{index}"))
             .expect("defender engagement must remain valid");
     }
     battle.advance_ticks(TICKS);
@@ -67,7 +61,10 @@ fn main() {
         let battle = run_battle();
         elapsed_ns.push(started.elapsed().as_nanos());
         if let Some(reference) = &expected {
-            assert_eq!(&battle, reference, "medieval tactical benchmark became nondeterministic");
+            assert_eq!(
+                &battle, reference,
+                "medieval tactical benchmark became nondeterministic"
+            );
         } else {
             expected = Some(battle);
         }
@@ -75,7 +72,11 @@ fn main() {
 
     elapsed_ns.sort_unstable();
     let battle = expected.expect("at least one run");
-    let surviving = battle.units().iter().filter(|unit| !unit.is_destroyed()).count();
+    let surviving = battle
+        .units()
+        .iter()
+        .filter(|unit| !unit.is_destroyed())
+        .count();
     println!(
         "scenario=tactical-engagement units={} ticks={TICKS} runs={RUNS} median_elapsed_ns={} surviving_units={} deterministic=true timing=advisory-shared-runner",
         UNITS_PER_SIDE * 2,
