@@ -7,7 +7,7 @@ use medieval_core::{
 use wgpu::util::DeviceExt;
 
 use crate::{
-    BattleRenderSnapshot, Camera3d,
+    BattleRenderSnapshot, Camera3d, RenderSiegeArea, RenderSiegeCapture, RenderSiegeTower,
     terrain::{
         TERRAIN_GRID_SIZE, terrain_cell_bounds_mm, terrain_cell_height_mm, terrain_height_mm,
     },
@@ -22,6 +22,11 @@ const DEPLOYMENT_BOUNDARY_HEIGHT_MM: f32 = 40.0;
 const FOREST_TREES_PER_CELL: u32 = 4;
 const RIVER_SURFACE_HEIGHT_MM: f32 = 30.0;
 const CROSSING_SURFACE_HEIGHT_MM: f32 = 90.0;
+const SIEGE_WALL_HEIGHT_MM: f32 = 3_600.0;
+const SIEGE_GATE_OPEN_HEIGHT_MM: f32 = 220.0;
+const SIEGE_TOWER_HEIGHT_MM: f32 = 5_000.0;
+const SIEGE_CAPTURE_BASE_HEIGHT_MM: f32 = 180.0;
+const SIEGE_CAPTURE_PROGRESS_HEIGHT_SCALE: f32 = 2.0;
 const CUBE_VERTEX_COUNT: u32 = 36;
 const INITIAL_INSTANCE_CAPACITY: usize = 256;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
@@ -162,6 +167,76 @@ impl GpuWorldInstance {
             ],
             visual: [0.0; 4],
         })
+    }
+
+    fn siege_area(
+        area: RenderSiegeArea,
+        battlefield: FlatBattlefield,
+        height_mm: f32,
+        material: f32,
+    ) -> Self {
+        let center = area.center();
+        let terrain_y = terrain_height_mm(battlefield, center) as f32;
+        let half_height = height_mm / 2.0;
+        Self {
+            center_material: [
+                center.x_mm as f32,
+                terrain_y + half_height,
+                center.y_mm as f32,
+                material,
+            ],
+            half_extent_routed: [
+                (area.max_x_mm.saturating_sub(area.min_x_mm).max(1)) as f32 / 2.0,
+                half_height,
+                (area.max_y_mm.saturating_sub(area.min_y_mm).max(1)) as f32 / 2.0,
+                0.0,
+            ],
+            visual: [0.0; 4],
+        }
+    }
+
+    fn siege_tower(tower: RenderSiegeTower, battlefield: FlatBattlefield) -> Self {
+        let terrain_y = terrain_height_mm(battlefield, tower.center) as f32;
+        let half_height = SIEGE_TOWER_HEIGHT_MM / 2.0;
+        Self {
+            center_material: [
+                tower.center.x_mm as f32,
+                terrain_y + half_height,
+                tower.center.y_mm as f32,
+                11.0,
+            ],
+            half_extent_routed: [
+                tower.radius_mm as f32,
+                half_height,
+                tower.radius_mm as f32,
+                0.0,
+            ],
+            visual: [0.0; 4],
+        }
+    }
+
+    fn siege_capture(capture: RenderSiegeCapture, battlefield: FlatBattlefield) -> Self {
+        let terrain_y = terrain_height_mm(battlefield, capture.center) as f32;
+        let height = SIEGE_CAPTURE_BASE_HEIGHT_MM
+            + f32::from(capture.progress) * SIEGE_CAPTURE_PROGRESS_HEIGHT_SCALE;
+        let half_height = height / 2.0;
+        let half_width = (capture.radius_mm as f32 * 0.16).clamp(240.0, 900.0);
+        let side = capture.captured_by.or(capture.capturing_side);
+        let material = match side {
+            None => 12.0,
+            Some(BattleSide::Attacker) => 13.0,
+            Some(BattleSide::Defender) => 14.0,
+        };
+        Self {
+            center_material: [
+                capture.center.x_mm as f32,
+                terrain_y + half_height,
+                capture.center.y_mm as f32,
+                material,
+            ],
+            half_extent_routed: [half_width, half_height, half_width, 0.0],
+            visual: [0.0; 4],
+        }
     }
 
     fn soldier(
@@ -419,8 +494,14 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
     let deployment_capacity = (2 * TERRAIN_GRID_SIZE) as usize;
     let forest_capacity = snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize;
     let river_capacity = snapshot.river_cells.len();
+    let siege_capacity = usize::from(snapshot.siege.is_some()) * 8;
     let mut instances = Vec::with_capacity(
-        terrain_capacity + deployment_capacity + forest_capacity + river_capacity + soldier_count,
+        terrain_capacity
+            + deployment_capacity
+            + forest_capacity
+            + river_capacity
+            + siege_capacity
+            + soldier_count,
     );
     for cell_z in 0..TERRAIN_GRID_SIZE {
         for cell_x in 0..TERRAIN_GRID_SIZE {
@@ -453,6 +534,31 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
                 instances.push(marker);
             }
         }
+    }
+    if let Some(siege) = snapshot.siege {
+        instances.extend(siege.wall_segments.into_iter().map(|wall| {
+            GpuWorldInstance::siege_area(wall, snapshot.battlefield, SIEGE_WALL_HEIGHT_MM, 8.0)
+        }));
+        instances.push(GpuWorldInstance::siege_area(
+            siege.gate,
+            snapshot.battlefield,
+            if siege.gate_traversable {
+                SIEGE_GATE_OPEN_HEIGHT_MM
+            } else {
+                SIEGE_WALL_HEIGHT_MM
+            },
+            if siege.gate_traversable { 10.0 } else { 9.0 },
+        ));
+        instances.extend(
+            siege
+                .towers
+                .into_iter()
+                .map(|tower| GpuWorldInstance::siege_tower(tower, snapshot.battlefield)),
+        );
+        instances.push(GpuWorldInstance::siege_capture(
+            siege.capture,
+            snapshot.battlefield,
+        ));
     }
     for unit in &snapshot.units {
         instances.extend(unit.soldier_centers_mm.iter().map(|center| {
@@ -574,6 +680,79 @@ mod tests {
                 + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
                 + snapshot.river_cells.len()
                 + 80
+        );
+    }
+
+    #[test]
+    fn siege_batch_adds_core_projected_walls_gate_towers_and_capture_marker() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let mut battle = TacticalBattle::deploy_siege(
+            battlefield,
+            vec![
+                TacticalUnit::new(
+                    "attacker",
+                    BattleSide::Attacker,
+                    1,
+                    BattlePoint::new(20_000, 50_000),
+                    Formation::Line { files: 1 },
+                    1_000,
+                ),
+                TacticalUnit::new(
+                    "defender",
+                    BattleSide::Defender,
+                    1,
+                    BattlePoint::new(80_000, 50_000),
+                    Formation::Line { files: 1 },
+                    1_000,
+                ),
+            ],
+        )
+        .unwrap();
+        let view = RenderViewState::fit(battlefield);
+        let snapshot = BattleRenderSnapshot::capture(&battle, &view);
+        let base_count = (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE + 2 * TERRAIN_GRID_SIZE) as usize
+            + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
+            + snapshot.river_cells.len()
+            + 2;
+        let instances = gpu_instances(&snapshot);
+        assert_eq!(instances.len(), base_count + 8);
+        assert_eq!(
+            instances
+                .iter()
+                .filter(|instance| instance.center_material[3] == 8.0)
+                .count(),
+            2
+        );
+        assert_eq!(
+            instances
+                .iter()
+                .filter(|instance| instance.center_material[3] == 9.0)
+                .count(),
+            1
+        );
+        assert_eq!(
+            instances
+                .iter()
+                .filter(|instance| instance.center_material[3] == 11.0)
+                .count(),
+            4
+        );
+        assert_eq!(
+            instances
+                .iter()
+                .filter(|instance| instance.center_material[3] == 12.0)
+                .count(),
+            1
+        );
+
+        battle.open_siege_gate().unwrap();
+        let open = BattleRenderSnapshot::capture(&battle, &view);
+        assert_eq!(
+            gpu_instances(&open)
+                .iter()
+                .filter(|instance| instance.center_material[3] == 10.0)
+                .count(),
+            1
         );
     }
 
