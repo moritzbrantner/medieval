@@ -86,7 +86,21 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     var color = vec3<f32>(0.69, 0.18, 0.12);
-    if input.material > 6.5 {
+    if input.material > 13.5 {
+        color = vec3<f32>(0.18, 0.45, 0.92);
+    } else if input.material > 12.5 {
+        color = vec3<f32>(0.86, 0.22, 0.15);
+    } else if input.material > 11.5 {
+        color = vec3<f32>(0.82, 0.68, 0.24);
+    } else if input.material > 10.5 {
+        color = vec3<f32>(0.35, 0.32, 0.28);
+    } else if input.material > 9.5 {
+        color = vec3<f32>(0.42, 0.30, 0.18);
+    } else if input.material > 8.5 {
+        color = vec3<f32>(0.25, 0.20, 0.15);
+    } else if input.material > 7.5 {
+        color = vec3<f32>(0.48, 0.45, 0.40);
+    } else if input.material > 6.5 {
         color = vec3<f32>(0.46, 0.32, 0.16);
     } else if input.material > 5.5 {
         color = vec3<f32>(0.10, 0.34, 0.58);
