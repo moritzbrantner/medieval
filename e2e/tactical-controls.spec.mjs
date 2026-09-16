@@ -32,9 +32,25 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
 
   let current = await status(page);
   expect(current.deploymentZones).toEqual([
-    { side: "attacker", minXMm: 0, maxXMm: 33_333, minYMm: 0, maxYMm: 100_000 },
-    { side: "defender", minXMm: 66_667, maxXMm: 100_000, minYMm: 0, maxYMm: 100_000 },
+    { side: "attacker", minXMm: 0, maxXMm: 35_000, minYMm: 0, maxYMm: 100_000 },
+    { side: "defender", minXMm: 65_000, maxXMm: 100_000, minYMm: 0, maxYMm: 100_000 },
   ]);
+  expect(current.siege).toMatchObject({
+    gateState: "closed",
+    layout: {
+      wallSegments: [
+        { minXMm: 49_000, maxXMm: 51_000, minYMm: 0, maxYMm: 44_999 },
+        { minXMm: 49_000, maxXMm: 51_000, minYMm: 55_001, maxYMm: 100_000 },
+      ],
+      gate: { minXMm: 49_000, maxXMm: 51_000, minYMm: 45_000, maxYMm: 55_000 },
+      capturePoint: {
+        center: { xMm: 80_000, yMm: 50_000 },
+        radiusMm: 5_000,
+      },
+    },
+    capture: { capturingSide: null, progress: 0, capturedBy: null },
+  });
+  expect(current.siege.layout.towers).toHaveLength(4);
   expect(current.terrainProfile).toBe("combatTerrainV4");
   expect(current.forestCells).toEqual([
     { cellX: 2, cellZ: 1 },
@@ -113,7 +129,8 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
   }
 
   // Send a physical right-click order to the opposite bank. Core pathing must
-  // preserve the final target while routing the unit through the explicit ford.
+  // preserve the final target while routing the unit through the explicit ford
+  // and toward the still-closed authoritative siege gate.
   await clickUnit(page, "attacker-spears");
   const ground = await canvasPoint(page, "groundViewport", 70_000, 10_000);
   await page.mouse.click(ground.x, ground.y, { button: "right" });
@@ -160,11 +177,16 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
   expect(crossingSpears?.destination).not.toBeNull();
   expect(Math.abs(crossingSpears.destination.xMm - 70_000)).toBeLessThanOrEqual(2);
   expect(Math.abs(crossingSpears.destination.yMm - 10_000)).toBeLessThanOrEqual(2);
+  expect(current.siege.gateState).toBe("closed");
 
   await page.getByRole("button", { name: "Reset battle" }).click();
   current = await status(page);
   expect(current.selectedUnits).toEqual([]);
   expect(current.terrainProfile).toBe("combatTerrainV4");
+  expect(current.siege).toMatchObject({
+    gateState: "closed",
+    capture: { capturingSide: null, progress: 0, capturedBy: null },
+  });
   const resetSpears = current.units.find((unit) => unit.id === "attacker-spears");
   expect(resetSpears).toMatchObject({
     xMm: 22_000,
