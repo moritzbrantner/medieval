@@ -7,6 +7,7 @@ use physics_engine::{Collider, ColliderShape, Vec3i, collider_contact};
 use serde::{Deserialize, Serialize};
 
 use crate::deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
+use crate::deployment::siege::{SiegeBattleState, SiegeGateState};
 use crate::terrain::{COMBAT_FACTOR_BASE_MILLI, TacticalTerrain};
 
 pub const TACTICAL_TICKS_PER_SECOND: u32 = 20;
@@ -257,6 +258,8 @@ pub struct TacticalBattle {
     tick: u64,
     battlefield: FlatBattlefield,
     terrain: TacticalTerrain,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    siege: Option<SiegeBattleState>,
     units: Vec<TacticalUnit>,
 }
 
@@ -267,6 +270,8 @@ struct TacticalBattleWire {
     battlefield: FlatBattlefield,
     #[serde(default)]
     terrain: TacticalTerrain,
+    #[serde(default)]
+    siege: Option<SiegeBattleState>,
     units: Vec<TacticalUnit>,
 }
 
@@ -277,6 +282,7 @@ impl From<TacticalBattleWire> for TacticalBattle {
             tick: wire.tick,
             battlefield: wire.battlefield,
             terrain: wire.terrain,
+            siege: wire.siege,
             units: wire.units,
         }
     }
@@ -337,6 +343,7 @@ impl TacticalBattle {
             tick: 0,
             battlefield,
             terrain,
+            siege: None,
             units,
         })
     }
@@ -359,9 +366,43 @@ impl TacticalBattle {
         Ok(battle)
     }
 
+    pub(crate) fn deploy_siege(
+        battlefield: FlatBattlefield,
+        units: Vec<TacticalUnit>,
+    ) -> Result<Self, TacticalError> {
+        let mut battle = Self::new(battlefield, units)?;
+        let siege = SiegeBattleState::test_siege(battlefield);
+        for unit in &battle.units {
+            let zone = siege
+                .layout
+                .deployment_zones
+                .iter()
+                .find(|zone| zone.side == unit.side)
+                .expect("deterministic siege layout contains both deployment sides");
+            if !zone.contains(unit.position) {
+                return Err(TacticalError::UnitOutsideDeploymentZone {
+                    unit_id: unit.id.clone(),
+                    side: unit.side,
+                    position: unit.position,
+                });
+            }
+            if !siege.is_passable_at(unit.position) {
+                return Err(TacticalError::UnitOnImpassableSiegeStructure {
+                    unit_id: unit.id.clone(),
+                    position: unit.position,
+                });
+            }
+        }
+        battle.siege = Some(siege);
+        Ok(battle)
+    }
+
     #[must_use]
-    pub const fn deployment_zones(&self) -> [DeploymentZone; 2] {
-        standard_deployment_zones(self.battlefield)
+    pub fn deployment_zones(&self) -> [DeploymentZone; 2] {
+        self.siege.map_or_else(
+            || standard_deployment_zones(self.battlefield),
+            |siege| siege.layout.deployment_zones,
+        )
     }
 
     #[must_use]
@@ -384,6 +425,17 @@ impl TacticalBattle {
         &self.units
     }
 
+    pub(crate) fn set_siege_gate_state(
+        &mut self,
+        gate_state: SiegeGateState,
+    ) -> Result<(), TacticalError> {
+        let Some(siege) = &mut self.siege else {
+            return Err(TacticalError::NotSiegeBattle);
+        };
+        siege.gate_state = gate_state;
+        Ok(())
+    }
+
     pub fn issue_move_order(&mut self, order: MovementOrder) -> Result<(), TacticalError> {
         let unit_index = self
             .unit_index(&order.unit_id)
@@ -396,10 +448,7 @@ impl TacticalBattle {
                 destination: order.destination,
             });
         }
-        if !self
-            .terrain
-            .is_passable_at(self.battlefield, order.destination)
-        {
+        if !self.is_passable_at(order.destination) {
             return Err(TacticalError::DestinationImpassable {
                 unit_id: order.unit_id,
                 destination: order.destination,
@@ -466,6 +515,9 @@ impl TacticalBattle {
                 .is_multiple_of(u64::from(TACTICAL_TICKS_PER_SECOND))
             {
                 self.resolve_combat_pulse();
+                if let Some(siege) = &mut self.siege {
+                    siege.advance_capture(&self.units);
+                }
             }
             self.clear_invalid_engagement_targets();
         }
@@ -486,6 +538,20 @@ impl TacticalBattle {
                 unit_id: unit.id.clone(),
             })
         }
+    }
+
+    fn is_passable_at(&self, point: BattlePoint) -> bool {
+        self.terrain.is_passable_at(self.battlefield, point)
+            && self.siege.is_none_or(|siege| siege.is_passable_at(point))
+    }
+
+    fn movement_waypoint(&self, from: BattlePoint, destination: BattlePoint) -> BattlePoint {
+        let terrain_waypoint = self
+            .terrain
+            .movement_waypoint(self.battlefield, from, destination);
+        self.siege.map_or(terrain_waypoint, |siege| {
+            siege.movement_waypoint(from, terrain_waypoint)
+        })
     }
 
     fn advance_movement_phase(&mut self) {
@@ -550,11 +616,9 @@ impl TacticalBattle {
             unit.position,
             base_movement_speed,
         );
-        let waypoint =
-            self.terrain()
-                .movement_waypoint(self.battlefield, unit.position, destination);
+        let waypoint = self.movement_waypoint(unit.position, destination);
         let next = move_point_toward(unit.position, waypoint, movement_speed);
-        debug_assert!(self.terrain().is_passable_at(self.battlefield, next));
+        debug_assert!(self.is_passable_at(next));
         self.units[index].position = next;
         if self.units[index].destination == Some(destination) && next == destination {
             self.units[index].destination = None;
@@ -595,11 +659,9 @@ impl TacticalBattle {
             self.battlefield,
             unit.side,
         );
-        let waypoint = self
-            .terrain()
-            .movement_waypoint(self.battlefield, unit.position, desired);
+        let waypoint = self.movement_waypoint(unit.position, desired);
         let next = move_point_toward(unit.position, waypoint, route_speed);
-        debug_assert!(self.terrain().is_passable_at(self.battlefield, next));
+        debug_assert!(self.is_passable_at(next));
         self.units[index].position = next;
         if next != unit.position {
             self.units[index].fatigue = self.units[index]
@@ -846,6 +908,10 @@ pub enum TacticalError {
         unit_id: String,
         position: BattlePoint,
     },
+    UnitOnImpassableSiegeStructure {
+        unit_id: String,
+        position: BattlePoint,
+    },
     UnitOutsideDeploymentZone {
         unit_id: String,
         side: BattleSide,
@@ -868,6 +934,7 @@ pub enum TacticalError {
         target_unit_id: String,
     },
     TargetDestroyed(String),
+    NotSiegeBattle,
 }
 
 impl fmt::Display for TacticalError {
@@ -906,6 +973,11 @@ impl fmt::Display for TacticalError {
             Self::UnitOnImpassableTerrain { unit_id, position } => write!(
                 formatter,
                 "tactical unit {unit_id} starts on impassable terrain at ({}, {}) mm",
+                position.x_mm, position.y_mm
+            ),
+            Self::UnitOnImpassableSiegeStructure { unit_id, position } => write!(
+                formatter,
+                "tactical unit {unit_id} starts on an impassable siege structure at ({}, {}) mm",
                 position.x_mm, position.y_mm
             ),
             Self::UnitOutsideDeploymentZone {
@@ -949,6 +1021,7 @@ impl fmt::Display for TacticalError {
             Self::TargetDestroyed(unit_id) => {
                 write!(formatter, "tactical unit {unit_id} is already destroyed")
             }
+            Self::NotSiegeBattle => write!(formatter, "battle has no siege state"),
         }
     }
 }
@@ -1397,6 +1470,140 @@ mod tests {
     }
 
     #[test]
+    fn siege_deployment_uses_siege_zones_and_roundtrips() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let battle = TacticalBattle::deploy_siege(
+            battlefield,
+            vec![
+                sample_unit(
+                    "attacker",
+                    BattleSide::Attacker,
+                    BattlePoint::new(20_000, 50_000),
+                    Formation::Line { files: 10 },
+                ),
+                sample_unit(
+                    "defender",
+                    BattleSide::Defender,
+                    BattlePoint::new(80_000, 50_000),
+                    Formation::Line { files: 10 },
+                ),
+            ],
+        )
+        .unwrap();
+        let [attacker_zone, defender_zone] = battle.deployment_zones();
+        assert_eq!(attacker_zone.max_x_mm, 35_000);
+        assert_eq!(defender_zone.min_x_mm, 65_000);
+        assert!(battle.siege.is_some());
+
+        let encoded = serde_json::to_string(&battle).unwrap();
+        let decoded: TacticalBattle = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, battle);
+
+        let invalid = TacticalBattle::deploy_siege(
+            battlefield,
+            vec![sample_unit(
+                "attacker",
+                BattleSide::Attacker,
+                BattlePoint::new(40_000, 50_000),
+                Formation::Line { files: 10 },
+            )],
+        );
+        assert!(matches!(
+            invalid,
+            Err(TacticalError::UnitOutsideDeploymentZone { .. })
+        ));
+    }
+
+    #[test]
+    fn field_battle_serialization_has_no_siege_drift() {
+        let battle = sample_battle();
+        let encoded = serde_json::to_value(&battle).unwrap();
+        assert!(encoded.get("siege").is_none());
+
+        let decoded: TacticalBattle = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded, battle);
+        assert!(decoded.siege.is_none());
+    }
+
+    #[test]
+    fn closed_siege_gate_holds_orders_until_core_opens_it() {
+        let battlefield = FlatBattlefield::new(80_000, 80_000);
+        let destination = BattlePoint::new(70_000, 40_000);
+        let mut battle = TacticalBattle::deploy_siege(
+            battlefield,
+            vec![sample_unit(
+                "attacker",
+                BattleSide::Attacker,
+                BattlePoint::new(10_000, 40_000),
+                Formation::Line { files: 10 },
+            )],
+        )
+        .unwrap();
+        battle
+            .issue_move_order(MovementOrder {
+                unit_id: "attacker".into(),
+                destination,
+            })
+            .unwrap();
+
+        battle.advance_ticks(200);
+        let closed_position = unit(&battle, "attacker").position();
+        let gate = battle.siege.unwrap().layout.gate;
+        assert!(closed_position.x_mm < gate.min_x_mm);
+        assert!(unit(&battle, "attacker").destination().is_some());
+
+        battle.set_siege_gate_state(SiegeGateState::Open).unwrap();
+        battle.advance_ticks(200);
+        assert_eq!(unit(&battle, "attacker").position(), destination);
+        assert!(unit(&battle, "attacker").destination().is_none());
+    }
+
+    #[test]
+    fn siege_capture_advances_on_combat_pulses_and_contention_fails_closed() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let siege = SiegeBattleState::test_siege(battlefield).with_gate_state(SiegeGateState::Open);
+        let point = siege.layout.capture_point.center;
+        let mut uncontested = TacticalBattle::new(
+            battlefield,
+            vec![sample_unit(
+                "attacker",
+                BattleSide::Attacker,
+                point,
+                Formation::Line { files: 10 },
+            )],
+        )
+        .unwrap();
+        uncontested.siege = Some(siege);
+        uncontested.advance_ticks(TACTICAL_TICKS_PER_SECOND * 10);
+        assert_eq!(
+            uncontested.siege.unwrap().capture.captured_by,
+            Some(BattleSide::Attacker)
+        );
+
+        let mut contested = TacticalBattle::new(
+            battlefield,
+            vec![
+                sample_unit(
+                    "attacker",
+                    BattleSide::Attacker,
+                    point,
+                    Formation::Line { files: 10 },
+                ),
+                sample_unit(
+                    "defender",
+                    BattleSide::Defender,
+                    point,
+                    Formation::Line { files: 10 },
+                ),
+            ],
+        )
+        .unwrap();
+        contested.siege = Some(siege);
+        contested.advance_ticks(TACTICAL_TICKS_PER_SECOND);
+        assert_eq!(contested.siege.unwrap().capture.progress, 0);
+    }
+
+    #[test]
     fn forest_ground_cover_reduces_tick_movement_without_changing_orders() {
         let battlefield = FlatBattlefield::new(80_000, 80_000);
         let destination = BattlePoint::new(29_000, 15_000);
@@ -1743,6 +1950,7 @@ mod tests {
         );
         assert!(decoded.terrain().forest_cells().is_empty());
         assert!(decoded.terrain().river_cells().is_empty());
+        assert!(decoded.siege.is_none());
     }
 
     #[test]
