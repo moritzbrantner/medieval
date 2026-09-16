@@ -234,7 +234,7 @@ impl SiegeBattleState {
             return destination;
         }
 
-        if from.y_mm < gate.min_y_mm || from.y_mm > gate.max_y_mm {
+        if !(gate.min_y_mm..=gate.max_y_mm).contains(&from.y_mm) {
             return BattlePoint::new(from.x_mm, gate_center.y_mm);
         }
 
