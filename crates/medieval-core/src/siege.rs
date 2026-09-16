@@ -189,12 +189,6 @@ impl SiegeBattleState {
     }
 
     #[must_use]
-    pub const fn with_gate_state(mut self, gate_state: SiegeGateState) -> Self {
-        self.gate_state = gate_state;
-        self
-    }
-
-    #[must_use]
     pub fn is_passable_at(self, point: BattlePoint) -> bool {
         if self.layout.wall_contains(point) {
             return false;
@@ -365,16 +359,19 @@ mod tests {
         assert!(!closed.is_passable_at(gate));
         assert!(closed.is_passable_at(BattlePoint::new(40_000, 20_000)));
 
-        let open = closed.with_gate_state(SiegeGateState::Open);
+        let mut open = closed;
+        open.gate_state = SiegeGateState::Open;
         assert!(open.is_passable_at(gate));
-        let destroyed = closed.with_gate_state(SiegeGateState::Destroyed);
+        let mut destroyed = closed;
+        destroyed.gate_state = SiegeGateState::Destroyed;
         assert!(destroyed.is_passable_at(gate));
     }
 
     #[test]
     fn crossing_path_aligns_enters_and_exits_the_open_gate() {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
-        let siege = SiegeBattleState::test_siege(battlefield).with_gate_state(SiegeGateState::Open);
+        let mut siege = SiegeBattleState::test_siege(battlefield);
+        siege.gate_state = SiegeGateState::Open;
         let destination = BattlePoint::new(80_000, 10_000);
         let align = siege.movement_waypoint(BattlePoint::new(20_000, 10_000), destination);
         assert_eq!(align, BattlePoint::new(20_000, 50_000));
