@@ -425,6 +425,11 @@ impl TacticalBattle {
         &self.units
     }
 
+    #[must_use]
+    pub const fn siege_snapshot(&self) -> Option<SiegeBattleState> {
+        self.siege
+    }
+
     pub fn open_siege_gate(&mut self) -> Result<(), TacticalError> {
         self.set_siege_gate_state(SiegeGateState::Open)
     }
@@ -1503,6 +1508,7 @@ mod tests {
         assert_eq!(attacker_zone.max_x_mm, 35_000);
         assert_eq!(defender_zone.min_x_mm, 65_000);
         assert!(battle.siege.is_some());
+        assert_eq!(battle.siege_snapshot(), battle.siege);
 
         let encoded = serde_json::to_string(&battle).unwrap();
         let decoded: TacticalBattle = serde_json::from_str(&encoded).unwrap();
@@ -1528,6 +1534,7 @@ mod tests {
         let battle = sample_battle();
         let encoded = serde_json::to_value(&battle).unwrap();
         assert!(encoded.get("siege").is_none());
+        assert!(battle.siege_snapshot().is_none());
 
         let decoded: TacticalBattle = serde_json::from_value(encoded).unwrap();
         assert_eq!(decoded, battle);
