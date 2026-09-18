@@ -7,4 +7,6 @@ license.workspace = true
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
 medieval-core = { path = "../medieval-core" }
+serde.workspace = true
+serde_json.workspace = true
 wgpu = "30.0.1"
