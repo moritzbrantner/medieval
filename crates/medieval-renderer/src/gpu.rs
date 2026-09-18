@@ -8,7 +8,7 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     BattleRenderSnapshot, Camera3d,
-    character_assets::{CharacterAssetPack, CharacterPaletteUniform, CharacterVertex},
+    character_assets::{CharacterAssetPack, CharacterVertex},
     terrain::{
         TERRAIN_GRID_SIZE, terrain_cell_bounds_mm, terrain_cell_height_mm, terrain_height_mm,
     },
