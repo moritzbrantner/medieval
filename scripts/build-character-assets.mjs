@@ -10,6 +10,7 @@ const materialModule = path.resolve(
   process.argv[3] ?? ".consumer-tools/asset-tooling/src/medieval-character-materials.js",
 );
 const destination = path.resolve(process.argv[4] ?? "web/generated-assets/characters");
+const runtimeDestination = process.argv[5] ? path.resolve(process.argv[5]) : null;
 
 const {
   buildMedievalCharacterKitManifest,
@@ -21,6 +22,7 @@ const {
 } = await import(pathToFileURL(materialModule).href);
 
 await mkdir(destination, { recursive: true });
+if (runtimeDestination) await mkdir(runtimeDestination, { recursive: true });
 const generated = generateMedievalCharacterKit();
 const manifest = buildMedievalCharacterKitManifest();
 const materials = buildMedievalCharacterMaterialManifest();
@@ -48,6 +50,9 @@ for (const asset of generated) {
   if (!entry) throw new Error(`manifest is missing '${asset.archetype}'`);
   const outputPath = path.join(destination, entry.fileName);
   await writeFile(outputPath, asset.bytes);
+  if (runtimeDestination) {
+    await writeFile(path.join(runtimeDestination, entry.fileName), asset.bytes);
+  }
   const written = await readFile(outputPath);
   const writtenSha256 = createHash("sha256").update(written).digest("hex");
   if (writtenSha256 !== entry.sha256) {
@@ -61,6 +66,13 @@ for (const [fileName, document] of [
   ["package.json", packageManifest],
 ]) {
   await writeFile(path.join(destination, fileName), `${JSON.stringify(document, null, 2)}\n`, "utf8");
+}
+if (runtimeDestination) {
+  await writeFile(
+    path.join(runtimeDestination, "materials.json"),
+    `${JSON.stringify(materials, null, 2)}\n`,
+    "utf8",
+  );
 }
 
 console.log(
