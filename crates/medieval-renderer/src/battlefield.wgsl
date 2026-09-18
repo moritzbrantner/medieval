@@ -5,8 +5,15 @@ struct CameraUniform {
     forward_far: vec4<f32>,
 };
 
+struct CharacterPalette {
+    colors: array<vec4<f32>, 14>,
+};
+
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
+
+@group(0) @binding(1)
+var<uniform> character_palette: CharacterPalette;
 
 struct VertexInput {
     @builtin(vertex_index) vertex_index: u32,
@@ -22,6 +29,24 @@ struct VertexOutput {
     @location(2) routed: f32,
     @location(3) selected: f32,
     @location(4) order_preview: f32,
+    @location(5) elevation: f32,
+};
+
+struct CharacterVertexInput {
+    @location(3) position_role: vec4<f32>,
+    @location(4) normal_padding: vec4<f32>,
+    @location(5) origin_side: vec4<f32>,
+    @location(6) visual: vec4<f32>,
+};
+
+struct CharacterVertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) normal: vec3<f32>,
+    @location(1) material_role: f32,
+    @location(2) side: f32,
+    @location(3) routed: f32,
+    @location(4) selected: f32,
+    @location(5) order_preview: f32,
 };
 
 fn cube_vertex(index: u32) -> vec3<f32> {
@@ -51,10 +76,7 @@ fn cube_normal(index: u32) -> vec3<f32> {
     }
 }
 
-@vertex
-fn vs_main(input: VertexInput) -> VertexOutput {
-    let world_position = input.center_material.xyz
-        + cube_vertex(input.vertex_index) * input.half_extent_routed.xyz;
+fn project_world(world_position: vec3<f32>) -> vec4<f32> {
     let relative = world_position - camera.eye_near.xyz;
     let view_x = dot(relative, camera.right_tan_half_fov.xyz);
     let view_y = dot(relative, camera.up_aspect.xyz);
@@ -67,20 +89,49 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     let far = camera.forward_far.w;
     let depth_a = far / (far - near);
     let depth_b = near * far / (far - near);
-
-    var output: VertexOutput;
-    output.position = vec4<f32>(
+    return vec4<f32>(
         view_x / tan_half_x,
         view_y / tan_half_y,
         depth_a * view_z - depth_b,
         view_z,
     );
+}
+
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+    let world_position = input.center_material.xyz
+        + cube_vertex(input.vertex_index) * input.half_extent_routed.xyz;
+
+    var output: VertexOutput;
+    output.position = project_world(world_position);
     output.normal = cube_normal(input.vertex_index);
     output.material = input.center_material.w;
     output.routed = input.half_extent_routed.w;
     output.selected = input.visual.x;
     output.order_preview = input.visual.y;
+    output.elevation = input.visual.z;
     return output;
+}
+
+@vertex
+fn vs_character(input: CharacterVertexInput) -> CharacterVertexOutput {
+    let world_position = input.origin_side.xyz + input.position_role.xyz;
+
+    var output: CharacterVertexOutput;
+    output.position = project_world(world_position);
+    output.normal = input.normal_padding.xyz;
+    output.material_role = input.position_role.w;
+    output.side = input.origin_side.w;
+    output.routed = input.visual.x;
+    output.selected = input.visual.y;
+    output.order_preview = input.visual.z;
+    return output;
+}
+
+fn shade(color: vec3<f32>, normal: vec3<f32>) -> vec4<f32> {
+    let light_direction = normalize(vec3<f32>(0.35, 0.82, 0.45));
+    let diffuse = max(dot(normalize(normal), light_direction), 0.0);
+    return vec4<f32>(color * (0.38 + diffuse * 0.62), 1.0);
 }
 
 @fragment
@@ -97,7 +148,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     } else if input.material > 2.5 {
         color = vec3<f32>(0.88, 0.24, 0.16);
     } else if input.material > 1.5 {
-        color = vec3<f32>(0.22, 0.29, 0.15);
+        let lowland = vec3<f32>(0.14, 0.21, 0.09);
+        let highland = vec3<f32>(0.40, 0.45, 0.20);
+        color = mix(lowland, highland, clamp(input.elevation, 0.0, 1.0));
     } else if input.material > 0.5 {
         color = vec3<f32>(0.12, 0.31, 0.67);
     }
@@ -110,7 +163,22 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if input.order_preview > 0.5 {
         color = color * 0.72 + vec3<f32>(0.24, 0.24, 0.24);
     }
-    let light_direction = normalize(vec3<f32>(0.35, 0.82, 0.45));
-    let diffuse = max(dot(normalize(input.normal), light_direction), 0.0);
-    return vec4<f32>(color * (0.36 + diffuse * 0.64), 1.0);
+    return shade(color, input.normal);
+}
+
+@fragment
+fn fs_character(input: CharacterVertexOutput) -> @location(0) vec4<f32> {
+    let role = u32(clamp(input.material_role + 0.5, 0.0, 6.0));
+    let side_offset = select(0u, 7u, input.side > 0.5);
+    var color = character_palette.colors[side_offset + role].rgb;
+    if input.routed > 0.5 {
+        color = color * 0.42 + vec3<f32>(0.28, 0.28, 0.28);
+    }
+    if input.selected > 0.5 {
+        color = color * 0.45 + vec3<f32>(0.95, 0.78, 0.18) * 0.55;
+    }
+    if input.order_preview > 0.5 {
+        color = color * 0.72 + vec3<f32>(0.24, 0.24, 0.24);
+    }
+    return shade(color, input.normal);
 }
