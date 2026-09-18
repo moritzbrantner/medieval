@@ -180,7 +180,6 @@ impl GpuWorldInstance {
             visual: [0.0; 4],
         })
     }
-
 }
 
 const fn flag(value: bool) -> f32 {
@@ -212,12 +211,7 @@ impl GpuCharacterInstance {
                     BattleSide::Defender => 1.0,
                 },
             ],
-            visual: [
-                flag(routed),
-                flag(selected),
-                flag(order_preview),
-                0.0,
-            ],
+            visual: [flag(routed), flag(selected), flag(order_preview), 0.0],
         }
     }
 }
@@ -255,15 +249,10 @@ impl CharacterGpuBatch {
     ) {
         if instances.len() > self.instance_capacity {
             self.instance_capacity = instances.len().next_power_of_two();
-            self.instance_buffer =
-                create_character_instance_buffer(device, self.instance_capacity);
+            self.instance_buffer = create_character_instance_buffer(device, self.instance_capacity);
         }
         if !instances.is_empty() {
-            queue.write_buffer(
-                &self.instance_buffer,
-                0,
-                bytemuck::cast_slice(instances),
-            );
+            queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(instances));
         }
         self.instance_count =
             u32::try_from(instances.len()).expect("character instance count fits in u32");
@@ -408,21 +397,9 @@ impl GpuBattleRenderer {
         let character_pipeline =
             create_character_pipeline(device, target_format, &pipeline_layout, &shader);
         let character_batches = [
-            CharacterGpuBatch::new(
-                device,
-                "Medieval soldier mesh",
-                &assets.soldier.vertices,
-            ),
-            CharacterGpuBatch::new(
-                device,
-                "Medieval archer mesh",
-                &assets.archer.vertices,
-            ),
-            CharacterGpuBatch::new(
-                device,
-                "Medieval knight mesh",
-                &assets.knight.vertices,
-            ),
+            CharacterGpuBatch::new(device, "Medieval soldier mesh", &assets.soldier.vertices),
+            CharacterGpuBatch::new(device, "Medieval archer mesh", &assets.archer.vertices),
+            CharacterGpuBatch::new(device, "Medieval knight mesh", &assets.knight.vertices),
         ];
         Self {
             device: device.clone(),
@@ -452,8 +429,7 @@ impl GpuBattleRenderer {
         let instances = gpu_instances(snapshot);
         if instances.world.len() > self.instance_capacity {
             self.instance_capacity = instances.world.len().next_power_of_two();
-            self.instance_buffer =
-                create_world_instance_buffer(device, self.instance_capacity);
+            self.instance_buffer = create_world_instance_buffer(device, self.instance_capacity);
         }
         if !instances.world.is_empty() {
             queue.write_buffer(
