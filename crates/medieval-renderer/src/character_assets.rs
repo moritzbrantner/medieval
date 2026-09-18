@@ -103,7 +103,9 @@ fn palette_colors(manifest: &MaterialManifest) -> Result<[[f32; 4]; 14], String>
             .palettes
             .iter()
             .find(|palette| palette.id == *palette_id)
-            .ok_or_else(|| format!("character material manifest is missing {palette_id} palette"))?;
+            .ok_or_else(|| {
+                format!("character material manifest is missing {palette_id} palette")
+            })?;
         for (role_index, role) in MATERIAL_ROLES.iter().enumerate() {
             let material = palette
                 .materials
@@ -196,12 +198,7 @@ fn parse_obj(
             let normal = triangle_normal(a, b, c)?;
             for position in [a, b, c] {
                 vertices.push(CharacterVertex {
-                    position_role: [
-                        position[0],
-                        position[1],
-                        position[2],
-                        role as f32,
-                    ],
+                    position_role: [position[0], position[1], position[2], role as f32],
                     normal_padding: [normal[0], normal[1], normal[2], 0.0],
                 });
             }
@@ -233,11 +230,7 @@ fn triangle_normal(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> Result<[f32; 3], St
     if !length.is_finite() || length <= f32::EPSILON {
         return Err("packaged character OBJ contains a degenerate triangle".to_owned());
     }
-    Ok([
-        normal[0] / length,
-        normal[1] / length,
-        normal[2] / length,
-    ])
+    Ok([normal[0] / length, normal[1] / length, normal[2] / length])
 }
 
 #[cfg(test)]
