@@ -47,13 +47,15 @@ jobs:
           bun scripts/build-character-assets.mjs \
             .consumer-tools/asset-tooling/src/medieval-character-kit.js \
             .consumer-tools/asset-tooling/src/medieval-character-materials.js \
-            web/generated-assets/characters
+            web/generated-assets/characters \
+            crates/medieval-renderer/assets/characters
           test -s web/generated-assets/characters/soldier.obj
           test -s web/generated-assets/characters/archer.obj
           test -s web/generated-assets/characters/knight.obj
           test -s web/generated-assets/characters/manifest.json
           test -s web/generated-assets/characters/materials.json
           test -s web/generated-assets/characters/package.json
+          git diff --exit-code -- crates/medieval-renderer/assets/characters
       - name: Verify character geometry through 3d-lab formats
         run: |
           for archetype in soldier archer knight; do
