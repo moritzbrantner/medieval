@@ -1,4 +1,5 @@
 mod camera;
+mod character_assets;
 mod gpu;
 mod scene;
 mod terrain;

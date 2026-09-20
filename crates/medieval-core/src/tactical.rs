@@ -6,6 +6,7 @@ use std::{
 use physics_engine::{Collider, ColliderShape, Vec3i, collider_contact};
 use serde::{Deserialize, Serialize};
 
+use crate::UnitKind;
 use crate::deployment::siege::{SiegeBattleState, SiegeGateState};
 use crate::deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
 use crate::terrain::{COMBAT_FACTOR_BASE_MILLI, TacticalTerrain};
@@ -137,6 +138,8 @@ pub struct TacticalUnit {
     position: BattlePoint,
     formation: Formation,
     speed_mm_per_tick: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unit_kind: Option<UnitKind>,
     #[serde(
         default = "default_attack_range_mm",
         deserialize_with = "deserialize_attack_range_mm"
@@ -166,6 +169,7 @@ impl TacticalUnit {
             position,
             formation,
             speed_mm_per_tick,
+            unit_kind: None,
             attack_range_mm: COMBAT_CONTACT_DISTANCE_MM,
             destination: None,
             engagement_target: None,
@@ -173,6 +177,12 @@ impl TacticalUnit {
             morale: MAX_TACTICAL_MORALE,
             state: TacticalUnitState::Formed,
         }
+    }
+
+    #[must_use]
+    pub const fn with_unit_kind(mut self, unit_kind: UnitKind) -> Self {
+        self.unit_kind = Some(unit_kind);
+        self
     }
 
     #[must_use]
@@ -214,6 +224,11 @@ impl TacticalUnit {
     #[must_use]
     pub const fn speed_mm_per_tick(&self) -> u32 {
         self.speed_mm_per_tick
+    }
+
+    #[must_use]
+    pub const fn unit_kind(&self) -> Option<UnitKind> {
+        self.unit_kind
     }
 
     #[must_use]
