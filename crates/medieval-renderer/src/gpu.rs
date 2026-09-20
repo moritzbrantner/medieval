@@ -956,13 +956,8 @@ mod tests {
             .wall_segments
             .into_iter()
             .map(|wall| {
-                GpuWorldInstance::siege_area_segments(
-                    wall,
-                    battlefield,
-                    SIEGE_WALL_HEIGHT_MM,
-                    8.0,
-                )
-                .len()
+                GpuWorldInstance::siege_area_segments(wall, battlefield, SIEGE_WALL_HEIGHT_MM, 8.0)
+                    .len()
             })
             .sum::<usize>();
         let expected_gate_count = GpuWorldInstance::siege_area_segments(
