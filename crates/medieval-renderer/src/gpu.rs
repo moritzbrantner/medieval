@@ -185,7 +185,6 @@ impl GpuWorldInstance {
             visual: [0.0; 4],
         })
     }
-}
 
     fn siege_area(
         area: RenderSiegeArea,
@@ -256,6 +255,7 @@ impl GpuWorldInstance {
             visual: [0.0; 4],
         }
     }
+}
 
 const fn flag(value: bool) -> f32 {
     if value { 1.0 } else { 0.0 }
@@ -626,11 +626,7 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     let river_capacity = snapshot.river_cells.len();
     let siege_capacity = usize::from(snapshot.siege.is_some()) * 8;
     let mut world = Vec::with_capacity(
-        terrain_capacity
-            + deployment_capacity
-            + forest_capacity
-            + river_capacity
-            + siege_capacity,
+        terrain_capacity + deployment_capacity + forest_capacity + river_capacity + siege_capacity,
     );
     let max_terrain_height_mm = (0..TERRAIN_GRID_SIZE)
         .flat_map(|cell_z| {
@@ -922,10 +918,10 @@ mod tests {
         .unwrap();
         let view = RenderViewState::fit(battlefield);
         let snapshot = BattleRenderSnapshot::capture(&battle, &view);
-        let base_world_count =
-            (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE + 2 * TERRAIN_GRID_SIZE) as usize
-                + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
-                + snapshot.river_cells.len();
+        let base_world_count = (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE + 2 * TERRAIN_GRID_SIZE)
+            as usize
+            + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
+            + snapshot.river_cells.len();
         let instances = gpu_instances(&snapshot);
         assert_eq!(instances.world.len(), base_world_count + 8);
         assert_eq!(
