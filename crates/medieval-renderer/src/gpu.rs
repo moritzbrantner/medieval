@@ -186,30 +186,50 @@ impl GpuWorldInstance {
         })
     }
 
-    fn siege_area(
+    fn siege_area_segments(
         area: RenderSiegeArea,
         battlefield: FlatBattlefield,
         height_mm: f32,
         material: f32,
-    ) -> Self {
-        let center = area.center();
-        let terrain_y = terrain_height_mm(battlefield, center) as f32;
+    ) -> Vec<Self> {
         let half_height = height_mm / 2.0;
-        Self {
-            center_material: [
-                center.x_mm as f32,
-                terrain_y + half_height,
-                center.y_mm as f32,
-                material,
-            ],
-            half_extent_routed: [
-                (area.max_x_mm.saturating_sub(area.min_x_mm).max(1)) as f32 / 2.0,
-                half_height,
-                (area.max_y_mm.saturating_sub(area.min_y_mm).max(1)) as f32 / 2.0,
-                0.0,
-            ],
-            visual: [0.0; 4],
+        let mut segments = Vec::new();
+
+        for cell_z in 0..TERRAIN_GRID_SIZE {
+            for cell_x in 0..TERRAIN_GRID_SIZE {
+                let Some((cell_min_x, cell_max_x, cell_min_z, cell_max_z)) =
+                    terrain_cell_bounds_mm(battlefield, cell_x, cell_z)
+                else {
+                    continue;
+                };
+                let min_x = area.min_x_mm.max(cell_min_x);
+                let max_x = area.max_x_mm.min(cell_max_x);
+                let min_z = area.min_y_mm.max(cell_min_z);
+                let max_z = area.max_y_mm.min(cell_max_z);
+                if max_x <= min_x || max_z <= min_z {
+                    continue;
+                }
+
+                let terrain_y = terrain_cell_height_mm(battlefield, cell_x, cell_z) as f32;
+                segments.push(Self {
+                    center_material: [
+                        (min_x as f32 + max_x as f32) / 2.0,
+                        terrain_y + half_height,
+                        (min_z as f32 + max_z as f32) / 2.0,
+                        material,
+                    ],
+                    half_extent_routed: [
+                        (max_x - min_x) as f32 / 2.0,
+                        half_height,
+                        (max_z - min_z) as f32 / 2.0,
+                        0.0,
+                    ],
+                    visual: [0.0; 4],
+                });
+            }
         }
+
+        segments
     }
 
     fn siege_tower(tower: RenderSiegeTower, battlefield: FlatBattlefield) -> Self {
@@ -624,7 +644,11 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     let deployment_capacity = (2 * TERRAIN_GRID_SIZE) as usize;
     let forest_capacity = snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize;
     let river_capacity = snapshot.river_cells.len();
-    let siege_capacity = usize::from(snapshot.siege.is_some()) * 8;
+    let siege_capacity = snapshot.siege.map_or(0, |siege| {
+        (siege.wall_segments.len() + 1) * (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE) as usize
+            + siege.towers.len()
+            + 1
+    });
     let mut world = Vec::with_capacity(
         terrain_capacity + deployment_capacity + forest_capacity + river_capacity + siege_capacity,
     );
@@ -674,10 +698,15 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     }
 
     if let Some(siege) = snapshot.siege {
-        world.extend(siege.wall_segments.into_iter().map(|wall| {
-            GpuWorldInstance::siege_area(wall, snapshot.battlefield, SIEGE_WALL_HEIGHT_MM, 8.0)
-        }));
-        world.push(GpuWorldInstance::siege_area(
+        for wall in siege.wall_segments {
+            world.extend(GpuWorldInstance::siege_area_segments(
+                wall,
+                snapshot.battlefield,
+                SIEGE_WALL_HEIGHT_MM,
+                8.0,
+            ));
+        }
+        world.extend(GpuWorldInstance::siege_area_segments(
             siege.gate,
             snapshot.battlefield,
             if siege.gate_traversable {
@@ -922,15 +951,41 @@ mod tests {
             as usize
             + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
             + snapshot.river_cells.len();
+        let siege = snapshot.siege.expect("siege snapshot");
+        let expected_wall_count = siege
+            .wall_segments
+            .into_iter()
+            .map(|wall| {
+                GpuWorldInstance::siege_area_segments(
+                    wall,
+                    battlefield,
+                    SIEGE_WALL_HEIGHT_MM,
+                    8.0,
+                )
+                .len()
+            })
+            .sum::<usize>();
+        let expected_gate_count = GpuWorldInstance::siege_area_segments(
+            siege.gate,
+            battlefield,
+            SIEGE_WALL_HEIGHT_MM,
+            9.0,
+        )
+        .len();
         let instances = gpu_instances(&snapshot);
-        assert_eq!(instances.world.len(), base_world_count + 8);
+        assert!(expected_wall_count > siege.wall_segments.len());
+        assert!(expected_gate_count > 1);
+        assert_eq!(
+            instances.world.len(),
+            base_world_count + expected_wall_count + expected_gate_count + siege.towers.len() + 1
+        );
         assert_eq!(
             instances
                 .world
                 .iter()
                 .filter(|instance| instance.center_material[3] == 8.0)
                 .count(),
-            2
+            expected_wall_count
         );
         assert_eq!(
             instances
@@ -938,8 +993,22 @@ mod tests {
                 .iter()
                 .filter(|instance| instance.center_material[3] == 9.0)
                 .count(),
-            1
+            expected_gate_count
         );
+        for instance in instances
+            .world
+            .iter()
+            .filter(|instance| matches!(instance.center_material[3], 8.0 | 9.0))
+        {
+            let center = BattlePoint::new(
+                instance.center_material[0] as u32,
+                instance.center_material[2] as u32,
+            );
+            assert_eq!(
+                instance.center_material[1] - instance.half_extent_routed[1],
+                terrain_height_mm(battlefield, center) as f32
+            );
+        }
         assert_eq!(
             instances
                 .world
@@ -965,7 +1034,7 @@ mod tests {
                 .iter()
                 .filter(|instance| instance.center_material[3] == 10.0)
                 .count(),
-            1
+            expected_gate_count
         );
     }
 
