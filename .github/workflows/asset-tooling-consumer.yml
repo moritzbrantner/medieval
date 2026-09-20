@@ -17,12 +17,23 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: moritzbrantner/asset-tooling
-          ref: b5404b43d0d4586d25b6b08060dabcd66c098691
+          ref: 1a700eed280015b7437ecdb624e5667791a5c33a
           path: .consumer-tools/asset-tooling
+          persist-credentials: false
+      - name: Checkout pinned 3d-lab formats
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: moritzbrantner/3d-lab
+          ref: c8da821648d6146ad04ee3f85de18533f3639a42
+          path: .consumer-tools/3d-lab
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.0
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
       - name: Validate, generate, and replay-verify Medieval texture asset
         run: |
           spec="web/generated-assets/medieval-camp-texture.asset.json"
@@ -31,12 +42,29 @@ jobs:
           bun "$tool" generate "$spec" --receipt .asset-tooling/medieval-camp-texture.receipt.json
           bun "$tool" verify "$spec" --receipt .asset-tooling/medieval-camp-texture.receipt.json
           test -s web/generated-assets/medieval-camp-texture.svg
-      - name: Generate and verify Medieval character kit
+      - name: Generate Medieval character package
         run: |
           bun scripts/build-character-assets.mjs \
             .consumer-tools/asset-tooling/src/medieval-character-kit.js \
-            web/generated-assets/characters
+            .consumer-tools/asset-tooling/src/medieval-character-materials.js \
+            web/generated-assets/characters \
+            crates/medieval-renderer/assets/characters
           test -s web/generated-assets/characters/soldier.obj
           test -s web/generated-assets/characters/archer.obj
           test -s web/generated-assets/characters/knight.obj
           test -s web/generated-assets/characters/manifest.json
+          test -s web/generated-assets/characters/materials.json
+          test -s web/generated-assets/characters/package.json
+          git diff --exit-code -- crates/medieval-renderer/assets/characters
+      - name: Verify character geometry through 3d-lab formats
+        run: |
+          for archetype in soldier archer knight; do
+            cargo run \
+              --manifest-path .consumer-tools/3d-lab/Cargo.toml \
+              --quiet \
+              -p three-d-formats \
+              --bin three-d-formats-inspect \
+              -- obj "web/generated-assets/characters/${archetype}.obj" \
+              > "web/generated-assets/characters/${archetype}.inspect.json"
+          done
+          bun scripts/verify-character-format-inspection.mjs web/generated-assets/characters

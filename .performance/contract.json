@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "suite": "medieval/tactical-battle-v1",
+  "description": "Product-level tactical battle composition. medieval-core owns tactical movement/combat semantics; physics-engine and shared rendering foundations retain their own lower-level performance evidence.",
+  "scenarios": [
+    {
+      "id": "tactical-engagement",
+      "kind": "journey",
+      "description": "Six attacker and six defender units advance and engage pairwise over 2,400 deterministic tactical ticks.",
+      "dimensions": {
+        "units": 12,
+        "units_per_side": 6,
+        "soldiers_per_unit": 120,
+        "ticks": 2400,
+        "runs": 3
+      },
+      "correctnessEvidence": [
+        "valid deployment through TacticalBattle authority",
+        "identical final TacticalBattle across repeated runs",
+        "engagement orders remain valid"
+      ],
+      "metrics": [
+        {
+          "name": "median_elapsed_ns",
+          "unit": "ns",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        },
+        {
+          "name": "unit_snapshot_clones",
+          "unit": "clones",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": false,
+          "notes": "Instrumentation priority: advance_movement_phase currently snapshots the complete unit vector each tick and combat pulses snapshot again; make this work visible before deciding whether retained/indexed state should replace it."
+        },
+        {
+          "name": "target_lookup_evaluations",
+          "unit": "evaluations",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": false,
+          "notes": "Instrumentation priority for engagement/routing scaling; exact tactical semantics remain authoritative."
+        }
+      ]
+    },
+    {
+      "id": "battle-render-snapshot",
+      "kind": "scaling",
+      "description": "Future product evidence should measure renderer-owned snapshot composition separately from medieval-core battle stepping.",
+      "dimensions": {
+        "authority": "medieval-renderer"
+      },
+      "correctnessEvidence": [
+        "BattleRenderSnapshot derives only from authoritative TacticalBattle plus view state"
+      ],
+      "metrics": [
+        {
+          "name": "renderables_built",
+          "unit": "renderables",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": false,
+          "notes": "Add in medieval-renderer without moving generic camera/GPU behavior out of the shared rendering foundation."
+        }
+      ]
+    }
+  ]
+}

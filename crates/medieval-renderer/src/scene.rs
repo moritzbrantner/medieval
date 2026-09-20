@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use medieval_core::{
     BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation, TacticalBattle,
-    TacticalTerrainCell,
+    TacticalTerrainCell, UnitKind,
 };
 
 use crate::{Camera3d, terrain::terrain_height_mm};
@@ -96,6 +96,7 @@ pub struct RenderSiegeSnapshot {
 pub struct RenderUnitInstance {
     pub unit_id: String,
     pub side: BattleSide,
+    pub unit_kind: Option<UnitKind>,
     pub position: BattlePoint,
     pub formation: Formation,
     pub soldiers: u16,
@@ -150,6 +151,7 @@ impl BattleRenderSnapshot {
                 RenderUnitInstance {
                     unit_id: unit.id().to_owned(),
                     side: unit.side(),
+                    unit_kind: unit.unit_kind(),
                     position: unit.position(),
                     formation: unit.formation(),
                     soldiers: unit.soldiers(),

@@ -3,7 +3,7 @@ use std::{cell::RefCell, cmp::Ordering, collections::BTreeSet};
 use medieval_core::{
     BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation,
     TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalGroundCover, TacticalTerrainCell,
-    TacticalTerrainProfile, TacticalUnit,
+    TacticalTerrainProfile, TacticalUnit, UnitKind,
 };
 use medieval_renderer::{BattleRenderSnapshot, GpuBattleRenderer};
 use serde::Serialize;
@@ -477,6 +477,7 @@ fn sample_battle() -> Result<TacticalBattle, String> {
         vec![
             unit(
                 "attacker-spears",
+                UnitKind::Spearmen,
                 BattleSide::Attacker,
                 110,
                 22_000,
@@ -486,6 +487,7 @@ fn sample_battle() -> Result<TacticalBattle, String> {
             ),
             unit(
                 "attacker-archers",
+                UnitKind::Archers,
                 BattleSide::Attacker,
                 80,
                 18_000,
@@ -496,6 +498,7 @@ fn sample_battle() -> Result<TacticalBattle, String> {
             .with_attack_range_mm(ARCHER_RANGE_MM),
             unit(
                 "attacker-knights",
+                UnitKind::Knights,
                 BattleSide::Attacker,
                 44,
                 22_000,
@@ -505,6 +508,7 @@ fn sample_battle() -> Result<TacticalBattle, String> {
             ),
             unit(
                 "defender-spears",
+                UnitKind::Spearmen,
                 BattleSide::Defender,
                 110,
                 78_000,
@@ -514,6 +518,7 @@ fn sample_battle() -> Result<TacticalBattle, String> {
             ),
             unit(
                 "defender-archers",
+                UnitKind::Archers,
                 BattleSide::Defender,
                 80,
                 82_000,
@@ -524,6 +529,7 @@ fn sample_battle() -> Result<TacticalBattle, String> {
             .with_attack_range_mm(ARCHER_RANGE_MM),
             unit(
                 "defender-knights",
+                UnitKind::Knights,
                 BattleSide::Defender,
                 44,
                 78_000,
@@ -538,6 +544,7 @@ fn sample_battle() -> Result<TacticalBattle, String> {
 
 fn unit(
     id: &str,
+    unit_kind: UnitKind,
     side: BattleSide,
     soldiers: u16,
     x_mm: u32,
@@ -553,6 +560,7 @@ fn unit(
         formation,
         speed_mm_per_tick,
     )
+    .with_unit_kind(unit_kind)
 }
 
 fn drive_opponent(battle: &mut TacticalBattle) -> Result<(), String> {

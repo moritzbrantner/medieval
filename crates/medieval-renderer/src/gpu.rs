@@ -2,20 +2,19 @@ use std::cell::RefCell;
 
 use bytemuck::{Pod, Zeroable};
 use medieval_core::{
-    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, TacticalTerrainCell,
+    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, TacticalTerrainCell, UnitKind,
 };
 use wgpu::util::DeviceExt;
 
 use crate::{
     BattleRenderSnapshot, Camera3d, RenderSiegeArea, RenderSiegeCapture, RenderSiegeTower,
+    character_assets::{CharacterAssetPack, CharacterVertex},
     terrain::{
         TERRAIN_GRID_SIZE, terrain_cell_bounds_mm, terrain_cell_height_mm, terrain_height_mm,
     },
 };
 
-const SOLDIER_HALF_WIDTH_MM: f32 = 250.0;
-const SOLDIER_HALF_HEIGHT_MM: f32 = 900.0;
-const SOLDIER_HALF_DEPTH_MM: f32 = 250.0;
+const SOLDIER_CENTER_Y_MM: f32 = 900.0;
 const GROUND_BASE_DEPTH_MM: f32 = 200.0;
 const DEPLOYMENT_BOUNDARY_HALF_WIDTH_MM: f32 = 180.0;
 const DEPLOYMENT_BOUNDARY_HEIGHT_MM: f32 = 40.0;
@@ -33,6 +32,10 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 const SHADER_SOURCE: &str = include_str!("battlefield.wgsl");
 const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
     wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4];
+const CHARACTER_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+    wgpu::vertex_attr_array![3 => Float32x4, 4 => Float32x4];
+const CHARACTER_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+    wgpu::vertex_attr_array![5 => Float32x4, 6 => Float32x4];
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Pod, Zeroable)]
@@ -43,7 +46,12 @@ struct GpuWorldInstance {
 }
 
 impl GpuWorldInstance {
-    fn terrain_cell(battlefield: FlatBattlefield, cell_x: u32, cell_z: u32) -> Option<Self> {
+    fn terrain_cell(
+        battlefield: FlatBattlefield,
+        cell_x: u32,
+        cell_z: u32,
+        max_height_mm: f32,
+    ) -> Option<Self> {
         let (x0, x1, z0, z1) = terrain_cell_bounds_mm(battlefield, cell_x, cell_z)?;
         if x1 <= x0 || z1 <= z0 {
             return None;
@@ -64,7 +72,16 @@ impl GpuWorldInstance {
                 (z1 - z0) as f32 / 2.0,
                 0.0,
             ],
-            visual: [0.0; 4],
+            visual: [
+                0.0,
+                0.0,
+                if max_height_mm > 0.0 {
+                    top / max_height_mm
+                } else {
+                    0.0
+                },
+                0.0,
+            ],
         })
     }
 
@@ -168,6 +185,7 @@ impl GpuWorldInstance {
             visual: [0.0; 4],
         })
     }
+}
 
     fn siege_area(
         area: RenderSiegeArea,
@@ -239,7 +257,19 @@ impl GpuWorldInstance {
         }
     }
 
-    fn soldier(
+const fn flag(value: bool) -> f32 {
+    if value { 1.0 } else { 0.0 }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Pod, Zeroable)]
+struct GpuCharacterInstance {
+    origin_side: [f32; 4],
+    visual: [f32; 4],
+}
+
+impl GpuCharacterInstance {
+    fn new(
         center: [f32; 3],
         side: BattleSide,
         routed: bool,
@@ -247,28 +277,61 @@ impl GpuWorldInstance {
         order_preview: bool,
     ) -> Self {
         Self {
-            center_material: [
+            origin_side: [
                 center[0],
-                center[1],
+                center[1] - SOLDIER_CENTER_Y_MM,
                 center[2],
                 match side {
                     BattleSide::Attacker => 0.0,
                     BattleSide::Defender => 1.0,
                 },
             ],
-            half_extent_routed: [
-                SOLDIER_HALF_WIDTH_MM,
-                SOLDIER_HALF_HEIGHT_MM,
-                SOLDIER_HALF_DEPTH_MM,
-                flag(routed),
-            ],
-            visual: [flag(selected), flag(order_preview), 0.0, 0.0],
+            visual: [flag(routed), flag(selected), flag(order_preview), 0.0],
         }
     }
 }
 
-const fn flag(value: bool) -> f32 {
-    if value { 1.0 } else { 0.0 }
+struct CharacterGpuBatch {
+    vertex_buffer: wgpu::Buffer,
+    vertex_count: u32,
+    instance_buffer: wgpu::Buffer,
+    instance_capacity: usize,
+    instance_count: u32,
+}
+
+impl CharacterGpuBatch {
+    fn new(device: &wgpu::Device, label: &str, vertices: &[CharacterVertex]) -> Self {
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(label),
+            contents: bytemuck::cast_slice(vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        Self {
+            vertex_buffer,
+            vertex_count: u32::try_from(vertices.len())
+                .expect("character mesh vertex count fits in u32"),
+            instance_buffer: create_character_instance_buffer(device, INITIAL_INSTANCE_CAPACITY),
+            instance_capacity: INITIAL_INSTANCE_CAPACITY,
+            instance_count: 0,
+        }
+    }
+
+    fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        instances: &[GpuCharacterInstance],
+    ) {
+        if instances.len() > self.instance_capacity {
+            self.instance_capacity = instances.len().next_power_of_two();
+            self.instance_buffer = create_character_instance_buffer(device, self.instance_capacity);
+        }
+        if !instances.is_empty() {
+            queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(instances));
+        }
+        self.instance_count =
+            u32::try_from(instances.len()).expect("character instance count fits in u32");
+    }
 }
 
 #[repr(C)]
@@ -324,10 +387,14 @@ pub struct GpuBattleRenderer {
     device: wgpu::Device,
     queue: Option<wgpu::Queue>,
     pipeline: wgpu::RenderPipeline,
+    character_pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
+    _palette_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
     instance_capacity: usize,
+    world_instance_count: u32,
+    character_batches: [CharacterGpuBatch; 3],
     instance_count: u32,
     camera: Camera3d,
     battlefield: FlatBattlefield,
@@ -337,22 +404,36 @@ pub struct GpuBattleRenderer {
 impl GpuBattleRenderer {
     #[must_use]
     pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
+        let assets = CharacterAssetPack::load()
+            .expect("packaged Medieval character assets must satisfy their checked-in contract");
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Medieval 3D tactical battlefield shader"),
             source: wgpu::ShaderSource::Wgsl(SHADER_SOURCE.into()),
         });
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Medieval 3D tactical camera layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Medieval 3D tactical pipeline layout"),
@@ -367,24 +448,46 @@ impl GpuBattleRenderer {
             contents: bytemuck::bytes_of(&camera_uniform),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Medieval 3D tactical camera bind group"),
-            layout: &camera_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }],
+        let palette_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Medieval character palette uniform"),
+            contents: bytemuck::bytes_of(&assets.palette),
+            usage: wgpu::BufferUsages::UNIFORM,
         });
-        let instance_buffer = create_instance_buffer(device, INITIAL_INSTANCE_CAPACITY);
-        let pipeline = create_pipeline(device, target_format, &pipeline_layout, &shader);
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Medieval 3D tactical camera and palette bind group"),
+            layout: &camera_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: palette_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        let instance_buffer = create_world_instance_buffer(device, INITIAL_INSTANCE_CAPACITY);
+        let pipeline = create_world_pipeline(device, target_format, &pipeline_layout, &shader);
+        let character_pipeline =
+            create_character_pipeline(device, target_format, &pipeline_layout, &shader);
+        let character_batches = [
+            CharacterGpuBatch::new(device, "Medieval soldier mesh", &assets.soldier.vertices),
+            CharacterGpuBatch::new(device, "Medieval archer mesh", &assets.archer.vertices),
+            CharacterGpuBatch::new(device, "Medieval knight mesh", &assets.knight.vertices),
+        ];
         Self {
             device: device.clone(),
             queue: None,
             pipeline,
+            character_pipeline,
             camera_buffer,
+            _palette_buffer: palette_buffer,
             camera_bind_group,
             instance_buffer,
             instance_capacity: INITIAL_INSTANCE_CAPACITY,
+            world_instance_count: 0,
+            character_batches,
             instance_count: 0,
             camera,
             battlefield,
@@ -399,15 +502,32 @@ impl GpuBattleRenderer {
         snapshot: &BattleRenderSnapshot,
     ) {
         let instances = gpu_instances(snapshot);
-        if instances.len() > self.instance_capacity {
-            self.instance_capacity = instances.len().next_power_of_two();
-            self.instance_buffer = create_instance_buffer(device, self.instance_capacity);
+        if instances.world.len() > self.instance_capacity {
+            self.instance_capacity = instances.world.len().next_power_of_two();
+            self.instance_buffer = create_world_instance_buffer(device, self.instance_capacity);
         }
-        if !instances.is_empty() {
-            queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
+        if !instances.world.is_empty() {
+            queue.write_buffer(
+                &self.instance_buffer,
+                0,
+                bytemuck::cast_slice(&instances.world),
+            );
         }
-        self.instance_count =
-            u32::try_from(instances.len()).expect("3D tactical instance count fits in u32");
+        self.world_instance_count = u32::try_from(instances.world.len())
+            .expect("3D tactical world instance count fits in u32");
+        for (batch, character_instances) in self
+            .character_batches
+            .iter_mut()
+            .zip(instances.characters.iter())
+        {
+            batch.upload(device, queue, character_instances);
+        }
+        self.instance_count = self.world_instance_count
+            + self
+                .character_batches
+                .iter()
+                .map(|batch| batch.instance_count)
+                .sum::<u32>();
         self.camera = snapshot.camera;
         self.battlefield = snapshot.battlefield;
         self.queue = Some(queue.clone());
@@ -475,7 +595,17 @@ impl GpuBattleRenderer {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.camera_bind_group, &[]);
         pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-        pass.draw(0..CUBE_VERTEX_COUNT, 0..self.instance_count);
+        pass.draw(0..CUBE_VERTEX_COUNT, 0..self.world_instance_count);
+
+        pass.set_pipeline(&self.character_pipeline);
+        for batch in &self.character_batches {
+            if batch.instance_count == 0 {
+                continue;
+            }
+            pass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
+            pass.set_vertex_buffer(1, batch.instance_buffer.slice(..));
+            pass.draw(0..batch.vertex_count, 0..batch.instance_count);
+        }
     }
 
     #[must_use]
@@ -484,37 +614,48 @@ impl GpuBattleRenderer {
     }
 }
 
-fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
-    let soldier_count = snapshot
-        .units
-        .iter()
-        .map(|unit| unit.soldier_centers_mm.len())
-        .sum::<usize>();
+struct GpuSceneInstances {
+    world: Vec<GpuWorldInstance>,
+    characters: [Vec<GpuCharacterInstance>; 3],
+}
+
+fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     let terrain_capacity = (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE) as usize;
     let deployment_capacity = (2 * TERRAIN_GRID_SIZE) as usize;
     let forest_capacity = snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize;
     let river_capacity = snapshot.river_cells.len();
     let siege_capacity = usize::from(snapshot.siege.is_some()) * 8;
-    let mut instances = Vec::with_capacity(
+    let mut world = Vec::with_capacity(
         terrain_capacity
             + deployment_capacity
             + forest_capacity
             + river_capacity
-            + siege_capacity
-            + soldier_count,
+            + siege_capacity,
     );
+    let max_terrain_height_mm = (0..TERRAIN_GRID_SIZE)
+        .flat_map(|cell_z| {
+            (0..TERRAIN_GRID_SIZE)
+                .map(move |cell_x| terrain_cell_height_mm(snapshot.battlefield, cell_x, cell_z))
+        })
+        .max()
+        .unwrap_or(0) as f32;
+
     for cell_z in 0..TERRAIN_GRID_SIZE {
         for cell_x in 0..TERRAIN_GRID_SIZE {
-            if let Some(cell) = GpuWorldInstance::terrain_cell(snapshot.battlefield, cell_x, cell_z)
-            {
-                instances.push(cell);
+            if let Some(cell) = GpuWorldInstance::terrain_cell(
+                snapshot.battlefield,
+                cell_x,
+                cell_z,
+                max_terrain_height_mm,
+            ) {
+                world.push(cell);
             }
         }
     }
     for cell in &snapshot.river_cells {
         let crossing = snapshot.river_crossing_cells.contains(cell);
         if let Some(river) = GpuWorldInstance::river_cell(*cell, snapshot.battlefield, crossing) {
-            instances.push(river);
+            world.push(river);
         }
     }
     for cell in &snapshot.forest_cells {
@@ -522,7 +663,7 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
             if let Some(tree) =
                 GpuWorldInstance::forest_tree(*cell, snapshot.battlefield, tree_index)
             {
-                instances.push(tree);
+                world.push(tree);
             }
         }
     }
@@ -531,15 +672,16 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
             if let Some(marker) =
                 GpuWorldInstance::deployment_boundary_segment(zone, snapshot.battlefield, cell_z)
             {
-                instances.push(marker);
+                world.push(marker);
             }
         }
     }
+
     if let Some(siege) = snapshot.siege {
-        instances.extend(siege.wall_segments.into_iter().map(|wall| {
+        world.extend(siege.wall_segments.into_iter().map(|wall| {
             GpuWorldInstance::siege_area(wall, snapshot.battlefield, SIEGE_WALL_HEIGHT_MM, 8.0)
         }));
-        instances.push(GpuWorldInstance::siege_area(
+        world.push(GpuWorldInstance::siege_area(
             siege.gate,
             snapshot.battlefield,
             if siege.gate_traversable {
@@ -549,20 +691,27 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
             },
             if siege.gate_traversable { 10.0 } else { 9.0 },
         ));
-        instances.extend(
+        world.extend(
             siege
                 .towers
                 .into_iter()
                 .map(|tower| GpuWorldInstance::siege_tower(tower, snapshot.battlefield)),
         );
-        instances.push(GpuWorldInstance::siege_capture(
+        world.push(GpuWorldInstance::siege_capture(
             siege.capture,
             snapshot.battlefield,
         ));
     }
+
+    let mut characters = [Vec::new(), Vec::new(), Vec::new()];
     for unit in &snapshot.units {
-        instances.extend(unit.soldier_centers_mm.iter().map(|center| {
-            GpuWorldInstance::soldier(
+        let archetype = match unit.unit_kind {
+            Some(UnitKind::Archers) => 1,
+            Some(UnitKind::Knights) => 2,
+            Some(UnitKind::Levy | UnitKind::Spearmen) | None => 0,
+        };
+        characters[archetype].extend(unit.soldier_centers_mm.iter().map(|center| {
+            GpuCharacterInstance::new(
                 *center,
                 unit.side,
                 unit.routed,
@@ -571,10 +720,11 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> Vec<GpuWorldInstance> {
             )
         }));
     }
-    instances
+
+    GpuSceneInstances { world, characters }
 }
 
-fn create_pipeline(
+fn create_world_pipeline(
     device: &wgpu::Device,
     target_format: wgpu::TextureFormat,
     layout: &wgpu::PipelineLayout,
@@ -619,10 +769,72 @@ fn create_pipeline(
     })
 }
 
-fn create_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
+fn create_character_pipeline(
+    device: &wgpu::Device,
+    target_format: wgpu::TextureFormat,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    let vertex_buffers = [
+        Some(wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<CharacterVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &CHARACTER_VERTEX_ATTRIBUTES,
+        }),
+        Some(wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<GpuCharacterInstance>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &CHARACTER_INSTANCE_ATTRIBUTES,
+        }),
+    ];
+    let color_targets = [Some(wgpu::ColorTargetState {
+        format: target_format,
+        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+        write_mask: wgpu::ColorWrites::ALL,
+    })];
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Medieval low-poly character pipeline"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_character"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &vertex_buffers,
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_character"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &color_targets,
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+fn create_world_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Medieval 3D tactical instances"),
+        label: Some("Medieval 3D tactical world instances"),
         size: (capacity.max(1) * std::mem::size_of::<GpuWorldInstance>()) as wgpu::BufferAddress,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+fn create_character_instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Medieval 3D tactical character instances"),
+        size: (capacity.max(1) * std::mem::size_of::<GpuCharacterInstance>())
+            as wgpu::BufferAddress,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
@@ -675,12 +887,12 @@ mod tests {
         let snapshot =
             BattleRenderSnapshot::capture(&battle, &RenderViewState::fit(battle.battlefield()));
         assert_eq!(
-            gpu_instances(&snapshot).len(),
+            gpu_instances(&snapshot).world.len(),
             (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE + 2 * TERRAIN_GRID_SIZE) as usize
                 + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
                 + snapshot.river_cells.len()
-                + 80
         );
+        assert_eq!(gpu_instances(&snapshot).characters[0].len(), 80);
     }
 
     #[test]
@@ -710,14 +922,15 @@ mod tests {
         .unwrap();
         let view = RenderViewState::fit(battlefield);
         let snapshot = BattleRenderSnapshot::capture(&battle, &view);
-        let base_count = (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE + 2 * TERRAIN_GRID_SIZE) as usize
-            + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
-            + snapshot.river_cells.len()
-            + 2;
+        let base_world_count =
+            (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE + 2 * TERRAIN_GRID_SIZE) as usize
+                + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
+                + snapshot.river_cells.len();
         let instances = gpu_instances(&snapshot);
-        assert_eq!(instances.len(), base_count + 8);
+        assert_eq!(instances.world.len(), base_world_count + 8);
         assert_eq!(
             instances
+                .world
                 .iter()
                 .filter(|instance| instance.center_material[3] == 8.0)
                 .count(),
@@ -725,6 +938,7 @@ mod tests {
         );
         assert_eq!(
             instances
+                .world
                 .iter()
                 .filter(|instance| instance.center_material[3] == 9.0)
                 .count(),
@@ -732,6 +946,7 @@ mod tests {
         );
         assert_eq!(
             instances
+                .world
                 .iter()
                 .filter(|instance| instance.center_material[3] == 11.0)
                 .count(),
@@ -739,6 +954,7 @@ mod tests {
         );
         assert_eq!(
             instances
+                .world
                 .iter()
                 .filter(|instance| instance.center_material[3] == 12.0)
                 .count(),
@@ -749,6 +965,7 @@ mod tests {
         let open = BattleRenderSnapshot::capture(&battle, &view);
         assert_eq!(
             gpu_instances(&open)
+                .world
                 .iter()
                 .filter(|instance| instance.center_material[3] == 10.0)
                 .count(),
@@ -836,11 +1053,12 @@ mod tests {
     #[test]
     fn terrain_instances_raise_center_cells_above_edge_cells() {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
-        let edge = GpuWorldInstance::terrain_cell(battlefield, 0, 0).unwrap();
-        let center = GpuWorldInstance::terrain_cell(battlefield, 4, 4).unwrap();
+        let edge = GpuWorldInstance::terrain_cell(battlefield, 0, 0, 4_000.0).unwrap();
+        let center = GpuWorldInstance::terrain_cell(battlefield, 4, 4, 4_000.0).unwrap();
         let edge_top = edge.center_material[1] + edge.half_extent_routed[1];
         let center_top = center.center_material[1] + center.half_extent_routed[1];
         assert!(center_top > edge_top);
+        assert!(center.visual[2] > edge.visual[2]);
     }
 
     #[test]
@@ -848,6 +1066,8 @@ mod tests {
         assert!(SHADER_SOURCE.contains("vertex_index"));
         assert!(SHADER_SOURCE.contains("world_position"));
         assert!(SHADER_SOURCE.contains("cube_normal"));
+        assert!(SHADER_SOURCE.contains("vs_character"));
+        assert!(SHADER_SOURCE.contains("character_palette"));
         assert!(SHADER_SOURCE.contains("view_z"));
         assert!(SHADER_SOURCE.contains("eye_near"));
         assert!(!SHADER_SOURCE.contains("center_zoom_elevation"));

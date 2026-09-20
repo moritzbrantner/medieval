@@ -73,7 +73,9 @@ test("the production renderer consumes the same aspect-safe perspective basis wi
   assert.match(shader, /tan_half_y/);
   assert.match(shader, /max\(aspect, 1\.0\)/);
   assert.match(shader, /min\(aspect, 1\.0\)/);
-  assert.match(shader, /output\.position = vec4<f32>/);
+  assert.match(shader, /fn project_world\(/);
+  assert.match(shader, /return vec4<f32>/);
+  assert.match(shader, /output\.position = project_world\(world_position\)/);
   assert.doesNotMatch(shader, /center_zoom_elevation|elevation_lift/);
 });
 

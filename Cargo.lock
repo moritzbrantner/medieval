@@ -2003,6 +2003,8 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "medieval-core",
+ "serde",
+ "serde_json",
  "wgpu",
 ]
 

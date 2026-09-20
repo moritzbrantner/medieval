@@ -11,6 +11,7 @@ import init, {
   battle_sandbox_status,
   battle_sandbox_unit_viewport,
 } from "./pkg/medieval_web_battle.js";
+import { attachBattleInputBindings } from "./battle-input-bindings.js";
 
 const canvas = document.querySelector("#battle-canvas");
 const stateText = document.querySelector("#battle-state");
@@ -214,50 +215,28 @@ canvas.addEventListener(
   { passive: false },
 );
 
-canvas.addEventListener("keydown", (event) => {
-  const panDirection = {
-    ArrowLeft: "left",
-    KeyA: "left",
-    ArrowRight: "right",
-    KeyD: "right",
-    ArrowUp: "up",
-    KeyW: "up",
-    ArrowDown: "down",
-    KeyS: "down",
-  }[event.code];
-  if (panDirection) {
-    event.preventDefault();
+const battleInputBindings = attachBattleInputBindings({
+  canvas,
+  pan(direction) {
     try {
-      renderStatus(battle_sandbox_pan(panDirection));
+      renderStatus(battle_sandbox_pan(direction));
     } catch (error) {
       reportError(error);
     }
-    return;
-  }
-
-  if (event.code === "Equal" || event.code === "NumpadAdd") {
-    event.preventDefault();
-    runControl({ kind: "zoomCamera", factor: 1.15 });
-  } else if (event.code === "Minus" || event.code === "NumpadSubtract") {
-    event.preventDefault();
-    runControl({ kind: "zoomCamera", factor: 0.87 });
-  } else if (event.code === "Space") {
-    event.preventDefault();
+  },
+  zoom(factor) {
+    runControl({ kind: "zoomCamera", factor });
+  },
+  stopSelected() {
     runControl({ kind: "stopSelected" });
-  } else if (event.code === "KeyL") {
-    event.preventDefault();
-    setFormation("line");
-  } else if (event.code === "KeyC") {
-    event.preventDefault();
-    setFormation("column");
-  } else if (event.code === "Digit0") {
-    event.preventDefault();
+  },
+  setFormation,
+  fitCamera() {
     runControl({ kind: "fitCamera" });
-  } else if (event.code === "KeyP") {
-    event.preventDefault();
-    togglePause();
-  }
+  },
+  togglePause,
 });
+window.addEventListener("pagehide", () => battleInputBindings.destroy(), { once: true });
 
 pauseButton.addEventListener("click", togglePause);
 stopButton.addEventListener("click", () => runControl({ kind: "stopSelected" }));
