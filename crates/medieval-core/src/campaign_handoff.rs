@@ -47,15 +47,11 @@ impl CampaignState {
             .find(|army| army.id == pending.attacker_army_id)
             .ok_or_else(|| CampaignError::ArmyNotFound(pending.attacker_army_id.clone()))?;
 
-        let attacker = force_seed(
-            &pending.attacker_faction,
-            std::iter::once(attacker_army),
-        );
+        let attacker = force_seed(&pending.attacker_faction, std::iter::once(attacker_army));
         let defender = force_seed(
             &pending.defender_faction,
             self.armies.iter().filter(|army| {
-                army.owner == pending.defender_faction
-                    && army.province == pending.target_province
+                army.owner == pending.defender_faction && army.province == pending.target_province
             }),
         );
 
@@ -70,10 +66,7 @@ impl CampaignState {
     }
 }
 
-fn force_seed<'a>(
-    faction_id: &str,
-    armies: impl Iterator<Item = &'a Army>,
-) -> TacticalForceSeed {
+fn force_seed<'a>(faction_id: &str, armies: impl Iterator<Item = &'a Army>) -> TacticalForceSeed {
     let mut source_army_ids = Vec::new();
     let mut counts = [0_u64; 4];
 
@@ -93,9 +86,7 @@ fn force_seed<'a>(
         (UnitKind::Knights, counts[3]),
     ]
     .into_iter()
-    .filter_map(|(kind, soldiers)| {
-        (soldiers > 0).then_some(TacticalUnitSeed { kind, soldiers })
-    })
+    .filter_map(|(kind, soldiers)| (soldiers > 0).then_some(TacticalUnitSeed { kind, soldiers }))
     .collect();
 
     TacticalForceSeed {
