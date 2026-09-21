@@ -111,8 +111,9 @@ Medieval also has a deliberately local RTS control and desktop-input model in Ru
 4. **Medieval RTS controls and desktop input — complete foundation:** click/Shift/Ctrl selection, drag-box selection, right-click move/engage, wheel and keyboard camera control, stop, control groups, order previews, Escape-close behavior, and fail-closed ordered browser input all converge on the same Rust-local semantic controls.
 5. **GitHub Pages demo renderer — complete acceptance foundation:** the browser projects the same authoritative tactical state, uses the shared Rust-local control semantics, and now has release-WASM Playwright acceptance for physical pointer/keyboard/wheel controls.
 6. **Terrain and battlefield legality — forests current:** deterministic height/cell geometry and forest cover live in `medieval-core`; deployment zones validate production setup, and units starting a tick in forest move at half speed while renderers only project the core-owned cover. Next add rivers, then derive chokepoints from explicit movement/pathing rules.
-7. **Sieges:** walls, gates, towers, capture points, pathing constraints.
-8. **Campaign handoff:** campaign army composition seeds tactical battle; tactical outcome returns casualties and control changes.
+7. **Procedural soldier animation and terrain contact presentation:** consume pinned `3d-lab` skeletal/procedural animation semantics for two-bone leg IK, foot planting/locking, pelvis correction, slope alignment, and later bounded motion warping. Feed contact points/normals from `physics-engine` where real physical queries are required; `medieval-core` remains authoritative for movement, formation, combat, timing, and terrain legality.
+8. **Sieges:** walls, gates, towers, capture points, pathing constraints.
+9. **Campaign handoff:** campaign army composition seeds tactical battle; tactical outcome returns casualties and control changes.
 
 ## Online Battle track
 
