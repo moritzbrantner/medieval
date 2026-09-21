@@ -50,6 +50,48 @@ impl RenderViewState {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RenderSiegeArea {
+    pub min_x_mm: u32,
+    pub max_x_mm: u32,
+    pub min_y_mm: u32,
+    pub max_y_mm: u32,
+}
+
+impl RenderSiegeArea {
+    #[must_use]
+    pub const fn center(self) -> BattlePoint {
+        BattlePoint::new(
+            self.min_x_mm + (self.max_x_mm - self.min_x_mm) / 2,
+            self.min_y_mm + (self.max_y_mm - self.min_y_mm) / 2,
+        )
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RenderSiegeTower {
+    pub center: BattlePoint,
+    pub radius_mm: u32,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RenderSiegeCapture {
+    pub center: BattlePoint,
+    pub radius_mm: u32,
+    pub progress: u16,
+    pub capturing_side: Option<BattleSide>,
+    pub captured_by: Option<BattleSide>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RenderSiegeSnapshot {
+    pub wall_segments: [RenderSiegeArea; 2],
+    pub gate: RenderSiegeArea,
+    pub gate_traversable: bool,
+    pub towers: [RenderSiegeTower; 4],
+    pub capture: RenderSiegeCapture,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderUnitInstance {
     pub unit_id: String,
@@ -89,6 +131,7 @@ pub struct BattleRenderSnapshot {
     pub forest_cells: Vec<TacticalTerrainCell>,
     pub river_cells: Vec<TacticalTerrainCell>,
     pub river_crossing_cells: Vec<TacticalTerrainCell>,
+    pub siege: Option<RenderSiegeSnapshot>,
     pub camera: Camera3d,
     pub units: Vec<RenderUnitInstance>,
 }
@@ -128,6 +171,32 @@ impl BattleRenderSnapshot {
                 }
             })
             .collect();
+        let siege = battle.siege_snapshot().map(|siege| RenderSiegeSnapshot {
+            wall_segments: siege.layout.wall_segments.map(|segment| RenderSiegeArea {
+                min_x_mm: segment.min_x_mm,
+                max_x_mm: segment.max_x_mm,
+                min_y_mm: segment.min_y_mm,
+                max_y_mm: segment.max_y_mm,
+            }),
+            gate: RenderSiegeArea {
+                min_x_mm: siege.layout.gate.min_x_mm,
+                max_x_mm: siege.layout.gate.max_x_mm,
+                min_y_mm: siege.layout.gate.min_y_mm,
+                max_y_mm: siege.layout.gate.max_y_mm,
+            },
+            gate_traversable: siege.gate_state.is_traversable(),
+            towers: siege.layout.towers.map(|tower| RenderSiegeTower {
+                center: tower.center,
+                radius_mm: tower.radius_mm,
+            }),
+            capture: RenderSiegeCapture {
+                center: siege.layout.capture_point.center,
+                radius_mm: siege.layout.capture_point.radius_mm,
+                progress: siege.capture.progress,
+                capturing_side: siege.capture.capturing_side,
+                captured_by: siege.capture.captured_by,
+            },
+        });
         Self {
             tick: battle.tick(),
             battlefield,
@@ -135,6 +204,7 @@ impl BattleRenderSnapshot {
             forest_cells: battle.terrain().forest_cells().to_vec(),
             river_cells: battle.terrain().river_cells().to_vec(),
             river_crossing_cells: battle.terrain().river_crossing_cells().to_vec(),
+            siege,
             camera: view.camera,
             units,
         }
@@ -214,6 +284,7 @@ mod tests {
             first.river_crossing_cells,
             battle.terrain().river_crossing_cells().to_vec()
         );
+        assert!(first.siege.is_none());
         assert_eq!(first.units[0].soldier_centers_mm.len(), 80);
         assert!(
             first.units[0]
@@ -232,6 +303,59 @@ mod tests {
             ]
         );
         assert!(first.units[0].selected);
+    }
+
+    #[test]
+    fn siege_projection_comes_only_from_core_snapshot() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let mut battle = TacticalBattle::deploy_siege(
+            battlefield,
+            vec![
+                TacticalUnit::new(
+                    "attacker",
+                    BattleSide::Attacker,
+                    20,
+                    BattlePoint::new(20_000, 50_000),
+                    Formation::Line { files: 10 },
+                    1_000,
+                ),
+                TacticalUnit::new(
+                    "defender",
+                    BattleSide::Defender,
+                    20,
+                    BattlePoint::new(80_000, 50_000),
+                    Formation::Line { files: 10 },
+                    1_000,
+                ),
+            ],
+        )
+        .unwrap();
+        let view = RenderViewState::fit(battlefield);
+        let closed = BattleRenderSnapshot::capture(&battle, &view)
+            .siege
+            .expect("siege battle projects siege state");
+        assert_eq!(closed.wall_segments.len(), 2);
+        assert_eq!(
+            closed.gate,
+            RenderSiegeArea {
+                min_x_mm: 49_000,
+                max_x_mm: 51_000,
+                min_y_mm: 45_000,
+                max_y_mm: 55_000,
+            }
+        );
+        assert_eq!(closed.towers.len(), 4);
+        assert_eq!(closed.capture.center, BattlePoint::new(80_000, 50_000));
+        assert_eq!(closed.capture.progress, 0);
+        assert!(!closed.gate_traversable);
+
+        battle.open_siege_gate().unwrap();
+        let open = BattleRenderSnapshot::capture(&battle, &view)
+            .siege
+            .expect("open siege still projects state");
+        assert!(open.gate_traversable);
+        assert_eq!(open.wall_segments, closed.wall_segments);
+        assert_eq!(open.towers, closed.towers);
     }
 
     #[test]

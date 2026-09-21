@@ -43,6 +43,7 @@ struct SandboxStatus {
     forest_cells: Vec<TacticalTerrainCell>,
     river_cells: Vec<TacticalTerrainCell>,
     river_crossing_cells: Vec<TacticalTerrainCell>,
+    siege: Option<serde_json::Value>,
     camera: CameraStatus,
     units: Vec<UnitStatus>,
 }
@@ -398,6 +399,10 @@ impl BrowserSandbox {
                 }
             })
             .collect();
+        let siege = self
+            .battle
+            .siege_snapshot()
+            .map(|siege| serde_json::to_value(siege).expect("core siege snapshot is serializable"));
         serde_json::to_string(&SandboxStatus {
             tick: self.battle.tick(),
             paused: self.paused,
@@ -408,6 +413,7 @@ impl BrowserSandbox {
             forest_cells: terrain.forest_cells().to_vec(),
             river_cells: terrain.river_cells().to_vec(),
             river_crossing_cells: terrain.river_crossing_cells().to_vec(),
+            siege,
             camera: CameraStatus {
                 target_x_mm: snapshot.camera.target_x_mm(),
                 target_z_mm: snapshot.camera.target_z_mm(),
@@ -466,7 +472,7 @@ impl BrowserSandbox {
 }
 
 fn sample_battle() -> Result<TacticalBattle, String> {
-    TacticalBattle::deploy(
+    TacticalBattle::deploy_siege(
         FlatBattlefield::new(100_000, 100_000),
         vec![
             unit(

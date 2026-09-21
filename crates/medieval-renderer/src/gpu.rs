@@ -7,7 +7,7 @@ use medieval_core::{
 use wgpu::util::DeviceExt;
 
 use crate::{
-    BattleRenderSnapshot, Camera3d,
+    BattleRenderSnapshot, Camera3d, RenderSiegeArea, RenderSiegeCapture, RenderSiegeTower,
     character_assets::{CharacterAssetPack, CharacterVertex},
     terrain::{
         TERRAIN_GRID_SIZE, terrain_cell_bounds_mm, terrain_cell_height_mm, terrain_height_mm,
@@ -21,6 +21,11 @@ const DEPLOYMENT_BOUNDARY_HEIGHT_MM: f32 = 40.0;
 const FOREST_TREES_PER_CELL: u32 = 4;
 const RIVER_SURFACE_HEIGHT_MM: f32 = 30.0;
 const CROSSING_SURFACE_HEIGHT_MM: f32 = 90.0;
+const SIEGE_WALL_HEIGHT_MM: f32 = 3_600.0;
+const SIEGE_GATE_OPEN_HEIGHT_MM: f32 = 220.0;
+const SIEGE_TOWER_HEIGHT_MM: f32 = 5_000.0;
+const SIEGE_CAPTURE_BASE_HEIGHT_MM: f32 = 180.0;
+const SIEGE_CAPTURE_PROGRESS_HEIGHT_SCALE: f32 = 2.0;
 const CUBE_VERTEX_COUNT: u32 = 36;
 const INITIAL_INSTANCE_CAPACITY: usize = 256;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
@@ -179,6 +184,96 @@ impl GpuWorldInstance {
             ],
             visual: [0.0; 4],
         })
+    }
+
+    fn siege_area_segments(
+        area: RenderSiegeArea,
+        battlefield: FlatBattlefield,
+        height_mm: f32,
+        material: f32,
+    ) -> Vec<Self> {
+        let half_height = height_mm / 2.0;
+        let mut segments = Vec::new();
+
+        for cell_z in 0..TERRAIN_GRID_SIZE {
+            for cell_x in 0..TERRAIN_GRID_SIZE {
+                let Some((cell_min_x, cell_max_x, cell_min_z, cell_max_z)) =
+                    terrain_cell_bounds_mm(battlefield, cell_x, cell_z)
+                else {
+                    continue;
+                };
+                let min_x = area.min_x_mm.max(cell_min_x);
+                let max_x = area.max_x_mm.min(cell_max_x);
+                let min_z = area.min_y_mm.max(cell_min_z);
+                let max_z = area.max_y_mm.min(cell_max_z);
+                if max_x <= min_x || max_z <= min_z {
+                    continue;
+                }
+
+                let terrain_y = terrain_cell_height_mm(battlefield, cell_x, cell_z) as f32;
+                segments.push(Self {
+                    center_material: [
+                        (min_x as f32 + max_x as f32) / 2.0,
+                        terrain_y + half_height,
+                        (min_z as f32 + max_z as f32) / 2.0,
+                        material,
+                    ],
+                    half_extent_routed: [
+                        (max_x - min_x) as f32 / 2.0,
+                        half_height,
+                        (max_z - min_z) as f32 / 2.0,
+                        0.0,
+                    ],
+                    visual: [0.0; 4],
+                });
+            }
+        }
+
+        segments
+    }
+
+    fn siege_tower(tower: RenderSiegeTower, battlefield: FlatBattlefield) -> Self {
+        let terrain_y = terrain_height_mm(battlefield, tower.center) as f32;
+        let half_height = SIEGE_TOWER_HEIGHT_MM / 2.0;
+        Self {
+            center_material: [
+                tower.center.x_mm as f32,
+                terrain_y + half_height,
+                tower.center.y_mm as f32,
+                11.0,
+            ],
+            half_extent_routed: [
+                tower.radius_mm as f32,
+                half_height,
+                tower.radius_mm as f32,
+                0.0,
+            ],
+            visual: [0.0; 4],
+        }
+    }
+
+    fn siege_capture(capture: RenderSiegeCapture, battlefield: FlatBattlefield) -> Self {
+        let terrain_y = terrain_height_mm(battlefield, capture.center) as f32;
+        let height = SIEGE_CAPTURE_BASE_HEIGHT_MM
+            + f32::from(capture.progress) * SIEGE_CAPTURE_PROGRESS_HEIGHT_SCALE;
+        let half_height = height / 2.0;
+        let half_width = (capture.radius_mm as f32 * 0.16).clamp(240.0, 900.0);
+        let side = capture.captured_by.or(capture.capturing_side);
+        let material = match side {
+            None => 12.0,
+            Some(BattleSide::Attacker) => 13.0,
+            Some(BattleSide::Defender) => 14.0,
+        };
+        Self {
+            center_material: [
+                capture.center.x_mm as f32,
+                terrain_y + half_height,
+                capture.center.y_mm as f32,
+                material,
+            ],
+            half_extent_routed: [half_width, half_height, half_width, 0.0],
+            visual: [0.0; 4],
+        }
     }
 }
 
@@ -549,8 +644,13 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     let deployment_capacity = (2 * TERRAIN_GRID_SIZE) as usize;
     let forest_capacity = snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize;
     let river_capacity = snapshot.river_cells.len();
+    let siege_capacity = snapshot.siege.map_or(0, |siege| {
+        (siege.wall_segments.len() + 1) * (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE) as usize
+            + siege.towers.len()
+            + 1
+    });
     let mut world = Vec::with_capacity(
-        terrain_capacity + deployment_capacity + forest_capacity + river_capacity,
+        terrain_capacity + deployment_capacity + forest_capacity + river_capacity + siege_capacity,
     );
     let max_terrain_height_mm = (0..TERRAIN_GRID_SIZE)
         .flat_map(|cell_z| {
@@ -595,6 +695,37 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
                 world.push(marker);
             }
         }
+    }
+
+    if let Some(siege) = snapshot.siege {
+        for wall in siege.wall_segments {
+            world.extend(GpuWorldInstance::siege_area_segments(
+                wall,
+                snapshot.battlefield,
+                SIEGE_WALL_HEIGHT_MM,
+                8.0,
+            ));
+        }
+        world.extend(GpuWorldInstance::siege_area_segments(
+            siege.gate,
+            snapshot.battlefield,
+            if siege.gate_traversable {
+                SIEGE_GATE_OPEN_HEIGHT_MM
+            } else {
+                SIEGE_WALL_HEIGHT_MM
+            },
+            if siege.gate_traversable { 10.0 } else { 9.0 },
+        ));
+        world.extend(
+            siege
+                .towers
+                .into_iter()
+                .map(|tower| GpuWorldInstance::siege_tower(tower, snapshot.battlefield)),
+        );
+        world.push(GpuWorldInstance::siege_capture(
+            siege.capture,
+            snapshot.battlefield,
+        ));
     }
 
     let mut characters = [Vec::new(), Vec::new(), Vec::new()];
@@ -787,6 +918,119 @@ mod tests {
                 + snapshot.river_cells.len()
         );
         assert_eq!(gpu_instances(&snapshot).characters[0].len(), 80);
+    }
+
+    #[test]
+    fn siege_batch_adds_core_projected_walls_gate_towers_and_capture_marker() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let mut battle = TacticalBattle::deploy_siege(
+            battlefield,
+            vec![
+                TacticalUnit::new(
+                    "attacker",
+                    BattleSide::Attacker,
+                    1,
+                    BattlePoint::new(20_000, 50_000),
+                    Formation::Line { files: 1 },
+                    1_000,
+                ),
+                TacticalUnit::new(
+                    "defender",
+                    BattleSide::Defender,
+                    1,
+                    BattlePoint::new(80_000, 50_000),
+                    Formation::Line { files: 1 },
+                    1_000,
+                ),
+            ],
+        )
+        .unwrap();
+        let view = RenderViewState::fit(battlefield);
+        let snapshot = BattleRenderSnapshot::capture(&battle, &view);
+        let base_world_count = (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE + 2 * TERRAIN_GRID_SIZE)
+            as usize
+            + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
+            + snapshot.river_cells.len();
+        let siege = snapshot.siege.expect("siege snapshot");
+        let expected_wall_count = siege
+            .wall_segments
+            .into_iter()
+            .map(|wall| {
+                GpuWorldInstance::siege_area_segments(wall, battlefield, SIEGE_WALL_HEIGHT_MM, 8.0)
+                    .len()
+            })
+            .sum::<usize>();
+        let expected_gate_count = GpuWorldInstance::siege_area_segments(
+            siege.gate,
+            battlefield,
+            SIEGE_WALL_HEIGHT_MM,
+            9.0,
+        )
+        .len();
+        let instances = gpu_instances(&snapshot);
+        assert!(expected_wall_count > siege.wall_segments.len());
+        assert!(expected_gate_count > 1);
+        assert_eq!(
+            instances.world.len(),
+            base_world_count + expected_wall_count + expected_gate_count + siege.towers.len() + 1
+        );
+        assert_eq!(
+            instances
+                .world
+                .iter()
+                .filter(|instance| instance.center_material[3] == 8.0)
+                .count(),
+            expected_wall_count
+        );
+        assert_eq!(
+            instances
+                .world
+                .iter()
+                .filter(|instance| instance.center_material[3] == 9.0)
+                .count(),
+            expected_gate_count
+        );
+        for instance in instances
+            .world
+            .iter()
+            .filter(|instance| matches!(instance.center_material[3], 8.0 | 9.0))
+        {
+            let center = BattlePoint::new(
+                instance.center_material[0] as u32,
+                instance.center_material[2] as u32,
+            );
+            assert_eq!(
+                instance.center_material[1] - instance.half_extent_routed[1],
+                terrain_height_mm(battlefield, center) as f32
+            );
+        }
+        assert_eq!(
+            instances
+                .world
+                .iter()
+                .filter(|instance| instance.center_material[3] == 11.0)
+                .count(),
+            4
+        );
+        assert_eq!(
+            instances
+                .world
+                .iter()
+                .filter(|instance| instance.center_material[3] == 12.0)
+                .count(),
+            1
+        );
+
+        battle.open_siege_gate().unwrap();
+        let open = BattleRenderSnapshot::capture(&battle, &view);
+        assert_eq!(
+            gpu_instances(&open)
+                .world
+                .iter()
+                .filter(|instance| instance.center_material[3] == 10.0)
+                .count(),
+            expected_gate_count
+        );
     }
 
     #[test]
