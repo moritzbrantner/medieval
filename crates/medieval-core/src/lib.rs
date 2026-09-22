@@ -124,6 +124,16 @@ struct UnitSpec {
 }
 
 impl UnitKind {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        self.spec().label
+    }
+
+    #[must_use]
+    pub fn recruitment_cost(self) -> u32 {
+        self.spec().cost
+    }
+
     fn spec(self) -> UnitSpec {
         match self {
             Self::Levy => UnitSpec {

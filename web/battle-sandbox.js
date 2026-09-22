@@ -4,6 +4,7 @@ import init, {
   battle_sandbox_ground_viewport,
   battle_sandbox_pan,
   battle_sandbox_pointer,
+  battle_sandbox_quote_army,
   battle_sandbox_reset,
   battle_sandbox_set_formation,
   battle_sandbox_set_paused,
@@ -24,20 +25,140 @@ const lineFormationButton = document.querySelector("#line-formation");
 const columnFormationButton = document.querySelector("#column-formation");
 const fitButton = document.querySelector("#fit-camera");
 const resetButton = document.querySelector("#reset-battle");
+const armySetup = document.querySelector("#army-setup");
+const battleStage = document.querySelector("#battle-stage");
+const armyOptions = document.querySelector("#army-options");
+const armyBudget = document.querySelector("#army-budget");
+const armySpent = document.querySelector("#army-spent");
+const armyRemaining = document.querySelector("#army-remaining");
+const armySetupReason = document.querySelector("#army-setup-reason");
+const armySetupError = document.querySelector("#army-setup-error");
+const startBattleButton = document.querySelector("#start-sandbox-battle");
 
 let currentStatus;
 const controlsE2E = new URLSearchParams(window.location.search).has("e2e-controls");
-let animationActive = true;
+let animationActive = false;
+let wasmReady = false;
+let battleStarted = false;
 let lastStatusRefresh = 0;
+const armySelection = {
+  levy: 0,
+  spearmen: 1,
+  archers: 1,
+  knights: 1,
+};
 
 function reportError(error) {
-  errorBox.hidden = false;
-  errorBox.textContent = String(error);
+  const target = battleStarted ? errorBox : armySetupError;
+  target.hidden = false;
+  target.textContent = String(error);
 }
 
 function clearError() {
   errorBox.hidden = true;
   errorBox.textContent = "";
+  armySetupError.hidden = true;
+  armySetupError.textContent = "";
+}
+
+function renderArmyQuote(rawQuote) {
+  const quote = typeof rawQuote === "string" ? JSON.parse(rawQuote) : rawQuote;
+  armyBudget.textContent = `${quote.budget} gold`;
+  armySpent.textContent = `${quote.spent} gold`;
+  armyRemaining.textContent = `${quote.remaining} gold`;
+  armySetupReason.textContent = quote.reason
+    ?? `${quote.battalions} battalion${quote.battalions === 1 ? "" : "s"} ready to deploy.`;
+  stateText.textContent = "Choose your army.";
+  selectionText.textContent = `${quote.spent} / ${quote.budget} gold committed`;
+  startBattleButton.disabled = !wasmReady || !quote.canStart || battleStarted;
+
+  const fragment = document.createDocumentFragment();
+  for (const unit of quote.units) {
+    const row = document.createElement("div");
+    row.className = "army-option";
+
+    const copy = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = unit.label;
+    const cost = document.createElement("small");
+    cost.textContent = `${unit.cost} gold per battalion`;
+    copy.append(name, cost);
+
+    const stepper = document.createElement("div");
+    stepper.className = "army-stepper";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "secondary";
+    remove.textContent = "−";
+    remove.setAttribute("aria-label", `Remove ${unit.label} battalion`);
+    remove.disabled = unit.selected === 0;
+    remove.addEventListener("click", () => adjustArmy(unit.unit, -1));
+
+    const count = document.createElement("span");
+    count.className = "army-count";
+    count.textContent = String(unit.selected);
+    count.setAttribute("aria-label", `${unit.label} battalions selected`);
+
+    const add = document.createElement("button");
+    add.type = "button";
+    add.textContent = "+";
+    add.setAttribute("aria-label", `Add ${unit.label} battalion`);
+    add.disabled = quote.battalions >= quote.maxBattalions || unit.cost > quote.remaining;
+    add.addEventListener("click", () => adjustArmy(unit.unit, 1));
+
+    stepper.append(remove, count, add);
+    row.append(copy, stepper);
+    fragment.append(row);
+  }
+  armyOptions.replaceChildren(fragment);
+}
+
+function refreshArmyQuote() {
+  clearError();
+  try {
+    renderArmyQuote(battle_sandbox_quote_army(JSON.stringify(armySelection)));
+  } catch (error) {
+    reportError(error);
+  }
+}
+
+function adjustArmy(unit, delta) {
+  const current = armySelection[unit];
+  if (!Number.isInteger(current)) {
+    reportError(`Unknown army unit ${unit}.`);
+    return;
+  }
+  armySelection[unit] = Math.max(0, current + delta);
+  refreshArmyQuote();
+}
+
+async function beginBattle() {
+  if (!wasmReady || battleStarted) return;
+  clearError();
+  startBattleButton.disabled = true;
+  if (!navigator.gpu) {
+    renderArmyQuote(battle_sandbox_quote_army(JSON.stringify(armySelection)));
+    reportError("This browser does not expose WebGPU. Use a current browser with WebGPU enabled.");
+    return;
+  }
+
+  armySetup.hidden = true;
+  battleStage.hidden = false;
+  syncCanvasSize();
+  try {
+    const status = await battle_sandbox_start(canvas.id, JSON.stringify(armySelection));
+    battleStarted = true;
+    renderStatus(status);
+    canvas.focus();
+    animationActive = true;
+    if (controlsE2E) document.documentElement.dataset.controlsE2eReady = "true";
+    requestAnimationFrame(animate);
+  } catch (error) {
+    battleStage.hidden = true;
+    armySetup.hidden = false;
+    refreshArmyQuote();
+    reportError(error);
+  }
 }
 
 function syncCanvasSize() {
@@ -252,22 +373,17 @@ resetButton.addEventListener("click", () => {
     reportError(error);
   }
 });
+startBattleButton.addEventListener("click", beginBattle);
 window.addEventListener("resize", syncCanvasSize);
 
 async function start() {
   try {
-    if (!navigator.gpu) {
-      throw new Error("This browser does not expose WebGPU. Use a current browser with WebGPU enabled.");
-    }
-    syncCanvasSize();
     await init();
-    renderStatus(await battle_sandbox_start(canvas.id));
-    canvas.focus();
-    if (controlsE2E) document.documentElement.dataset.controlsE2eReady = "true";
-    requestAnimationFrame(animate);
+    wasmReady = true;
+    refreshArmyQuote();
   } catch (error) {
     animationActive = false;
-    stateText.textContent = "Battle sandbox could not start.";
+    stateText.textContent = "Army muster could not load.";
     reportError(error);
   }
 }

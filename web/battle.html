@@ -16,12 +16,42 @@
           <h1>Battle Sandbox</h1>
         </div>
         <div class="battle-state" aria-live="polite">
-          <strong id="battle-state">Loading Rust + WebGPU…</strong>
-          <span id="battle-selection">No units selected.</span>
+          <strong id="battle-state">Loading army muster…</strong>
+          <span id="battle-selection">Preparing unit costs.</span>
         </div>
       </header>
 
-      <section class="sandbox-layout">
+      <section id="army-setup" class="army-setup" aria-labelledby="army-setup-title">
+        <div class="army-setup-copy">
+          <p class="eyebrow">Before battle</p>
+          <h2 id="army-setup-title">Muster your army</h2>
+          <p>Choose the battalions you want to command. Rust owns the unit prices, budget validation, and the tactical army that enters the field.</p>
+        </div>
+
+        <dl class="muster-summary" aria-live="polite">
+          <div>
+            <dt>Budget</dt>
+            <dd id="army-budget">—</dd>
+          </div>
+          <div>
+            <dt>Spent</dt>
+            <dd id="army-spent">—</dd>
+          </div>
+          <div>
+            <dt>Remaining</dt>
+            <dd id="army-remaining">—</dd>
+          </div>
+        </dl>
+
+        <div id="army-options" class="army-options"></div>
+        <p id="army-setup-reason" class="muster-reason">Loading unit roster…</p>
+        <div id="army-setup-error" class="setup-error" role="alert" hidden></div>
+        <button id="start-sandbox-battle" class="start-battle-button" type="button" disabled>
+          Enter battle
+        </button>
+      </section>
+
+      <section id="battle-stage" class="sandbox-layout" hidden>
         <div class="battlefield-frame">
           <canvas
             id="battle-canvas"

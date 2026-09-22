@@ -38,7 +38,22 @@ test("Pages exposes a focused single-player tactical sandbox", () => {
   assert.match(html, /id="stop-units"/);
   assert.match(html, /id="fit-camera"/);
   assert.match(html, /id="reset-battle"/);
+  assert.match(html, /id="army-setup"/);
+  assert.match(html, /id="army-options"/);
+  assert.match(html, /id="start-sandbox-battle"/);
+  assert.match(html, /id="battle-stage"[\s\S]*hidden/);
   assert.match(html, /type="module" src="battle-sandbox\.js"/);
+});
+
+test("pre-battle army selection is quoted and validated by Rust", () => {
+  assert.match(script, /battle_sandbox_quote_army/);
+  assert.match(script, /battle_sandbox_start\(canvas\.id, JSON\.stringify\(armySelection\)\)/);
+  assert.match(wasmRust, /SANDBOX_ARMY_BUDGET: u32 = 1_500/);
+  assert.match(wasmRust, /MAX_SANDBOX_BATTALIONS: u32 = 12/);
+  assert.match(wasmRust, /unit\.recruitment_cost\(\)/);
+  assert.match(wasmRust, /validate_army_selection/);
+  assert.match(wasmRust, /fn player_units\(/);
+  assert.doesNotMatch(script, /unitCosts|costByUnit|recruitmentCosts/);
 });
 
 test("browser input is adaptation only while tactical state remains Rust-owned", () => {

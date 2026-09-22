@@ -27,6 +27,19 @@ async function clickUnit(page, unitId, options = {}) {
 
 test("physical tactical controls reach Rust-owned battle state", async ({ page }) => {
   await page.goto("/battle.html?e2e-controls=1");
+  await expect(page.locator("#army-setup")).toBeVisible();
+  await expect(page.locator("#army-budget")).toHaveText("1500 gold");
+  await expect(page.locator("#army-spent")).toHaveText("980 gold");
+  await expect(page.locator("#army-remaining")).toHaveText("520 gold");
+
+  await page.getByRole("button", { name: "Add Levy battalion" }).click();
+  await expect(page.locator("#army-spent")).toHaveText("1100 gold");
+  await expect(page.locator("#army-remaining")).toHaveText("400 gold");
+  await page.getByRole("button", { name: "Remove Levy battalion" }).click();
+  await expect(page.locator("#army-spent")).toHaveText("980 gold");
+
+  await expect(page.getByRole("button", { name: "Enter battle" })).toBeEnabled();
+  await page.getByRole("button", { name: "Enter battle" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
   await expect(page.locator("#battle-error")).toBeHidden();
 

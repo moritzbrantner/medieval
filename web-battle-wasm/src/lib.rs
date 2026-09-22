@@ -6,7 +6,7 @@ use medieval_core::{
     TacticalTerrainProfile, TacticalUnit, UnitKind,
 };
 use medieval_renderer::{BattleRenderSnapshot, GpuBattleRenderer};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::{JsCast, prelude::*};
 use web_sys::HtmlCanvasElement;
 
@@ -20,6 +20,8 @@ const PICK_PADDING_PX: f64 = 14.0;
 const PICK_FALLBACK_RADIUS_PX: f64 = 44.0;
 const ARCHER_RANGE_MM: u32 = 25_000;
 const CAMERA_PAN_MM: f32 = 5_000.0;
+const SANDBOX_ARMY_BUDGET: u32 = 1_500;
+const MAX_SANDBOX_BATTALIONS: u32 = 12;
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.055,
     g: 0.047,
@@ -29,6 +31,102 @@ const CLEAR_COLOR: wgpu::Color = wgpu::Color {
 
 thread_local! {
     static SANDBOX: RefCell<Option<BrowserSandbox>> = const { RefCell::new(None) };
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SandboxArmySelection {
+    levy: u16,
+    spearmen: u16,
+    archers: u16,
+    knights: u16,
+}
+
+impl SandboxArmySelection {
+    fn entries(self) -> [(UnitKind, u16); 4] {
+        [
+            (UnitKind::Levy, self.levy),
+            (UnitKind::Spearmen, self.spearmen),
+            (UnitKind::Archers, self.archers),
+            (UnitKind::Knights, self.knights),
+        ]
+    }
+
+    fn battalion_count(self) -> u32 {
+        self.entries()
+            .into_iter()
+            .map(|(_, count)| u32::from(count))
+            .sum()
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArmySetupUnit {
+    unit: UnitKind,
+    label: &'static str,
+    cost: u32,
+    selected: u16,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ArmySetupQuote {
+    budget: u32,
+    spent: u32,
+    remaining: u32,
+    battalions: u32,
+    max_battalions: u32,
+    can_start: bool,
+    reason: Option<&'static str>,
+    units: Vec<ArmySetupUnit>,
+}
+
+fn army_setup_quote(selection: SandboxArmySelection) -> ArmySetupQuote {
+    let battalions = selection.battalion_count();
+    let mut spent = 0_u32;
+    let mut units = Vec::with_capacity(4);
+    for (unit, selected) in selection.entries() {
+        let cost = unit.recruitment_cost();
+        spent = spent.saturating_add(cost.saturating_mul(u32::from(selected)));
+        units.push(ArmySetupUnit {
+            unit,
+            label: unit.label(),
+            cost,
+            selected,
+        });
+    }
+    let reason = if battalions == 0 {
+        Some("Choose at least one battalion.")
+    } else if battalions > MAX_SANDBOX_BATTALIONS {
+        Some("The field command can coordinate at most 12 battalions.")
+    } else if spent > SANDBOX_ARMY_BUDGET {
+        Some("This army exceeds the available muster budget.")
+    } else {
+        None
+    };
+    ArmySetupQuote {
+        budget: SANDBOX_ARMY_BUDGET,
+        spent,
+        remaining: SANDBOX_ARMY_BUDGET.saturating_sub(spent),
+        battalions,
+        max_battalions: MAX_SANDBOX_BATTALIONS,
+        can_start: reason.is_none(),
+        reason,
+        units,
+    }
+}
+
+fn validate_army_selection(selection: SandboxArmySelection) -> Result<(), String> {
+    let quote = army_setup_quote(selection);
+    if quote.can_start {
+        Ok(())
+    } else {
+        Err(quote
+            .reason
+            .unwrap_or("the selected army is not valid")
+            .to_owned())
+    }
 }
 
 #[derive(Serialize)]
@@ -100,10 +198,14 @@ struct BrowserSandbox {
     tick_accumulator: f64,
     last_opponent_plan_tick: u64,
     paused: bool,
+    initial_army: SandboxArmySelection,
 }
 
 impl BrowserSandbox {
-    async fn new(canvas: HtmlCanvasElement) -> Result<Self, String> {
+    async fn new(
+        canvas: HtmlCanvasElement,
+        initial_army: SandboxArmySelection,
+    ) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let surface: wgpu::Surface<'static> = instance
             .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
@@ -130,7 +232,7 @@ impl BrowserSandbox {
             .ok_or_else(|| "selected WebGPU adapter cannot present to the battle canvas".to_owned())?;
         surface.configure(&device, &config);
 
-        let mut battle = sample_battle()?;
+        let mut battle = sample_battle(initial_army)?;
         drive_opponent(&mut battle)?;
         let controls = TacticalControls::new(&battle, BattleSide::Attacker);
         let snapshot = BattleRenderSnapshot::capture(&battle, &controls.render_view(&battle));
@@ -149,13 +251,14 @@ impl BrowserSandbox {
             tick_accumulator: 0.0,
             last_opponent_plan_tick: 0,
             paused: false,
+            initial_army,
         };
         sandbox.render()?;
         Ok(sandbox)
     }
 
     fn reset(&mut self) -> Result<(), String> {
-        let mut battle = sample_battle()?;
+        let mut battle = sample_battle(self.initial_army)?;
         drive_opponent(&mut battle)?;
         self.controls = TacticalControls::new(&battle, BattleSide::Attacker);
         self.battle = battle;
@@ -471,20 +574,46 @@ impl BrowserSandbox {
     }
 }
 
-fn sample_battle() -> Result<TacticalBattle, String> {
-    TacticalBattle::deploy_siege(
-        FlatBattlefield::new(100_000, 100_000),
-        vec![
-            unit(
-                "attacker-spears",
-                UnitKind::Spearmen,
-                BattleSide::Attacker,
-                110,
-                22_000,
-                24_000,
-                Formation::Line { files: 28 },
-                450,
-            ),
+fn sample_battle(selection: SandboxArmySelection) -> Result<TacticalBattle, String> {
+    validate_army_selection(selection)?;
+    let mut units = player_units(selection);
+    units.extend(opponent_units());
+    TacticalBattle::deploy_siege(FlatBattlefield::new(100_000, 100_000), units)
+        .map_err(|error| error.to_string())
+}
+
+fn player_units(selection: SandboxArmySelection) -> Vec<TacticalUnit> {
+    let mut units = Vec::new();
+    let mut extra_slot = 0_u16;
+    for (kind, count) in selection.entries() {
+        for index in 0..count {
+            if index == 0 {
+                if let Some(unit) = canonical_player_unit(kind) {
+                    units.push(unit);
+                    continue;
+                }
+            }
+            units.push(extra_player_unit(kind, index, extra_slot));
+            extra_slot = extra_slot.saturating_add(1);
+        }
+    }
+    units
+}
+
+fn canonical_player_unit(kind: UnitKind) -> Option<TacticalUnit> {
+    match kind {
+        UnitKind::Levy => None,
+        UnitKind::Spearmen => Some(unit(
+            "attacker-spears",
+            UnitKind::Spearmen,
+            BattleSide::Attacker,
+            110,
+            22_000,
+            24_000,
+            Formation::Line { files: 28 },
+            450,
+        )),
+        UnitKind::Archers => Some(
             unit(
                 "attacker-archers",
                 UnitKind::Archers,
@@ -496,50 +625,91 @@ fn sample_battle() -> Result<TacticalBattle, String> {
                 420,
             )
             .with_attack_range_mm(ARCHER_RANGE_MM),
-            unit(
-                "attacker-knights",
-                UnitKind::Knights,
-                BattleSide::Attacker,
-                44,
-                22_000,
-                76_000,
-                Formation::Column { files: 12 },
-                850,
-            ),
-            unit(
-                "defender-spears",
-                UnitKind::Spearmen,
-                BattleSide::Defender,
-                110,
-                78_000,
-                24_000,
-                Formation::Line { files: 28 },
-                430,
-            ),
-            unit(
-                "defender-archers",
-                UnitKind::Archers,
-                BattleSide::Defender,
-                80,
-                82_000,
-                50_000,
-                Formation::Line { files: 24 },
-                400,
-            )
-            .with_attack_range_mm(ARCHER_RANGE_MM),
-            unit(
-                "defender-knights",
-                UnitKind::Knights,
-                BattleSide::Defender,
-                44,
-                78_000,
-                76_000,
-                Formation::Column { files: 12 },
-                800,
-            ),
-        ],
-    )
-    .map_err(|error| error.to_string())
+        ),
+        UnitKind::Knights => Some(unit(
+            "attacker-knights",
+            UnitKind::Knights,
+            BattleSide::Attacker,
+            44,
+            22_000,
+            76_000,
+            Formation::Column { files: 12 },
+            850,
+        )),
+    }
+}
+
+fn extra_player_unit(kind: UnitKind, index: u16, slot: u16) -> TacticalUnit {
+    let slug = match kind {
+        UnitKind::Levy => "levy",
+        UnitKind::Spearmen => "spears",
+        UnitKind::Archers => "archers",
+        UnitKind::Knights => "knights",
+    };
+    let id = if index == 0 {
+        format!("attacker-{slug}")
+    } else {
+        format!("attacker-{slug}-{}", index + 1)
+    };
+    let x_mm = if slot % 2 == 0 { 14_000 } else { 30_000 };
+    let y_mm = 18_000 + u32::from(slot / 2) * 13_000;
+    let (soldiers, formation, speed_mm_per_tick) = match kind {
+        UnitKind::Levy => (120, Formation::Line { files: 30 }, 380),
+        UnitKind::Spearmen => (110, Formation::Line { files: 28 }, 450),
+        UnitKind::Archers => (80, Formation::Line { files: 24 }, 420),
+        UnitKind::Knights => (44, Formation::Column { files: 12 }, 850),
+    };
+    let unit = unit(
+        &id,
+        kind,
+        BattleSide::Attacker,
+        soldiers,
+        x_mm,
+        y_mm,
+        formation,
+        speed_mm_per_tick,
+    );
+    if kind == UnitKind::Archers {
+        unit.with_attack_range_mm(ARCHER_RANGE_MM)
+    } else {
+        unit
+    }
+}
+
+fn opponent_units() -> Vec<TacticalUnit> {
+    vec![
+        unit(
+            "defender-spears",
+            UnitKind::Spearmen,
+            BattleSide::Defender,
+            110,
+            78_000,
+            24_000,
+            Formation::Line { files: 28 },
+            430,
+        ),
+        unit(
+            "defender-archers",
+            UnitKind::Archers,
+            BattleSide::Defender,
+            80,
+            82_000,
+            50_000,
+            Formation::Line { files: 24 },
+            400,
+        )
+        .with_attack_range_mm(ARCHER_RANGE_MM),
+        unit(
+            "defender-knights",
+            UnitKind::Knights,
+            BattleSide::Defender,
+            44,
+            78_000,
+            76_000,
+            Formation::Column { files: 12 },
+            800,
+        ),
+    ]
 }
 
 fn unit(
@@ -763,8 +933,22 @@ fn js_error(error: impl ToString) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 
+fn parse_army_selection(selection_json: &str) -> Result<SandboxArmySelection, JsValue> {
+    serde_json::from_str(selection_json)
+        .map_err(|error| js_error(format!("invalid army selection: {error}")))
+}
+
 #[wasm_bindgen]
-pub async fn battle_sandbox_start(canvas_id: String) -> Result<String, JsValue> {
+pub fn battle_sandbox_quote_army(selection_json: &str) -> Result<String, JsValue> {
+    let selection = parse_army_selection(selection_json)?;
+    serde_json::to_string(&army_setup_quote(selection)).map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub async fn battle_sandbox_start(
+    canvas_id: String,
+    selection_json: String,
+) -> Result<String, JsValue> {
     let window = web_sys::window().ok_or_else(|| js_error("browser window is unavailable"))?;
     let document = window
         .document()
@@ -774,7 +958,10 @@ pub async fn battle_sandbox_start(canvas_id: String) -> Result<String, JsValue> 
         .ok_or_else(|| js_error(format!("battle canvas #{canvas_id} does not exist")))?
         .dyn_into::<HtmlCanvasElement>()
         .map_err(|_| js_error(format!("element #{canvas_id} is not a canvas")))?;
-    let sandbox = BrowserSandbox::new(canvas).await.map_err(js_error)?;
+    let selection = parse_army_selection(&selection_json)?;
+    let sandbox = BrowserSandbox::new(canvas, selection)
+        .await
+        .map_err(js_error)?;
     let status = sandbox.status_json().map_err(js_error)?;
     SANDBOX.with(|slot| *slot.borrow_mut() = Some(sandbox));
     Ok(status)
