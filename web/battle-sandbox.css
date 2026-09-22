@@ -96,6 +96,140 @@ canvas:focus-visible {
   color: #f6ecd6;
 }
 
+[hidden] {
+  display: none !important;
+}
+
+.army-setup {
+  width: min(980px, 100%);
+  margin: clamp(1.5rem, 6vh, 4.5rem) auto 0;
+  padding: clamp(1.25rem, 3vw, 2rem);
+  border: 1px solid #5f523c;
+  border-radius: 6px;
+  background: rgb(25 22 17 / 0.94);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.28);
+  font-family: system-ui, sans-serif;
+}
+
+.army-setup-copy {
+  max-width: 46rem;
+}
+
+.army-setup h2 {
+  margin: 0.15rem 0 0.55rem;
+  color: #f6ecd6;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.65rem, 4vw, 2.5rem);
+  font-weight: 500;
+}
+
+.army-setup-copy > p:last-child {
+  margin: 0;
+  color: #cfc5b1;
+  line-height: 1.55;
+}
+
+.muster-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin: 1.3rem 0;
+}
+
+.muster-summary div {
+  padding: 0.8rem 0.9rem;
+  border: 1px solid #433929;
+  border-radius: 4px;
+  background: #1b1812;
+}
+
+.muster-summary dt {
+  color: #a89b85;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.muster-summary dd {
+  margin: 0.2rem 0 0;
+  color: #f6ecd6;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.army-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.army-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid #433929;
+  border-radius: 4px;
+  background: #211d16;
+}
+
+.army-option strong,
+.army-option small {
+  display: block;
+}
+
+.army-option small {
+  margin-top: 0.18rem;
+  color: #a99d89;
+}
+
+.army-stepper {
+  display: grid;
+  grid-template-columns: 42px 2rem 42px;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.army-stepper button {
+  min-height: 38px;
+  padding: 0.4rem;
+}
+
+.army-count {
+  color: #f6ecd6;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.muster-reason {
+  min-height: 1.4rem;
+  margin: 0.9rem 0 0;
+  color: #bfb39f;
+}
+
+.setup-error {
+  margin-top: 0.75rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #9b554a;
+  border-radius: 4px;
+  background: rgb(55 18 14 / 0.78);
+  color: #ffd9d1;
+}
+
+.start-battle-button {
+  width: 100%;
+  margin-top: 0.85rem;
+  font-weight: 700;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  filter: none;
+}
+
 .sandbox-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
@@ -219,6 +353,11 @@ canvas:focus-visible {
 
   .battle-state {
     text-align: left;
+  }
+
+  .muster-summary,
+  .army-options {
+    grid-template-columns: 1fr;
   }
 
   .sandbox-layout {
