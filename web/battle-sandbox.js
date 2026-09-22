@@ -263,7 +263,10 @@ async function start() {
     await init();
     renderStatus(await battle_sandbox_start(canvas.id));
     canvas.focus();
-    if (controlsE2E) document.documentElement.dataset.controlsE2eReady = "true";
+    if (controlsE2E) {
+      await battleInputBindings.ready;
+      document.documentElement.dataset.controlsE2eReady = "true";
+    }
     requestAnimationFrame(animate);
   } catch (error) {
     animationActive = false;
