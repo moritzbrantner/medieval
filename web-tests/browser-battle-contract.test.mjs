@@ -108,7 +108,7 @@ test("browser snapshots reconcile autonomous routing before exposing selection",
 
 test("Pages creates browser bindings from the tactical WASM artifact", () => {
   assert.match(pages, /web-battle-wasm\/Cargo\.toml/);
-  assert.match(pages, /wasm-bindgen-cli --version 0\.2\.127 --locked/);
+  assert.match(pages, /wasm-bindgen-cli --version 0\.2\.128 --locked/);
   assert.match(pages, /medieval_web_battle\.wasm/);
   assert.match(pages, /--target web/);
   assert.match(pages, /--out-name medieval_web_battle/);
