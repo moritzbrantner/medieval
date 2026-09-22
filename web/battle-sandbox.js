@@ -113,8 +113,8 @@ function renderArmyQuote(rawQuote) {
   armyOptions.replaceChildren(fragment);
 }
 
-function refreshArmyQuote() {
-  clearError();
+function refreshArmyQuote({ preserveError = false } = {}) {
+  if (!preserveError) clearError();
   try {
     renderArmyQuote(battle_sandbox_quote_army(JSON.stringify(armySelection)));
   } catch (error) {
@@ -156,8 +156,8 @@ async function beginBattle() {
   } catch (error) {
     battleStage.hidden = true;
     armySetup.hidden = false;
-    refreshArmyQuote();
     reportError(error);
+    refreshArmyQuote({ preserveError: true });
   }
 }
 

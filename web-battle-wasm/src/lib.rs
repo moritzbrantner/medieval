@@ -22,6 +22,9 @@ const ARCHER_RANGE_MM: u32 = 25_000;
 const CAMERA_PAN_MM: f32 = 5_000.0;
 const SANDBOX_ARMY_BUDGET: u32 = 1_500;
 const MAX_SANDBOX_BATTALIONS: u32 = 12;
+const PLAYER_DEPLOYMENT_X_MM: u32 = 22_000;
+const PLAYER_DEPLOYMENT_FIRST_Y_MM: u32 = 10_000;
+const PLAYER_DEPLOYMENT_ROW_SPACING_MM: u32 = 7_000;
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.055,
     g: 0.047,
@@ -584,23 +587,26 @@ fn sample_battle(selection: SandboxArmySelection) -> Result<TacticalBattle, Stri
 
 fn player_units(selection: SandboxArmySelection) -> Vec<TacticalUnit> {
     let mut units = Vec::new();
-    let mut extra_slot = 0_u16;
+    let mut deployment_slot = 0_u16;
     for (kind, count) in selection.entries() {
         for index in 0..count {
+            let y_mm = PLAYER_DEPLOYMENT_FIRST_Y_MM
+                + u32::from(deployment_slot) * PLAYER_DEPLOYMENT_ROW_SPACING_MM;
             if index == 0 {
-                if let Some(unit) = canonical_player_unit(kind) {
+                if let Some(unit) = canonical_player_unit(kind, y_mm) {
                     units.push(unit);
+                    deployment_slot = deployment_slot.saturating_add(1);
                     continue;
                 }
             }
-            units.push(extra_player_unit(kind, index, extra_slot));
-            extra_slot = extra_slot.saturating_add(1);
+            units.push(extra_player_unit(kind, index, y_mm));
+            deployment_slot = deployment_slot.saturating_add(1);
         }
     }
     units
 }
 
-fn canonical_player_unit(kind: UnitKind) -> Option<TacticalUnit> {
+fn canonical_player_unit(kind: UnitKind, y_mm: u32) -> Option<TacticalUnit> {
     match kind {
         UnitKind::Levy => None,
         UnitKind::Spearmen => Some(unit(
@@ -608,8 +614,8 @@ fn canonical_player_unit(kind: UnitKind) -> Option<TacticalUnit> {
             UnitKind::Spearmen,
             BattleSide::Attacker,
             110,
-            22_000,
-            24_000,
+            PLAYER_DEPLOYMENT_X_MM,
+            y_mm,
             Formation::Line { files: 28 },
             450,
         )),
@@ -619,8 +625,8 @@ fn canonical_player_unit(kind: UnitKind) -> Option<TacticalUnit> {
                 UnitKind::Archers,
                 BattleSide::Attacker,
                 80,
-                18_000,
-                50_000,
+                PLAYER_DEPLOYMENT_X_MM,
+                y_mm,
                 Formation::Line { files: 24 },
                 420,
             )
@@ -631,15 +637,15 @@ fn canonical_player_unit(kind: UnitKind) -> Option<TacticalUnit> {
             UnitKind::Knights,
             BattleSide::Attacker,
             44,
-            22_000,
-            76_000,
+            PLAYER_DEPLOYMENT_X_MM,
+            y_mm,
             Formation::Column { files: 12 },
             850,
         )),
     }
 }
 
-fn extra_player_unit(kind: UnitKind, index: u16, slot: u16) -> TacticalUnit {
+fn extra_player_unit(kind: UnitKind, index: u16, y_mm: u32) -> TacticalUnit {
     let slug = match kind {
         UnitKind::Levy => "levy",
         UnitKind::Spearmen => "spears",
@@ -651,8 +657,6 @@ fn extra_player_unit(kind: UnitKind, index: u16, slot: u16) -> TacticalUnit {
     } else {
         format!("attacker-{slug}-{}", index + 1)
     };
-    let x_mm = if slot % 2 == 0 { 14_000 } else { 30_000 };
-    let y_mm = 18_000 + u32::from(slot / 2) * 13_000;
     let (soldiers, formation, speed_mm_per_tick) = match kind {
         UnitKind::Levy => (120, Formation::Line { files: 30 }, 380),
         UnitKind::Spearmen => (110, Formation::Line { files: 28 }, 450),
@@ -664,7 +668,7 @@ fn extra_player_unit(kind: UnitKind, index: u16, slot: u16) -> TacticalUnit {
         kind,
         BattleSide::Attacker,
         soldiers,
-        x_mm,
+        PLAYER_DEPLOYMENT_X_MM,
         y_mm,
         formation,
         speed_mm_per_tick,
@@ -1104,4 +1108,36 @@ pub fn battle_sandbox_pan(direction: &str) -> Result<String, JsValue> {
         })
         .to_string(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maximum_wide_battalions_get_distinct_in_bounds_rows() {
+        let units = player_units(SandboxArmySelection {
+            levy: MAX_SANDBOX_BATTALIONS as u16,
+            spearmen: 0,
+            archers: 0,
+            knights: 0,
+        });
+
+        assert_eq!(units.len(), MAX_SANDBOX_BATTALIONS as usize);
+        for (slot, unit) in units.iter().enumerate() {
+            assert_eq!(unit.position().x_mm, PLAYER_DEPLOYMENT_X_MM);
+            assert_eq!(
+                unit.position().y_mm,
+                PLAYER_DEPLOYMENT_FIRST_Y_MM
+                    + slot as u32 * PLAYER_DEPLOYMENT_ROW_SPACING_MM
+            );
+            assert!(unit.position().y_mm < 100_000);
+        }
+        for pair in units.windows(2) {
+            assert!(
+                pair[1].position().y_mm - pair[0].position().y_mm
+                    >= PLAYER_DEPLOYMENT_ROW_SPACING_MM
+            );
+        }
+    }
 }

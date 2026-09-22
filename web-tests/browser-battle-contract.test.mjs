@@ -56,6 +56,11 @@ test("pre-battle army selection is quoted and validated by Rust", () => {
   assert.doesNotMatch(script, /unitCosts|costByUnit|recruitmentCosts/);
 });
 
+test("battle startup failures survive army quote refreshes", () => {
+  assert.match(script, /function refreshArmyQuote\(\{ preserveError = false \} = \{\}\)/);
+  assert.match(script, /reportError\(error\);\s*refreshArmyQuote\(\{ preserveError: true \}\)/);
+});
+
 test("browser input is adaptation only while tactical state remains Rust-owned", () => {
   assert.match(script, /medieval_web_battle\.js/);
   assert.match(script, /battle_sandbox_start/);
