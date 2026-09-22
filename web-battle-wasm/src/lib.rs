@@ -653,32 +653,11 @@ fn extra_player_unit(kind: UnitKind, index: u16, slot: u16) -> TacticalUnit {
     };
     let x_mm = if slot % 2 == 0 { 14_000 } else { 30_000 };
     let y_mm = 18_000 + u32::from(slot / 2) * 13_000;
-    let soldiers = kind.recruitment_soldiers().saturating_mul(4);
-    let (formation, speed_mm_per_tick) = match kind {
-        UnitKind::Levy => (
-            Formation::Line {
-                files: (soldiers / 4).max(8),
-            },
-            380,
-        ),
-        UnitKind::Spearmen => (
-            Formation::Line {
-                files: (soldiers / 4).max(8),
-            },
-            450,
-        ),
-        UnitKind::Archers => (
-            Formation::Line {
-                files: (soldiers / 4).max(8),
-            },
-            420,
-        ),
-        UnitKind::Knights => (
-            Formation::Column {
-                files: (soldiers / 4).max(4),
-            },
-            850,
-        ),
+    let (soldiers, formation, speed_mm_per_tick) = match kind {
+        UnitKind::Levy => (120, Formation::Line { files: 30 }, 380),
+        UnitKind::Spearmen => (110, Formation::Line { files: 28 }, 450),
+        UnitKind::Archers => (80, Formation::Line { files: 24 }, 420),
+        UnitKind::Knights => (44, Formation::Column { files: 12 }, 850),
     };
     let unit = unit(
         &id,
