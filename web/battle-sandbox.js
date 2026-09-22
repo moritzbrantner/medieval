@@ -137,8 +137,8 @@ async function beginBattle() {
   clearError();
   startBattleButton.disabled = true;
   if (!navigator.gpu) {
+    renderArmyQuote(battle_sandbox_quote_army(JSON.stringify(armySelection)));
     reportError("This browser does not expose WebGPU. Use a current browser with WebGPU enabled.");
-    refreshArmyQuote();
     return;
   }
 
@@ -156,8 +156,8 @@ async function beginBattle() {
   } catch (error) {
     battleStage.hidden = true;
     armySetup.hidden = false;
-    reportError(error);
     refreshArmyQuote();
+    reportError(error);
   }
 }
 
