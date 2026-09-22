@@ -110,9 +110,9 @@ Medieval also has a deliberately local RTS control and desktop-input model in Ru
 3. **Production desktop renderer — complete foundation:** Rust + `wgpu` battlefield projection, camera, selection, order previews, GPU batching/instancing, native Tauri window/surface/frame lifecycle, and session-backed snapshot refresh are in place.
 4. **Medieval RTS controls and desktop input — complete foundation:** click/Shift/Ctrl selection, drag-box selection, right-click move/engage, wheel and keyboard camera control, stop, control groups, order previews, Escape-close behavior, and fail-closed ordered browser input all converge on the same Rust-local semantic controls.
 5. **GitHub Pages demo renderer — complete acceptance foundation:** the browser projects the same authoritative tactical state, uses the shared Rust-local control semantics, and now has release-WASM Playwright acceptance for physical pointer/keyboard/wheel controls.
-6. **Terrain and battlefield legality — forests current:** deterministic height/cell geometry and forest cover live in `medieval-core`; deployment zones validate production setup, and units starting a tick in forest move at half speed while renderers only project the core-owned cover. Next add rivers, then derive chokepoints from explicit movement/pathing rules.
-7. **Sieges:** walls, gates, towers, capture points, pathing constraints.
-8. **Campaign handoff:** campaign army composition seeds tactical battle; tactical outcome returns casualties and control changes.
+6. **Terrain and battlefield legality — complete foundation:** deterministic height/cell geometry, forest movement, explicit rivers/ford routing, elevation combat modifiers, and forest ranged protection live in `medieval-core`; renderers only project the core-owned terrain contract.
+7. **Sieges — complete foundation:** deterministic walls, gate state, towers, capture-point state, siege deployment, pathing constraints, and Rust/wgpu projection are in place. Browser acceptance currently proves closed-gate routing; open-gate traversal and physical capture progression remain follow-up evidence.
+8. **Campaign handoff — in progress:** a deterministic, serializable core-owned tactical composition seed now projects the pending campaign battle's exact attacker and defending army composition plus source-army provenance. Next map that seed into deterministic tactical deployment/formation profiles, then reconcile tactical casualties and control changes back into campaign state.
 
 ## Online Battle track
 
