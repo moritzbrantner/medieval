@@ -2527,7 +2527,7 @@ dependencies = [
 [[package]]
 name = "physics-engine"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/physics-engine?rev=26f75db7c033d9c25e0c16cc88e8e9c6197d3b4c#26f75db7c033d9c25e0c16cc88e8e9c6197d3b4c"
+source = "git+https://github.com/moritzbrantner/physics-engine?rev=44a8f54241f4467867cd483daaa5179d4468ea02#44a8f54241f4467867cd483daaa5179d4468ea02"
 
 [[package]]
 name = "pin-project-lite"
