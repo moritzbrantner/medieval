@@ -477,8 +477,9 @@ fn viewport_to_world(
     controls
         .render_view(battle)
         .camera
-        .ground_point_from_viewport(
+        .ground_point_from_viewport_on_terrain(
             battle.battlefield(),
+            battle.terrain(),
             sample.x as f32,
             sample.y as f32,
             sample.width as f32,
@@ -894,8 +895,9 @@ mod tests {
             .unwrap();
         let [x, y] = snapshot
             .camera
-            .project_world_point(
+            .project_world_point_on_terrain(
                 snapshot.battlefield,
+                snapshot.terrain,
                 rendered.interaction_anchor_mm(),
                 1_000.0,
                 1_000.0,
@@ -907,7 +909,13 @@ mod tests {
     fn pointer_for_ground(session: &NativeBattleSession, point: BattlePoint) -> PointerSample {
         let camera = session.controls.render_view(&session.battle).camera;
         let [x, y] = camera
-            .project_ground_point(session.battle.battlefield(), point, 1_000.0, 1_000.0)
+            .project_ground_point_on_terrain(
+                session.battle.battlefield(),
+                session.battle.terrain(),
+                point,
+                1_000.0,
+                1_000.0,
+            )
             .unwrap();
         pointer(f64::from(x), f64::from(y))
     }
