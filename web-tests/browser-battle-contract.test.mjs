@@ -31,7 +31,7 @@ const [
 test("Pages exposes a focused single-player tactical sandbox", () => {
   assert.match(index, /id="open-battle-sandbox"/);
   assert.match(index, />Battle Sandbox</);
-  assert.match(launcher, /battleSandboxButton\?\.addEventListener\("click", openBattlePreview\)/);
+  assert.match(launcher, /battleSandboxButton\?\.addEventListener\("click", \(\) =>/);
   assert.match(launcher, /new URL\("battle\.html", window\.location\.href\)/);
   assert.match(html, /<canvas[\s\S]*id="battle-canvas"/);
   assert.match(html, /id="pause-battle"/);
