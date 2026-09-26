@@ -81,11 +81,13 @@ mod tests {
     fn world_bounds_match_the_rendered_cell_volume() {
         let battlefield = FlatBattlefield::new(100_000, 80_000);
         let terrain = TacticalTerrain::battlefield_foundation();
-        let (minimum, maximum) =
-            terrain_cell_world_bounds(terrain, battlefield, 4, 4).unwrap();
+        let (minimum, maximum) = terrain_cell_world_bounds(terrain, battlefield, 4, 4).unwrap();
         assert_eq!(minimum, [50_000.0, -TERRAIN_BASE_DEPTH_MM, 40_000.0]);
         assert_eq!(maximum[0], 62_500.0);
         assert_eq!(maximum[2], 50_000.0);
-        assert_eq!(maximum[1], terrain_cell_height_mm(terrain, battlefield, 4, 4) as f32);
+        assert_eq!(
+            maximum[1],
+            terrain_cell_height_mm(terrain, battlefield, 4, 4) as f32
+        );
     }
 }
