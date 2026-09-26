@@ -2,7 +2,8 @@ use std::cell::RefCell;
 
 use bytemuck::{Pod, Zeroable};
 use medieval_core::{
-    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, TacticalTerrainCell, UnitKind,
+    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, TacticalTerrain, TacticalTerrainCell,
+    UnitKind,
 };
 use wgpu::util::DeviceExt;
 
@@ -47,6 +48,7 @@ struct GpuWorldInstance {
 
 impl GpuWorldInstance {
     fn terrain_cell(
+        terrain: TacticalTerrain,
         battlefield: FlatBattlefield,
         cell_x: u32,
         cell_z: u32,
@@ -56,7 +58,7 @@ impl GpuWorldInstance {
         if x1 <= x0 || z1 <= z0 {
             return None;
         }
-        let top = terrain_cell_height_mm(battlefield, cell_x, cell_z) as f32;
+        let top = terrain_cell_height_mm(terrain, battlefield, cell_x, cell_z) as f32;
         let bottom = -GROUND_BASE_DEPTH_MM;
         let half_height = (top - bottom) / 2.0;
         Some(Self {
@@ -86,6 +88,7 @@ impl GpuWorldInstance {
     }
 
     fn deployment_boundary_segment(
+        terrain: TacticalTerrain,
         zone: DeploymentZone,
         battlefield: FlatBattlefield,
         cell_z: u32,
@@ -100,7 +103,7 @@ impl GpuWorldInstance {
         };
         let center_z = z0 + (z1 - z0) / 2;
         let terrain_y =
-            terrain_height_mm(battlefield, BattlePoint::new(boundary_x, center_z)) as f32;
+            terrain_height_mm(terrain, battlefield, BattlePoint::new(boundary_x, center_z)) as f32;
         let half_height = DEPLOYMENT_BOUNDARY_HEIGHT_MM / 2.0;
         Some(Self {
             center_material: [
@@ -123,6 +126,7 @@ impl GpuWorldInstance {
     }
 
     fn forest_tree(
+        terrain: TacticalTerrain,
         cell: TacticalTerrainCell,
         battlefield: FlatBattlefield,
         tree_index: u32,
@@ -142,7 +146,7 @@ impl GpuWorldInstance {
         let tree_z = z0
             + u32::try_from(u64::from(z1 - z0) * u64::from(slot_z * 2 + 1) / 4)
                 .expect("forest tree Z offset fits in u32");
-        let terrain_y = terrain_height_mm(battlefield, BattlePoint::new(tree_x, tree_z)) as f32;
+        let terrain_y = terrain_height_mm(terrain, battlefield, BattlePoint::new(tree_x, tree_z)) as f32;
         let minimum_span = (x1 - x0).min(z1 - z0) as f32;
         let half_width = (minimum_span * 0.06).clamp(120.0, 700.0);
         let half_height = (half_width * 3.0).clamp(700.0, 2_600.0);
@@ -154,6 +158,7 @@ impl GpuWorldInstance {
     }
 
     fn river_cell(
+        terrain: TacticalTerrain,
         cell: TacticalTerrainCell,
         battlefield: FlatBattlefield,
         crossing: bool,
@@ -162,7 +167,7 @@ impl GpuWorldInstance {
         if x1 <= x0 || z1 <= z0 {
             return None;
         }
-        let terrain_y = terrain_cell_height_mm(battlefield, cell.cell_x, cell.cell_z) as f32;
+        let terrain_y = terrain_cell_height_mm(terrain, battlefield, cell.cell_x, cell.cell_z) as f32;
         let height = if crossing {
             CROSSING_SURFACE_HEIGHT_MM
         } else {
@@ -187,6 +192,7 @@ impl GpuWorldInstance {
     }
 
     fn siege_area_segments(
+        terrain: TacticalTerrain,
         area: RenderSiegeArea,
         battlefield: FlatBattlefield,
         height_mm: f32,
@@ -210,7 +216,7 @@ impl GpuWorldInstance {
                     continue;
                 }
 
-                let terrain_y = terrain_cell_height_mm(battlefield, cell_x, cell_z) as f32;
+                let terrain_y = terrain_cell_height_mm(terrain, battlefield, cell_x, cell_z) as f32;
                 segments.push(Self {
                     center_material: [
                         (min_x as f32 + max_x as f32) / 2.0,
@@ -232,8 +238,12 @@ impl GpuWorldInstance {
         segments
     }
 
-    fn siege_tower(tower: RenderSiegeTower, battlefield: FlatBattlefield) -> Self {
-        let terrain_y = terrain_height_mm(battlefield, tower.center) as f32;
+    fn siege_tower(
+        terrain: TacticalTerrain,
+        tower: RenderSiegeTower,
+        battlefield: FlatBattlefield,
+    ) -> Self {
+        let terrain_y = terrain_height_mm(terrain, battlefield, tower.center) as f32;
         let half_height = SIEGE_TOWER_HEIGHT_MM / 2.0;
         Self {
             center_material: [
@@ -252,8 +262,12 @@ impl GpuWorldInstance {
         }
     }
 
-    fn siege_capture(capture: RenderSiegeCapture, battlefield: FlatBattlefield) -> Self {
-        let terrain_y = terrain_height_mm(battlefield, capture.center) as f32;
+    fn siege_capture(
+        terrain: TacticalTerrain,
+        capture: RenderSiegeCapture,
+        battlefield: FlatBattlefield,
+    ) -> Self {
+        let terrain_y = terrain_height_mm(terrain, battlefield, capture.center) as f32;
         let height = SIEGE_CAPTURE_BASE_HEIGHT_MM
             + f32::from(capture.progress) * SIEGE_CAPTURE_PROGRESS_HEIGHT_SCALE;
         let half_height = height / 2.0;
@@ -367,10 +381,11 @@ impl CameraUniform {
     fn from_camera(
         camera: Camera3d,
         battlefield: FlatBattlefield,
+        terrain: TacticalTerrain,
         viewport_width: u32,
         viewport_height: u32,
     ) -> Self {
-        let projection = camera.projection(battlefield);
+        let projection = camera.projection_on_terrain(battlefield, terrain);
         let aspect = viewport_width.max(1) as f32 / viewport_height.max(1) as f32;
         Self {
             eye_near: [
@@ -418,6 +433,7 @@ pub struct GpuBattleRenderer {
     instance_count: u32,
     camera: Camera3d,
     battlefield: FlatBattlefield,
+    terrain: TacticalTerrain,
     depth_target: RefCell<Option<DepthTarget>>,
 }
 
@@ -461,8 +477,9 @@ impl GpuBattleRenderer {
             immediate_size: 0,
         });
         let battlefield = FlatBattlefield::new(1, 1);
+        let terrain = TacticalTerrain::battlefield_foundation();
         let camera = Camera3d::fit(battlefield);
-        let camera_uniform = CameraUniform::from_camera(camera, battlefield, 1, 1);
+        let camera_uniform = CameraUniform::from_camera(camera, battlefield, terrain, 1, 1);
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Medieval 3D tactical camera uniform"),
             contents: bytemuck::bytes_of(&camera_uniform),
@@ -511,6 +528,7 @@ impl GpuBattleRenderer {
             instance_count: 0,
             camera,
             battlefield,
+            terrain,
             depth_target: RefCell::new(None),
         }
     }
@@ -550,6 +568,7 @@ impl GpuBattleRenderer {
                 .sum::<u32>();
         self.camera = snapshot.camera;
         self.battlefield = snapshot.battlefield;
+        self.terrain = snapshot.terrain;
         self.queue = Some(queue.clone());
     }
 
@@ -571,6 +590,7 @@ impl GpuBattleRenderer {
                 bytemuck::bytes_of(&CameraUniform::from_camera(
                     self.camera,
                     self.battlefield,
+                    self.terrain,
                     width,
                     height,
                 )),
@@ -655,7 +675,7 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     let max_terrain_height_mm = (0..TERRAIN_GRID_SIZE)
         .flat_map(|cell_z| {
             (0..TERRAIN_GRID_SIZE)
-                .map(move |cell_x| terrain_cell_height_mm(snapshot.battlefield, cell_x, cell_z))
+                .map(move |cell_x| terrain_cell_height_mm(snapshot.terrain, snapshot.battlefield, cell_x, cell_z))
         })
         .max()
         .unwrap_or(0) as f32;
@@ -663,6 +683,7 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     for cell_z in 0..TERRAIN_GRID_SIZE {
         for cell_x in 0..TERRAIN_GRID_SIZE {
             if let Some(cell) = GpuWorldInstance::terrain_cell(
+                snapshot.terrain,
                 snapshot.battlefield,
                 cell_x,
                 cell_z,
@@ -674,14 +695,14 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     }
     for cell in &snapshot.river_cells {
         let crossing = snapshot.river_crossing_cells.contains(cell);
-        if let Some(river) = GpuWorldInstance::river_cell(*cell, snapshot.battlefield, crossing) {
+        if let Some(river) = GpuWorldInstance::river_cell(snapshot.terrain, *cell, snapshot.battlefield, crossing) {
             world.push(river);
         }
     }
     for cell in &snapshot.forest_cells {
         for tree_index in 0..FOREST_TREES_PER_CELL {
             if let Some(tree) =
-                GpuWorldInstance::forest_tree(*cell, snapshot.battlefield, tree_index)
+                GpuWorldInstance::forest_tree(snapshot.terrain, *cell, snapshot.battlefield, tree_index)
             {
                 world.push(tree);
             }
@@ -690,7 +711,12 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     for zone in snapshot.deployment_zones {
         for cell_z in 0..TERRAIN_GRID_SIZE {
             if let Some(marker) =
-                GpuWorldInstance::deployment_boundary_segment(zone, snapshot.battlefield, cell_z)
+                GpuWorldInstance::deployment_boundary_segment(
+                    snapshot.terrain,
+                    zone,
+                    snapshot.battlefield,
+                    cell_z,
+                )
             {
                 world.push(marker);
             }
@@ -700,6 +726,7 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     if let Some(siege) = snapshot.siege {
         for wall in siege.wall_segments {
             world.extend(GpuWorldInstance::siege_area_segments(
+                snapshot.terrain,
                 wall,
                 snapshot.battlefield,
                 SIEGE_WALL_HEIGHT_MM,
@@ -707,6 +734,7 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
             ));
         }
         world.extend(GpuWorldInstance::siege_area_segments(
+            snapshot.terrain,
             siege.gate,
             snapshot.battlefield,
             if siege.gate_traversable {
@@ -720,9 +748,10 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
             siege
                 .towers
                 .into_iter()
-                .map(|tower| GpuWorldInstance::siege_tower(tower, snapshot.battlefield)),
+                .map(|tower| GpuWorldInstance::siege_tower(snapshot.terrain, tower, snapshot.battlefield)),
         );
         world.push(GpuWorldInstance::siege_capture(
+            snapshot.terrain,
             siege.capture,
             snapshot.battlefield,
         ));
@@ -956,11 +985,12 @@ mod tests {
             .wall_segments
             .into_iter()
             .map(|wall| {
-                GpuWorldInstance::siege_area_segments(wall, battlefield, SIEGE_WALL_HEIGHT_MM, 8.0)
+                GpuWorldInstance::siege_area_segments(snapshot.terrain, wall, battlefield, SIEGE_WALL_HEIGHT_MM, 8.0)
                     .len()
             })
             .sum::<usize>();
         let expected_gate_count = GpuWorldInstance::siege_area_segments(
+            snapshot.terrain,
             siege.gate,
             battlefield,
             SIEGE_WALL_HEIGHT_MM,
@@ -1001,7 +1031,7 @@ mod tests {
             );
             assert_eq!(
                 instance.center_material[1] - instance.half_extent_routed[1],
-                terrain_height_mm(battlefield, center) as f32
+                terrain_height_mm(snapshot.terrain, battlefield, center) as f32
             );
         }
         assert_eq!(
