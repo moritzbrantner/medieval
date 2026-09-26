@@ -513,8 +513,9 @@ where
             if !predicate(unit) {
                 return None;
             }
-            let [x, y] = snapshot.camera.project_world_point(
+            let [x, y] = snapshot.camera.project_world_point_on_terrain(
                 snapshot.battlefield,
+                snapshot.terrain,
                 rendered.interaction_anchor_mm(),
                 sample.width as f32,
                 sample.height as f32,
@@ -555,8 +556,9 @@ fn units_in_viewport_rect(
             if unit.side() != player_side || unit.is_routed() || unit.is_destroyed() {
                 return false;
             }
-            let Some([x, y]) = snapshot.camera.project_world_point(
+            let Some([x, y]) = snapshot.camera.project_world_point_on_terrain(
                 snapshot.battlefield,
+                snapshot.terrain,
                 rendered.interaction_anchor_mm(),
                 first.width as f32,
                 first.height as f32,
