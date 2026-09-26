@@ -9,6 +9,7 @@ import {
   MEDIEVAL_READINESS_COMMAND,
   MEDIEVAL_RELEASE,
   ONLINE_BATTLE_STATES,
+  battleLocationFromUrl,
   buildInviteUrl,
   canStartBattle,
   createReadinessMessage,
@@ -167,6 +168,23 @@ test("Medieval readiness dogfoods GameCommands while retaining Medieval validati
   guestCommands.close();
 });
 
+test("match invites carry the selected battlefield without leaking private setup state", () => {
+  const invite = buildInviteUrl(
+    "https://example.test/medieval/?setupApi=https%3A%2F%2Fsetup.example&participantToken=secret#private",
+    "0123-ABCD-EFGH",
+    "riverFord",
+  );
+  const url = new URL(invite);
+
+  assert.deepEqual([...url.searchParams.entries()], [
+    ["lobby", "0123-ABCD-EFGH"],
+    ["location", "riverFord"],
+  ]);
+  assert.equal(battleLocationFromUrl(invite), "riverFord");
+  assert.equal(invite.includes("secret"), false);
+  assert.equal(invite.includes("setupApi"), false);
+});
+
 test("invite links contain only the public lobby identity", () => {
   const invite = buildInviteUrl(
     "https://example.test/medieval/?setupApi=https%3A%2F%2Fsetup.example&participantToken=secret&view=online#private",
@@ -188,7 +206,9 @@ test("the controller delegates identity/recovery to LobbySession and readiness w
   assert.match(controller, /await current\.join\(code\)/);
   assert.match(controller, /contentSharing:\s*false/);
   assert.match(controller, /readinessSendPending/);
-  assert.match(controller, /commands\.send\(peerId, MEDIEVAL_READINESS_COMMAND/);
+  assert.match(controller, /battleLocationSelect/);
+  assert.match(controller, /normalizeBattleLocation/);
+  assert.match(controller, /commands\.send\([\s\S]*peerId,[\s\S]*MEDIEVAL_READINESS_COMMAND/);
   assert.match(controller, /currentCommands\.handle\(MEDIEVAL_READINESS_COMMAND/);
   assert.match(controller, /channel-close/);
   assert.match(controller, /peer-recovery/);
