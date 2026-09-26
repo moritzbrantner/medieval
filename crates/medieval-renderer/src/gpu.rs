@@ -146,7 +146,8 @@ impl GpuWorldInstance {
         let tree_z = z0
             + u32::try_from(u64::from(z1 - z0) * u64::from(slot_z * 2 + 1) / 4)
                 .expect("forest tree Z offset fits in u32");
-        let terrain_y = terrain_height_mm(terrain, battlefield, BattlePoint::new(tree_x, tree_z)) as f32;
+        let terrain_y =
+            terrain_height_mm(terrain, battlefield, BattlePoint::new(tree_x, tree_z)) as f32;
         let minimum_span = (x1 - x0).min(z1 - z0) as f32;
         let half_width = (minimum_span * 0.06).clamp(120.0, 700.0);
         let half_height = (half_width * 3.0).clamp(700.0, 2_600.0);
@@ -167,7 +168,8 @@ impl GpuWorldInstance {
         if x1 <= x0 || z1 <= z0 {
             return None;
         }
-        let terrain_y = terrain_cell_height_mm(terrain, battlefield, cell.cell_x, cell.cell_z) as f32;
+        let terrain_y =
+            terrain_cell_height_mm(terrain, battlefield, cell.cell_x, cell.cell_z) as f32;
         let height = if crossing {
             CROSSING_SURFACE_HEIGHT_MM
         } else {
@@ -674,8 +676,9 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     );
     let max_terrain_height_mm = (0..TERRAIN_GRID_SIZE)
         .flat_map(|cell_z| {
-            (0..TERRAIN_GRID_SIZE)
-                .map(move |cell_x| terrain_cell_height_mm(snapshot.terrain, snapshot.battlefield, cell_x, cell_z))
+            (0..TERRAIN_GRID_SIZE).map(move |cell_x| {
+                terrain_cell_height_mm(snapshot.terrain, snapshot.battlefield, cell_x, cell_z)
+            })
         })
         .max()
         .unwrap_or(0) as f32;
@@ -695,29 +698,32 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     }
     for cell in &snapshot.river_cells {
         let crossing = snapshot.river_crossing_cells.contains(cell);
-        if let Some(river) = GpuWorldInstance::river_cell(snapshot.terrain, *cell, snapshot.battlefield, crossing) {
+        if let Some(river) =
+            GpuWorldInstance::river_cell(snapshot.terrain, *cell, snapshot.battlefield, crossing)
+        {
             world.push(river);
         }
     }
     for cell in &snapshot.forest_cells {
         for tree_index in 0..FOREST_TREES_PER_CELL {
-            if let Some(tree) =
-                GpuWorldInstance::forest_tree(snapshot.terrain, *cell, snapshot.battlefield, tree_index)
-            {
+            if let Some(tree) = GpuWorldInstance::forest_tree(
+                snapshot.terrain,
+                *cell,
+                snapshot.battlefield,
+                tree_index,
+            ) {
                 world.push(tree);
             }
         }
     }
     for zone in snapshot.deployment_zones {
         for cell_z in 0..TERRAIN_GRID_SIZE {
-            if let Some(marker) =
-                GpuWorldInstance::deployment_boundary_segment(
-                    snapshot.terrain,
-                    zone,
-                    snapshot.battlefield,
-                    cell_z,
-                )
-            {
+            if let Some(marker) = GpuWorldInstance::deployment_boundary_segment(
+                snapshot.terrain,
+                zone,
+                snapshot.battlefield,
+                cell_z,
+            ) {
                 world.push(marker);
             }
         }
@@ -744,12 +750,9 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
             },
             if siege.gate_traversable { 10.0 } else { 9.0 },
         ));
-        world.extend(
-            siege
-                .towers
-                .into_iter()
-                .map(|tower| GpuWorldInstance::siege_tower(snapshot.terrain, tower, snapshot.battlefield)),
-        );
+        world.extend(siege.towers.into_iter().map(|tower| {
+            GpuWorldInstance::siege_tower(snapshot.terrain, tower, snapshot.battlefield)
+        }));
         world.push(GpuWorldInstance::siege_capture(
             snapshot.terrain,
             siege.capture,
@@ -985,8 +988,14 @@ mod tests {
             .wall_segments
             .into_iter()
             .map(|wall| {
-                GpuWorldInstance::siege_area_segments(snapshot.terrain, wall, battlefield, SIEGE_WALL_HEIGHT_MM, 8.0)
-                    .len()
+                GpuWorldInstance::siege_area_segments(
+                    snapshot.terrain,
+                    wall,
+                    battlefield,
+                    SIEGE_WALL_HEIGHT_MM,
+                    8.0,
+                )
+                .len()
             })
             .sum::<usize>();
         let expected_gate_count = GpuWorldInstance::siege_area_segments(
