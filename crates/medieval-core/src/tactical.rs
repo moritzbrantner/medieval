@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::UnitKind;
 use crate::deployment::siege::{SiegeBattleState, SiegeGateState};
 use crate::deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
-use crate::terrain::{COMBAT_FACTOR_BASE_MILLI, TacticalTerrain};
+use crate::terrain::{BattlefieldLocation, COMBAT_FACTOR_BASE_MILLI, TacticalTerrain};
 
 pub const TACTICAL_TICKS_PER_SECOND: u32 = 20;
 pub const MAX_TACTICAL_FATIGUE: u16 = 1_000;
@@ -306,7 +306,23 @@ impl From<TacticalBattleWire> for TacticalBattle {
 impl TacticalBattle {
     pub fn new(
         battlefield: FlatBattlefield,
+        units: Vec<TacticalUnit>,
+    ) -> Result<Self, TacticalError> {
+        Self::new_at_location(battlefield, units, BattlefieldLocation::MountainPass)
+    }
+
+    pub fn new_at_location(
+        battlefield: FlatBattlefield,
+        units: Vec<TacticalUnit>,
+        location: BattlefieldLocation,
+    ) -> Result<Self, TacticalError> {
+        Self::new_with_terrain(battlefield, units, TacticalTerrain::for_location(location))
+    }
+
+    fn new_with_terrain(
+        battlefield: FlatBattlefield,
         mut units: Vec<TacticalUnit>,
+        terrain: TacticalTerrain,
     ) -> Result<Self, TacticalError> {
         if battlefield.width_mm == 0 || battlefield.depth_mm == 0 {
             return Err(TacticalError::InvalidBattlefield {
@@ -314,8 +330,6 @@ impl TacticalBattle {
                 depth_mm: battlefield.depth_mm,
             });
         }
-
-        let terrain = TacticalTerrain::battlefield_foundation();
         let mut unit_ids = HashSet::with_capacity(units.len());
         for unit in &units {
             if unit.id.trim().is_empty() {
@@ -367,7 +381,15 @@ impl TacticalBattle {
         battlefield: FlatBattlefield,
         units: Vec<TacticalUnit>,
     ) -> Result<Self, TacticalError> {
-        let battle = Self::new(battlefield, units)?;
+        Self::deploy_at_location(battlefield, units, BattlefieldLocation::MountainPass)
+    }
+
+    pub fn deploy_at_location(
+        battlefield: FlatBattlefield,
+        units: Vec<TacticalUnit>,
+        location: BattlefieldLocation,
+    ) -> Result<Self, TacticalError> {
+        let battle = Self::new_at_location(battlefield, units, location)?;
         for unit in &battle.units {
             let zone = standard_deployment_zone(battlefield, unit.side);
             if !zone.contains(unit.position) {
@@ -385,7 +407,15 @@ impl TacticalBattle {
         battlefield: FlatBattlefield,
         units: Vec<TacticalUnit>,
     ) -> Result<Self, TacticalError> {
-        let mut battle = Self::new(battlefield, units)?;
+        Self::deploy_siege_at_location(battlefield, units, BattlefieldLocation::MountainPass)
+    }
+
+    pub fn deploy_siege_at_location(
+        battlefield: FlatBattlefield,
+        units: Vec<TacticalUnit>,
+        location: BattlefieldLocation,
+    ) -> Result<Self, TacticalError> {
+        let mut battle = Self::new_at_location(battlefield, units, location)?;
         let siege = SiegeBattleState::test_siege(battlefield);
         for unit in &battle.units {
             let zone = siege
