@@ -540,7 +540,7 @@ mod tests {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
         let camera = Camera3d::fit(battlefield);
         let point = BattlePoint::new(50_000, 95_000);
-        assert_eq!(terrain_height_mm(battlefield, point), 0);
+        assert_eq!(terrain_height_mm(TacticalTerrain::battlefield_foundation(), battlefield, point), 0);
         let pixel = camera
             .project_ground_point(battlefield, point, 1_600.0, 900.0)
             .unwrap();
@@ -601,7 +601,7 @@ mod tests {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
         let camera = Camera3d::fit(battlefield);
         let target = BattlePoint::new(50_000, 50_000);
-        assert!(terrain_height_mm(battlefield, target) > 0);
+        assert!(terrain_height_mm(TacticalTerrain::battlefield_foundation(), battlefield, target) > 0);
         assert_eq!(
             camera.ground_point_from_viewport(battlefield, 500.0, 500.0, 1_000.0, 1_000.0),
             Some(target)
@@ -655,7 +655,7 @@ mod tests {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
         let camera = Camera3d::fit(battlefield);
         let point = BattlePoint::new(50_000, 50_000);
-        let terrain_y = terrain_height_mm(battlefield, point) as f32;
+        let terrain_y = terrain_height_mm(TacticalTerrain::battlefield_foundation(), battlefield, point) as f32;
         let ground = camera
             .project_world_point(
                 battlefield,
