@@ -225,7 +225,9 @@ pub fn install(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .expect("configured Medieval main window must exist during setup");
     let window = build_battle_window(app, &main_window)?;
     let renderer = Arc::new(Mutex::new(None));
-    let session = Arc::new(Mutex::new(sample_session(BattlefieldLocation::MountainPass)));
+    let session = Arc::new(Mutex::new(sample_session(
+        BattlefieldLocation::MountainPass,
+    )));
     let running = Arc::new(AtomicBool::new(false));
     let initializing = Arc::new(AtomicBool::new(false));
     let shutdown = Arc::new(AtomicBool::new(false));
