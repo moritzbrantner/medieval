@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use medieval_core::{
     BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation, TacticalBattle,
-    TacticalTerrainCell, UnitKind,
+    TacticalTerrain, TacticalTerrainCell, UnitKind,
 };
 
 use crate::{Camera3d, terrain::terrain_height_mm};
@@ -128,6 +128,7 @@ pub struct BattleRenderSnapshot {
     pub tick: u64,
     pub battlefield: FlatBattlefield,
     pub deployment_zones: [DeploymentZone; 2],
+    pub terrain: TacticalTerrain,
     pub forest_cells: Vec<TacticalTerrainCell>,
     pub river_cells: Vec<TacticalTerrainCell>,
     pub river_crossing_cells: Vec<TacticalTerrainCell>,
@@ -142,12 +143,14 @@ impl BattleRenderSnapshot {
     #[must_use]
     pub fn capture(battle: &TacticalBattle, view: &RenderViewState) -> Self {
         let battlefield = battle.battlefield();
+        let terrain = battle.terrain();
         let units = battle
             .units()
             .iter()
             .filter(|unit| !unit.is_destroyed())
             .map(|unit| {
-                let terrain_elevation_mm = terrain_height_mm(battlefield, unit.position()) as f32;
+                let terrain_elevation_mm =
+                    terrain_height_mm(terrain, battlefield, unit.position()) as f32;
                 RenderUnitInstance {
                     unit_id: unit.id().to_owned(),
                     side: unit.side(),
@@ -163,6 +166,7 @@ impl BattleRenderSnapshot {
                     order_preview: view.has_order_preview(unit.id()),
                     terrain_elevation_mm,
                     soldier_centers_mm: soldier_centers(
+                        terrain,
                         battlefield,
                         unit.position(),
                         unit.soldiers(),
@@ -201,6 +205,7 @@ impl BattleRenderSnapshot {
             tick: battle.tick(),
             battlefield,
             deployment_zones: battle.deployment_zones(),
+            terrain,
             forest_cells: battle.terrain().forest_cells().to_vec(),
             river_cells: battle.terrain().river_cells().to_vec(),
             river_crossing_cells: battle.terrain().river_crossing_cells().to_vec(),
@@ -220,6 +225,7 @@ impl BattleRenderSnapshot {
 }
 
 fn soldier_centers(
+    terrain: TacticalTerrain,
     battlefield: FlatBattlefield,
     position: BattlePoint,
     soldiers: u16,
@@ -242,7 +248,7 @@ fn soldier_centers(
             );
             [
                 x,
-                terrain_height_mm(battlefield, terrain_point) as f32 + SOLDIER_CENTER_Y_MM,
+                terrain_height_mm(terrain, battlefield, terrain_point) as f32 + SOLDIER_CENTER_Y_MM,
                 z,
             ]
         })
@@ -278,6 +284,7 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first, BattleRenderSnapshot::project(&battle, &view));
         assert_eq!(first.deployment_zones, battle.deployment_zones());
+        assert_eq!(first.terrain, battle.terrain());
         assert_eq!(first.forest_cells, battle.terrain().forest_cells().to_vec());
         assert_eq!(first.river_cells, battle.terrain().river_cells().to_vec());
         assert_eq!(
@@ -374,11 +381,12 @@ mod tests {
     #[test]
     fn soldier_centers_follow_the_terrain_surface() {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
-        let centers = soldier_centers(battlefield, BattlePoint::new(50_000, 50_000), 1, 1);
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let centers = soldier_centers(terrain, battlefield, BattlePoint::new(50_000, 50_000), 1, 1);
         assert_eq!(centers.len(), 1);
         assert_eq!(
             centers[0][1],
-            terrain_height_mm(battlefield, BattlePoint::new(50_000, 50_000)) as f32
+            terrain_height_mm(terrain, battlefield, BattlePoint::new(50_000, 50_000)) as f32
                 + SOLDIER_CENTER_Y_MM
         );
     }

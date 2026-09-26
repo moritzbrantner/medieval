@@ -1,4 +1,4 @@
-use medieval_core::{BattlePoint, FlatBattlefield};
+use medieval_core::{BattlePoint, FlatBattlefield, TacticalTerrain};
 
 use crate::terrain::{
     TERRAIN_GRID_SIZE, terrain_cell_bounds_mm, terrain_cell_height_mm, terrain_height_mm,
@@ -121,12 +121,30 @@ impl Camera3d {
         viewport_width_px: f32,
         viewport_height_px: f32,
     ) -> Option<[f32; 2]> {
+        self.project_world_point_on_terrain(
+            battlefield,
+            TacticalTerrain::battlefield_foundation(),
+            world_position_mm,
+            viewport_width_px,
+            viewport_height_px,
+        )
+    }
+
+    #[must_use]
+    pub fn project_world_point_on_terrain(
+        self,
+        battlefield: FlatBattlefield,
+        terrain: TacticalTerrain,
+        world_position_mm: [f32; 3],
+        viewport_width_px: f32,
+        viewport_height_px: f32,
+    ) -> Option<[f32; 2]> {
         if !world_position_mm.into_iter().all(f32::is_finite)
             || !valid_viewport(viewport_width_px, viewport_height_px)
         {
             return None;
         }
-        let projection = self.projection(battlefield);
+        let projection = self.projection_on_terrain(battlefield, terrain);
         let relative = sub(world_position_mm, projection.eye_mm);
         let view_x = dot(relative, projection.right);
         let view_y = dot(relative, projection.up);
@@ -158,11 +176,30 @@ impl Camera3d {
         viewport_width_px: f32,
         viewport_height_px: f32,
     ) -> Option<[f32; 2]> {
-        self.project_world_point(
+        self.project_ground_point_on_terrain(
             battlefield,
+            TacticalTerrain::battlefield_foundation(),
+            point,
+            viewport_width_px,
+            viewport_height_px,
+        )
+    }
+
+    #[must_use]
+    pub fn project_ground_point_on_terrain(
+        self,
+        battlefield: FlatBattlefield,
+        terrain: TacticalTerrain,
+        point: BattlePoint,
+        viewport_width_px: f32,
+        viewport_height_px: f32,
+    ) -> Option<[f32; 2]> {
+        self.project_world_point_on_terrain(
+            battlefield,
+            terrain,
             [
                 point.x_mm as f32,
-                terrain_height_mm(battlefield, point) as f32,
+                terrain_height_mm(terrain, battlefield, point) as f32,
                 point.y_mm as f32,
             ],
             viewport_width_px,
@@ -179,12 +216,32 @@ impl Camera3d {
         viewport_width_px: f32,
         viewport_height_px: f32,
     ) -> Option<ViewportRay> {
+        self.viewport_ray_on_terrain(
+            battlefield,
+            TacticalTerrain::battlefield_foundation(),
+            x_px,
+            y_px,
+            viewport_width_px,
+            viewport_height_px,
+        )
+    }
+
+    #[must_use]
+    pub fn viewport_ray_on_terrain(
+        self,
+        battlefield: FlatBattlefield,
+        terrain: TacticalTerrain,
+        x_px: f32,
+        y_px: f32,
+        viewport_width_px: f32,
+        viewport_height_px: f32,
+    ) -> Option<ViewportRay> {
         if ![x_px, y_px].into_iter().all(f32::is_finite)
             || !valid_viewport(viewport_width_px, viewport_height_px)
         {
             return None;
         }
-        let projection = self.projection(battlefield);
+        let projection = self.projection_on_terrain(battlefield, terrain);
         let ndc_x = x_px / viewport_width_px * 2.0 - 1.0;
         let ndc_y = 1.0 - y_px / viewport_height_px * 2.0;
         let (tan_half_x, tan_half_y) = viewport_tangents(
@@ -217,19 +274,49 @@ impl Camera3d {
         viewport_width_px: f32,
         viewport_height_px: f32,
     ) -> Option<BattlePoint> {
-        let ray = self.viewport_ray(
+        self.ground_point_from_viewport_on_terrain(
             battlefield,
+            TacticalTerrain::battlefield_foundation(),
+            x_px,
+            y_px,
+            viewport_width_px,
+            viewport_height_px,
+        )
+    }
+
+    #[must_use]
+    pub fn ground_point_from_viewport_on_terrain(
+        self,
+        battlefield: FlatBattlefield,
+        terrain: TacticalTerrain,
+        x_px: f32,
+        y_px: f32,
+        viewport_width_px: f32,
+        viewport_height_px: f32,
+    ) -> Option<BattlePoint> {
+        let ray = self.viewport_ray_on_terrain(
+            battlefield,
+            terrain,
             x_px,
             y_px,
             viewport_width_px,
             viewport_height_px,
         )?;
-        let hit = terrain_ray_hit(battlefield, ray)?;
+        let hit = terrain_ray_hit(terrain, battlefield, ray)?;
         terrain_point_from_hit(battlefield, ray, hit)
     }
 
     #[must_use]
     pub(crate) fn projection(self, battlefield: FlatBattlefield) -> CameraProjection {
+        self.projection_on_terrain(battlefield, TacticalTerrain::battlefield_foundation())
+    }
+
+    #[must_use]
+    pub(crate) fn projection_on_terrain(
+        self,
+        battlefield: FlatBattlefield,
+        terrain: TacticalTerrain,
+    ) -> CameraProjection {
         let cos_pitch = self.pitch_radians.cos();
         let target_point = BattlePoint::new(
             self.target_x_mm
@@ -241,7 +328,7 @@ impl Camera3d {
         );
         let target = [
             self.target_x_mm,
-            terrain_height_mm(battlefield, target_point) as f32,
+            terrain_height_mm(terrain, battlefield, target_point) as f32,
             self.target_z_mm,
         ];
         let offset = [
@@ -276,7 +363,11 @@ struct TerrainRayHit {
     z1_mm: u32,
 }
 
-fn terrain_ray_hit(battlefield: FlatBattlefield, ray: ViewportRay) -> Option<TerrainRayHit> {
+fn terrain_ray_hit(
+    terrain: TacticalTerrain,
+    battlefield: FlatBattlefield,
+    ray: ViewportRay,
+) -> Option<TerrainRayHit> {
     if battlefield.width_mm == 0 || battlefield.depth_mm == 0 {
         return None;
     }
@@ -289,7 +380,7 @@ fn terrain_ray_hit(battlefield: FlatBattlefield, ray: ViewportRay) -> Option<Ter
             else {
                 continue;
             };
-            let maximum_y = terrain_cell_height_mm(battlefield, cell_x, cell_z) as f32;
+            let maximum_y = terrain_cell_height_mm(terrain, battlefield, cell_x, cell_z) as f32;
             let Some(distance) = ray_aabb_entry_distance(
                 ray,
                 [x0_mm as f32, 0.0, z0_mm as f32],
@@ -449,7 +540,14 @@ mod tests {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
         let camera = Camera3d::fit(battlefield);
         let point = BattlePoint::new(50_000, 95_000);
-        assert_eq!(terrain_height_mm(battlefield, point), 0);
+        assert_eq!(
+            terrain_height_mm(
+                TacticalTerrain::battlefield_foundation(),
+                battlefield,
+                point
+            ),
+            0
+        );
         let pixel = camera
             .project_ground_point(battlefield, point, 1_600.0, 900.0)
             .unwrap();
@@ -510,11 +608,41 @@ mod tests {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
         let camera = Camera3d::fit(battlefield);
         let target = BattlePoint::new(50_000, 50_000);
-        assert!(terrain_height_mm(battlefield, target) > 0);
+        assert!(
+            terrain_height_mm(
+                TacticalTerrain::battlefield_foundation(),
+                battlefield,
+                target
+            ) > 0
+        );
         assert_eq!(
             camera.ground_point_from_viewport(battlefield, 500.0, 500.0, 1_000.0, 1_000.0),
             Some(target)
         );
+    }
+
+    #[test]
+    fn selected_terrain_controls_projection_and_ground_picking() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let terrain =
+            TacticalTerrain::for_location(medieval_core::BattlefieldLocation::ForestClearing);
+        let camera = Camera3d::fit(battlefield);
+        let point = BattlePoint::new(50_000, 50_000);
+        let pixel = camera
+            .project_ground_point_on_terrain(battlefield, terrain, point, 1_600.0, 900.0)
+            .unwrap();
+        let round_trip = camera
+            .ground_point_from_viewport_on_terrain(
+                battlefield,
+                terrain,
+                pixel[0],
+                pixel[1],
+                1_600.0,
+                900.0,
+            )
+            .unwrap();
+        assert!((i64::from(round_trip.x_mm) - i64::from(point.x_mm)).abs() <= 2);
+        assert!((i64::from(round_trip.y_mm) - i64::from(point.y_mm)).abs() <= 2);
     }
 
     #[test]
@@ -540,7 +668,11 @@ mod tests {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
         let camera = Camera3d::fit(battlefield);
         let point = BattlePoint::new(50_000, 50_000);
-        let terrain_y = terrain_height_mm(battlefield, point) as f32;
+        let terrain_y = terrain_height_mm(
+            TacticalTerrain::battlefield_foundation(),
+            battlefield,
+            point,
+        ) as f32;
         let ground = camera
             .project_world_point(
                 battlefield,

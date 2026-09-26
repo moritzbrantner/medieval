@@ -15,8 +15,8 @@ pub use tactical::{
     TacticalBattle, TacticalError, TacticalUnit,
 };
 pub use terrain::{
-    TACTICAL_FOREST_CELL_COUNT, TACTICAL_TERRAIN_GRID_SIZE, TacticalGroundCover, TacticalTerrain,
-    TacticalTerrainCell, TacticalTerrainProfile,
+    BattlefieldLocation, TACTICAL_FOREST_CELL_COUNT, TACTICAL_TERRAIN_GRID_SIZE,
+    TacticalGroundCover, TacticalTerrain, TacticalTerrainCell, TacticalTerrainProfile,
 };
 
 const INCOME_PER_WEALTH: u32 = 50;

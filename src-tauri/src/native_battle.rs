@@ -9,7 +9,8 @@ use std::{
 };
 
 use medieval_core::{
-    BattlePoint, BattleSide, FlatBattlefield, Formation, TacticalBattle, TacticalUnit,
+    BattlePoint, BattleSide, BattlefieldLocation, FlatBattlefield, Formation, TacticalBattle,
+    TacticalUnit,
 };
 use medieval_renderer::{BattleRenderSnapshot, GpuBattleRenderer};
 use serde::Serialize;
@@ -224,7 +225,9 @@ pub fn install(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .expect("configured Medieval main window must exist during setup");
     let window = build_battle_window(app, &main_window)?;
     let renderer = Arc::new(Mutex::new(None));
-    let session = Arc::new(Mutex::new(sample_session()));
+    let session = Arc::new(Mutex::new(sample_session(
+        BattlefieldLocation::MountainPass,
+    )));
     let running = Arc::new(AtomicBool::new(false));
     let initializing = Arc::new(AtomicBool::new(false));
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -376,7 +379,23 @@ const fn browser_input_enabled() -> bool {
 #[tauri::command]
 pub async fn open_native_battle_renderer(
     state: State<'_, NativeBattleState>,
+    location: BattlefieldLocation,
 ) -> Result<NativeBattleOpenResult, String> {
+    state.running.store(false, Ordering::Release);
+    {
+        let mut session = state
+            .session
+            .lock()
+            .map_err(|_| "native tactical session lock was poisoned".to_owned())?;
+        *session = sample_session(location);
+    }
+    {
+        let mut renderer = state
+            .renderer
+            .lock()
+            .map_err(|_| "native renderer lock was poisoned".to_owned())?;
+        *renderer = None;
+    }
     ensure_renderer_initialized(&state)?;
     sync_browser_input_window(&state.main_window, &state.window)?;
     state
@@ -562,9 +581,9 @@ fn spawn_frame_scheduler(
         .expect("failed to start Medieval tactical frame scheduler");
 }
 
-fn sample_session() -> NativeBattleSession {
+fn sample_session(location: BattlefieldLocation) -> NativeBattleSession {
     let battlefield = FlatBattlefield::new(100_000, 100_000);
-    let battle = TacticalBattle::deploy(
+    let battle = TacticalBattle::deploy_at_location(
         battlefield,
         vec![
             TacticalUnit::new(
@@ -584,6 +603,7 @@ fn sample_session() -> NativeBattleSession {
                 1_000,
             ),
         ],
+        location,
     )
     .expect("native renderer sample battle is valid");
     let player_side = BattleSide::Attacker;
@@ -619,7 +639,7 @@ fn sample_session() -> NativeBattleSession {
 
 #[cfg(test)]
 fn sample_snapshot() -> BattleRenderSnapshot {
-    sample_session().snapshot()
+    sample_session(BattlefieldLocation::MountainPass).snapshot()
 }
 
 #[cfg(test)]
@@ -639,8 +659,16 @@ mod tests {
     }
 
     #[test]
+    fn native_preview_uses_the_selected_core_battlefield() {
+        let snapshot = sample_session(BattlefieldLocation::RiverFord).snapshot();
+
+        assert_eq!(snapshot.terrain.location(), BattlefieldLocation::RiverFord);
+        assert!(!snapshot.river_cells.is_empty());
+    }
+
+    #[test]
     fn native_session_reprojects_changed_rust_control_state() {
-        let mut session = sample_session();
+        let mut session = sample_session(BattlefieldLocation::MountainPass);
         let battle_before = session.battle.clone();
         let before = session.snapshot();
 

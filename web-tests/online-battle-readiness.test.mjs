@@ -4,15 +4,18 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { GameCommands } from "../web/vendor/multiplayer-setup-service/game-commands.js";
 import {
+  BATTLE_LOCATIONS,
   MEDIEVAL_BATTLE_PROTOCOL,
   MEDIEVAL_READINESS_COMMAND,
   MEDIEVAL_RELEASE,
   ONLINE_BATTLE_STATES,
+  battleLocationFromUrl,
   buildInviteUrl,
   canStartBattle,
   createReadinessMessage,
   inspectReadinessMessage,
   lobbyCodeFromUrl,
+  normalizeBattleLocation,
 } from "../web/online-battle-model.mjs";
 
 if (typeof globalThis.CustomEvent === "undefined") {
@@ -82,6 +85,8 @@ test("Medieval owns a release and battle-protocol readiness contract", () => {
   assert.match(cargo, new RegExp(`version = "${MEDIEVAL_RELEASE.replaceAll(".", "\\.")}"`));
   assert.equal(MEDIEVAL_BATTLE_PROTOCOL, 1);
   assert.equal(MEDIEVAL_READINESS_COMMAND, "medieval.battle.ready");
+  assert.deepEqual(BATTLE_LOCATIONS, ["mountainPass", "forestClearing", "riverFord"]);
+  assert.equal(normalizeBattleLocation("riverFord"), "riverFord");
   assert.deepEqual(ONLINE_BATTLE_STATES, [
     "idle",
     "creating",
@@ -103,6 +108,16 @@ test("compatible readiness enables the battle gate only after the direct peer is
   assert.equal(canStartBattle({ peerConnected: true, localReady: true, peerReadiness }), true);
   assert.equal(canStartBattle({ peerConnected: false, localReady: true, peerReadiness }), false);
   assert.equal(canStartBattle({ peerConnected: true, localReady: false, peerReadiness }), false);
+});
+
+test("different battlefield selections fail closed before a match starts", () => {
+  const mismatch = inspectReadinessMessage(
+    createReadinessMessage({ battleLocation: "riverFord" }),
+    { battleLocation: "forestClearing" },
+  );
+  assert.equal(mismatch.recognized, true);
+  assert.equal(mismatch.compatible, false);
+  assert.match(mismatch.reason, /Battlefield mismatch/);
 });
 
 test("release or battle-protocol mismatches fail closed", () => {
@@ -153,6 +168,23 @@ test("Medieval readiness dogfoods GameCommands while retaining Medieval validati
   guestCommands.close();
 });
 
+test("match invites carry the selected battlefield without leaking private setup state", () => {
+  const invite = buildInviteUrl(
+    "https://example.test/medieval/?setupApi=https%3A%2F%2Fsetup.example&participantToken=secret#private",
+    "0123-ABCD-EFGH",
+    "riverFord",
+  );
+  const url = new URL(invite);
+
+  assert.deepEqual([...url.searchParams.entries()], [
+    ["lobby", "0123-ABCD-EFGH"],
+    ["location", "riverFord"],
+  ]);
+  assert.equal(battleLocationFromUrl(invite), "riverFord");
+  assert.equal(invite.includes("secret"), false);
+  assert.equal(invite.includes("setupApi"), false);
+});
+
 test("invite links contain only the public lobby identity", () => {
   const invite = buildInviteUrl(
     "https://example.test/medieval/?setupApi=https%3A%2F%2Fsetup.example&participantToken=secret&view=online#private",
@@ -174,7 +206,9 @@ test("the controller delegates identity/recovery to LobbySession and readiness w
   assert.match(controller, /await current\.join\(code\)/);
   assert.match(controller, /contentSharing:\s*false/);
   assert.match(controller, /readinessSendPending/);
-  assert.match(controller, /commands\.send\(peerId, MEDIEVAL_READINESS_COMMAND/);
+  assert.match(controller, /battleLocationSelect/);
+  assert.match(controller, /normalizeBattleLocation/);
+  assert.match(controller, /commands\.send\([\s\S]*peerId,[\s\S]*MEDIEVAL_READINESS_COMMAND/);
   assert.match(controller, /currentCommands\.handle\(MEDIEVAL_READINESS_COMMAND/);
   assert.match(controller, /channel-close/);
   assert.match(controller, /peer-recovery/);

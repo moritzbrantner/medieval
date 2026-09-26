@@ -1,6 +1,8 @@
 const nativeBattleButton = document.querySelector("#open-native-battle");
 const battleSandboxButton = document.querySelector("#open-battle-sandbox");
 const nativeBattleStatus = document.querySelector("#native-battle-status");
+const sandboxBattleLocation = document.querySelector("#sandbox-battle-location");
+const onlineBattleLocation = document.querySelector("#online-battle-location");
 
 const TACTICAL_INPUT_EVENT = "medieval:tactical-input";
 const tacticalKeys = new Set([
@@ -137,9 +139,11 @@ window.addEventListener(
   true,
 );
 
-async function openBattlePreview() {
+async function openBattlePreview(location = "mountainPass") {
   if (window.__MEDIEVAL_RUNTIME__ === "wasm") {
-    window.location.href = new URL("battle.html", window.location.href).href;
+    const url = new URL("battle.html", window.location.href);
+    url.searchParams.set("location", location);
+    window.location.href = url.href;
     return;
   }
 
@@ -153,7 +157,7 @@ async function openBattlePreview() {
   if (battleSandboxButton) battleSandboxButton.disabled = true;
   nativeBattleStatus.textContent = "Opening the Rust/wgpu tactical renderer…";
   try {
-    const result = await invoke("open_native_battle_renderer");
+    const result = await invoke("open_native_battle_renderer", { location });
     inputSequence = 0;
     inputQueue = Promise.resolve();
     browserInputActive = Boolean(result?.browserInput);
@@ -169,5 +173,9 @@ async function openBattlePreview() {
   }
 }
 
-nativeBattleButton?.addEventListener("click", openBattlePreview);
-battleSandboxButton?.addEventListener("click", openBattlePreview);
+nativeBattleButton?.addEventListener("click", () =>
+  openBattlePreview(onlineBattleLocation?.value ?? "mountainPass"),
+);
+battleSandboxButton?.addEventListener("click", () =>
+  openBattlePreview(sandboxBattleLocation?.value ?? "mountainPass"),
+);
