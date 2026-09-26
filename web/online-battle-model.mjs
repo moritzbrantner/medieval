@@ -120,13 +120,21 @@ export function normalizeLobbyCode(value) {
   return code;
 }
 
-export function buildInviteUrl(baseHref, lobbyCode) {
+export function buildInviteUrl(baseHref, lobbyCode, battleLocation = null) {
   const code = normalizeLobbyCode(lobbyCode);
   const url = new URL(baseHref);
   url.search = "";
   url.hash = "";
   url.searchParams.set("lobby", code);
+  if (battleLocation !== null) {
+    url.searchParams.set("location", normalizeBattleLocation(battleLocation));
+  }
   return url.toString();
+}
+
+export function battleLocationFromUrl(href) {
+  const value = new URL(href).searchParams.get("location");
+  return value ? normalizeBattleLocation(value) : null;
 }
 
 export function lobbyCodeFromUrl(href) {
