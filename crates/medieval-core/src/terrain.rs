@@ -37,7 +37,9 @@ impl BattlefieldLocation {
 
     #[must_use]
     pub fn from_id(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|location| location.id() == value)
+        Self::ALL
+            .into_iter()
+            .find(|location| location.id() == value)
     }
 }
 
@@ -120,21 +122,57 @@ const TACTICAL_FOREST_CELLS_V3: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT
 ];
 
 const FOREST_CLEARING_CELLS: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] = [
-    TacticalTerrainCell { cell_x: 1, cell_z: 1 },
-    TacticalTerrainCell { cell_x: 1, cell_z: 2 },
-    TacticalTerrainCell { cell_x: 2, cell_z: 1 },
-    TacticalTerrainCell { cell_x: 5, cell_z: 6 },
-    TacticalTerrainCell { cell_x: 6, cell_z: 5 },
-    TacticalTerrainCell { cell_x: 6, cell_z: 6 },
+    TacticalTerrainCell {
+        cell_x: 1,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 1,
+        cell_z: 2,
+    },
+    TacticalTerrainCell {
+        cell_x: 2,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 5,
+        cell_z: 6,
+    },
+    TacticalTerrainCell {
+        cell_x: 6,
+        cell_z: 5,
+    },
+    TacticalTerrainCell {
+        cell_x: 6,
+        cell_z: 6,
+    },
 ];
 
 const RIVER_FORD_FOREST_CELLS: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] = [
-    TacticalTerrainCell { cell_x: 1, cell_z: 1 },
-    TacticalTerrainCell { cell_x: 1, cell_z: 6 },
-    TacticalTerrainCell { cell_x: 2, cell_z: 1 },
-    TacticalTerrainCell { cell_x: 5, cell_z: 6 },
-    TacticalTerrainCell { cell_x: 6, cell_z: 1 },
-    TacticalTerrainCell { cell_x: 6, cell_z: 6 },
+    TacticalTerrainCell {
+        cell_x: 1,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 1,
+        cell_z: 6,
+    },
+    TacticalTerrainCell {
+        cell_x: 2,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 5,
+        cell_z: 6,
+    },
+    TacticalTerrainCell {
+        cell_x: 6,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 6,
+        cell_z: 6,
+    },
 ];
 
 const TACTICAL_RIVER_CELLS: [TacticalTerrainCell; TACTICAL_RIVER_CELL_COUNT] = [
@@ -517,8 +555,7 @@ impl TacticalTerrain {
             }
             BattlefieldLocation::RiverFord => {
                 let bank_distance = cell_x.abs_diff(RIVER_CELL_X);
-                max_height.saturating_mul(bank_distance)
-                    / (TACTICAL_TERRAIN_GRID_SIZE * 2).max(1)
+                max_height.saturating_mul(bank_distance) / (TACTICAL_TERRAIN_GRID_SIZE * 2).max(1)
             }
         }
     }
