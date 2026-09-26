@@ -38,6 +38,12 @@ test("Pages exposes a focused single-player tactical sandbox", () => {
   assert.match(html, /id="stop-units"/);
   assert.match(html, /id="fit-camera"/);
   assert.match(html, /id="reset-battle"/);
+  assert.match(html, /id="battle-location"/);
+  assert.match(index, /id="sandbox-battle-location"/);
+  assert.match(index, /id="online-battle-location"/);
+  assert.match(script, /battle_sandbox_start_at_location/);
+  assert.match(script, /battle_sandbox_set_location/);
+  assert.match(launcher, /searchParams\.set\("location", location\)/);
   assert.match(html, /type="module" src="battle-sandbox\.js"/);
 });
 
@@ -70,6 +76,16 @@ test("browser sandbox renders through wgpu and advances the real tactical core",
   assert.match(wasmRust, /issue_engagement_order/);
   assert.match(wasmRust, /battle_sandbox_start/);
   assert.match(wasmRust, /battle_sandbox_pointer/);
+});
+
+test("battlefield choice stays core-owned while browser and renderer only adapt it", () => {
+  assert.match(terrainCore, /enum BattlefieldLocation/);
+  assert.match(terrainCore, /MountainPass/);
+  assert.match(terrainCore, /ForestClearing/);
+  assert.match(terrainCore, /RiverFord/);
+  assert.match(tacticalCore, /deploy_at_location/);
+  assert.match(rendererScene, /pub terrain: TacticalTerrain/);
+  assert.doesNotMatch(script, /FOREST_CLEARING_CELLS|RIVER_FORD_FOREST_CELLS|mountain_height_mm/);
 });
 
 test("river legality and chokepoint routing stay core-owned while the renderer only projects cells", () => {
