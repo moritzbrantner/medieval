@@ -307,11 +307,6 @@ impl Camera3d {
     }
 
     #[must_use]
-    pub(crate) fn projection(self, battlefield: FlatBattlefield) -> CameraProjection {
-        self.projection_on_terrain(battlefield, TacticalTerrain::battlefield_foundation())
-    }
-
-    #[must_use]
     pub(crate) fn projection_on_terrain(
         self,
         battlefield: FlatBattlefield,
