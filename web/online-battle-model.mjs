@@ -48,18 +48,51 @@ export function inspectReadinessMessage(
   if (
     !message ||
     typeof message !== "object" ||
-    message.type !== READINESS_MESSAGE_TYPE ||
-    message.v !== MEDIEVAL_READINESS_PROTOCOL ||
-    typeof message.release !== "string" ||
-    !Number.isSafeInteger(message.battleProtocol) ||
-    !BATTLE_LOCATIONS.includes(message.battleLocation) ||
-    typeof message.ready !== "boolean"
+    message.type !== READINESS_MESSAGE_TYPE
   ) {
     return {
       recognized: false,
       compatible: false,
       ready: false,
       reason: "Unexpected pre-battle readiness message",
+    };
+  }
+
+  if (!Number.isSafeInteger(message.v)) {
+    return {
+      recognized: true,
+      compatible: false,
+      ready: false,
+      reason: "Invalid readiness protocol version",
+    };
+  }
+
+  if (message.v !== MEDIEVAL_READINESS_PROTOCOL) {
+    const fingerprint =
+      typeof message.release === "string" && Number.isSafeInteger(message.battleProtocol)
+        ? { release: message.release, battleProtocol: message.battleProtocol }
+        : undefined;
+    return {
+      recognized: true,
+      compatible: false,
+      ready: false,
+      readinessProtocol: message.v,
+      fingerprint,
+      reason: `Readiness protocol mismatch: friend has ${message.v}, this client has ${MEDIEVAL_READINESS_PROTOCOL}`,
+    };
+  }
+
+  if (
+    typeof message.release !== "string" ||
+    !Number.isSafeInteger(message.battleProtocol) ||
+    !BATTLE_LOCATIONS.includes(message.battleLocation) ||
+    typeof message.ready !== "boolean"
+  ) {
+    return {
+      recognized: true,
+      compatible: false,
+      ready: false,
+      reason: "Invalid pre-battle readiness payload",
     };
   }
 
@@ -134,7 +167,7 @@ export function buildInviteUrl(baseHref, lobbyCode, battleLocation = null) {
 
 export function battleLocationFromUrl(href) {
   const value = new URL(href).searchParams.get("location");
-  return value ? normalizeBattleLocation(value) : null;
+  return value && BATTLE_LOCATIONS.includes(value) ? value : null;
 }
 
 export function lobbyCodeFromUrl(href) {
