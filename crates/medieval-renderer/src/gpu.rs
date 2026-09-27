@@ -1076,10 +1076,13 @@ mod tests {
     fn deployment_boundaries_are_projected_from_core_zones() {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
         let zones = medieval_core::standard_deployment_zones(battlefield);
+        let terrain = TacticalTerrain::battlefield_foundation();
         let attacker =
-            GpuWorldInstance::deployment_boundary_segment(zones[0], battlefield, 0).unwrap();
+            GpuWorldInstance::deployment_boundary_segment(terrain, zones[0], battlefield, 0)
+                .unwrap();
         let defender =
-            GpuWorldInstance::deployment_boundary_segment(zones[1], battlefield, 0).unwrap();
+            GpuWorldInstance::deployment_boundary_segment(terrain, zones[1], battlefield, 0)
+                .unwrap();
         assert_eq!(attacker.center_material[0], zones[0].max_x_mm as f32);
         assert_eq!(defender.center_material[0], zones[1].min_x_mm as f32);
         assert_eq!(attacker.center_material[3], 3.0);
@@ -1103,7 +1106,7 @@ mod tests {
         .unwrap();
         let snapshot = BattleRenderSnapshot::capture(&battle, &RenderViewState::fit(battlefield));
         let cell = snapshot.forest_cells[0];
-        let tree = GpuWorldInstance::forest_tree(cell, battlefield, 0).unwrap();
+        let tree = GpuWorldInstance::forest_tree(snapshot.terrain, cell, battlefield, 0).unwrap();
         let (x0, x1, z0, z1) =
             terrain_cell_bounds_mm(battlefield, cell.cell_x, cell.cell_z).unwrap();
         assert_eq!(tree.center_material[3], 5.0);
@@ -1136,13 +1139,13 @@ mod tests {
             .unwrap();
         let crossing = snapshot.river_crossing_cells[0];
         assert_eq!(
-            GpuWorldInstance::river_cell(blocked, battlefield, false)
+            GpuWorldInstance::river_cell(snapshot.terrain, blocked, battlefield, false)
                 .unwrap()
                 .center_material[3],
             6.0
         );
         assert_eq!(
-            GpuWorldInstance::river_cell(crossing, battlefield, true)
+            GpuWorldInstance::river_cell(snapshot.terrain, crossing, battlefield, true)
                 .unwrap()
                 .center_material[3],
             7.0
@@ -1152,8 +1155,9 @@ mod tests {
     #[test]
     fn terrain_instances_raise_center_cells_above_edge_cells() {
         let battlefield = FlatBattlefield::new(100_000, 100_000);
-        let edge = GpuWorldInstance::terrain_cell(battlefield, 0, 0, 4_000.0).unwrap();
-        let center = GpuWorldInstance::terrain_cell(battlefield, 4, 4, 4_000.0).unwrap();
+        let terrain = TacticalTerrain::battlefield_foundation();
+        let edge = GpuWorldInstance::terrain_cell(terrain, battlefield, 0, 0, 4_000.0).unwrap();
+        let center = GpuWorldInstance::terrain_cell(terrain, battlefield, 4, 4, 4_000.0).unwrap();
         let edge_top = edge.center_material[1] + edge.half_extent_routed[1];
         let center_top = center.center_material[1] + center.half_extent_routed[1];
         assert!(center_top > edge_top);
