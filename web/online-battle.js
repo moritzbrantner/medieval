@@ -1,15 +1,18 @@
 import { GameCommands } from "./vendor/multiplayer-setup-service/game-commands.js";
 import { LobbySession } from "./vendor/multiplayer-setup-service/lobby-session.js";
 import {
+  BATTLE_LOCATIONS,
   MEDIEVAL_BATTLE_PROTOCOL,
   MEDIEVAL_READINESS_COMMAND,
   MEDIEVAL_RELEASE,
   ONLINE_BATTLE_STATES,
+  battleLocationFromUrl,
   buildInviteUrl,
   canStartBattle,
   createReadinessMessage,
   inspectReadinessMessage,
   lobbyCodeFromUrl,
+  normalizeBattleLocation,
   normalizeLobbyCode,
 } from "./online-battle-model.mjs";
 
@@ -34,6 +37,7 @@ const statusDetail = document.querySelector("#online-status-detail");
 const localRelease = document.querySelector("#local-release");
 const peerRelease = document.querySelector("#peer-release");
 const battleGateNote = document.querySelector("#battle-gate-note");
+const battleLocationSelect = document.querySelector("#online-battle-location");
 
 const stateCopy = {
   idle: ["Idle", "Host a private battle or join a friend's invite."],
@@ -85,6 +89,7 @@ function setSetupControlsDisabled(disabled) {
   hostButton.disabled = disabled;
   joinButton.disabled = disabled;
   lobbyCodeInput.disabled = disabled;
+  battleLocationSelect.disabled = disabled;
 }
 
 function resetReadiness() {
@@ -107,7 +112,7 @@ function resetLobbyPresentation() {
 }
 
 function presentLobby(code) {
-  const url = buildInviteUrl(window.location.href, code);
+  const url = buildInviteUrl(window.location.href, code, battleLocationSelect.value);
   displayCode.textContent = code;
   inviteLink.href = url;
   inviteLink.textContent = url;
@@ -197,7 +202,14 @@ function beginReleaseCheck(current, peerId) {
     );
     try {
       if (!commands) throw new Error("Game command channel is not ready");
-      commands.send(peerId, MEDIEVAL_READINESS_COMMAND, createReadinessMessage({ ready: true }));
+      commands.send(
+        peerId,
+        MEDIEVAL_READINESS_COMMAND,
+        createReadinessMessage({
+          ready: true,
+          battleLocation: normalizeBattleLocation(battleLocationSelect.value),
+        }),
+      );
       localReady = true;
       readinessSendPending = false;
       if (peerReadiness?.recognized && !peerReadiness.compatible) {
@@ -222,7 +234,9 @@ function enterRecovery(detail) {
 function wireSession(current, currentCommands) {
   currentCommands.handle(MEDIEVAL_READINESS_COMMAND, (message, { peerId }) => {
     if (current !== session || currentCommands !== commands) return;
-    const readiness = inspectReadinessMessage(message);
+    const readiness = inspectReadinessMessage(message, {
+      battleLocation: normalizeBattleLocation(battleLocationSelect.value),
+    });
     if (!readiness.recognized) return;
     if (currentPeerId && peerId !== currentPeerId) return;
 
@@ -432,6 +446,7 @@ startButton.addEventListener("click", () => {
         peerId: currentPeerId,
         release: MEDIEVAL_RELEASE,
         battleProtocol: MEDIEVAL_BATTLE_PROTOCOL,
+        battleLocation: normalizeBattleLocation(battleLocationSelect.value),
       },
     }),
   );
@@ -449,5 +464,9 @@ window.addEventListener("beforeunload", () => {
 });
 
 localRelease.textContent = `Medieval ${MEDIEVAL_RELEASE} · battle protocol ${MEDIEVAL_BATTLE_PROTOCOL}`;
+const invitedBattleLocation = battleLocationFromUrl(window.location.href);
+if (invitedBattleLocation && BATTLE_LOCATIONS.includes(invitedBattleLocation)) {
+  battleLocationSelect.value = invitedBattleLocation;
+}
 lobbyCodeInput.value = lobbyCodeFromUrl(window.location.href) ?? "";
 setState("idle", lobbyCodeInput.value ? "Invite loaded. Join when you are ready." : "");
