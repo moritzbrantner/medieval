@@ -29,6 +29,7 @@ test("online battle exposes real lobby controls and a separate module", () => {
   assert.match(index, /id="host-battle"[^>]*>Host battle<\/button>/);
   assert.match(index, /id="join-battle"[^>]*>Join invite<\/button>/);
   assert.match(index, /id="lobby-code"/);
+  assert.match(index, /id="online-battle-location"/);
   assert.match(index, /id="start-battle"[^>]*disabled>Start battle<\/button>/);
   assert.match(index, /<script type="module" src="online-battle\.js"><\/script>/);
   assert.doesNotMatch(index, /Lobby controls are the next multiplayer implementation horizon/);
@@ -37,7 +38,7 @@ test("online battle exposes real lobby controls and a separate module", () => {
 test("native renderer preview remains available beside multiplayer setup", () => {
   assert.match(index, /id="open-native-battle"/);
   assert.match(index, /<script src="native-battle\.js"><\/script>/);
-  assert.match(nativeBattleScript, /invoke\("open_native_battle_renderer"\)/);
+  assert.match(nativeBattleScript, /invoke\("open_native_battle_renderer", \{ location \}\)/);
   assert.match(nativeBattleScript, /medieval:tactical-input/);
   assert.match(nativeBattleScript, /"keydown"/);
   assert.match(nativeBattleScript, /"pointerdown"/);
