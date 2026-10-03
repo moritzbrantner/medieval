@@ -27,6 +27,9 @@ async function clickUnit(page, unitId, options = {}) {
 
 test("battlefield selector rebuilds the Rust-owned sandbox across all three locations", async ({ page }) => {
   await page.goto("/battle.html?e2e-controls=1");
+  await expect(page.locator("#army-setup")).toBeVisible();
+  await page.getByRole("button", { name: "Add Levy battalion" }).click();
+  await page.getByRole("button", { name: "Enter battle" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
   const selector = page.locator("#battle-location");
 
@@ -56,6 +59,19 @@ test("battlefield selector rebuilds the Rust-owned sandbox across all three loca
 
 test("physical tactical controls reach Rust-owned battle state", async ({ page }) => {
   await page.goto("/battle.html?e2e-controls=1");
+  await expect(page.locator("#army-setup")).toBeVisible();
+  await expect(page.locator("#army-budget")).toHaveText("1500 gold");
+  await expect(page.locator("#army-spent")).toHaveText("980 gold");
+  await expect(page.locator("#army-remaining")).toHaveText("520 gold");
+
+  await page.getByRole("button", { name: "Add Levy battalion" }).click();
+  await expect(page.locator("#army-spent")).toHaveText("1100 gold");
+  await expect(page.locator("#army-remaining")).toHaveText("400 gold");
+  await page.getByRole("button", { name: "Remove Levy battalion" }).click();
+  await expect(page.locator("#army-spent")).toHaveText("980 gold");
+
+  await expect(page.getByRole("button", { name: "Enter battle" })).toBeEnabled();
+  await page.getByRole("button", { name: "Enter battle" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
   await expect(page.locator("#battle-error")).toBeHidden();
 
@@ -219,7 +235,7 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
   const resetSpears = current.units.find((unit) => unit.id === "attacker-spears");
   expect(resetSpears).toMatchObject({
     xMm: 22_000,
-    yMm: 24_000,
+    yMm: 10_000,
     formation: "line",
     formationFiles: 28,
     attackRangeMm: 1_500,
