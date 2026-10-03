@@ -51,9 +51,9 @@ test("one deterministic core terrain contract drives renderer geometry and inter
   assert.match(terrain, /TacticalTerrain/);
   assert.match(terrain, /TACTICAL_TERRAIN_GRID_SIZE/);
   assert.doesNotMatch(terrain, /TERRAIN_MAX_HEIGHT_DIVISOR|fn scaled_boundary|fn terrain_cell_index/);
-  assert.match(scene, /terrain_height_mm\(battlefield/);
+  assert.match(scene, /terrain_height_mm\(terrain, battlefield/);
   assert.match(gpu, /terrain_cell_height_mm/);
-  assert.match(camera, /terrain_height_mm\(battlefield/);
+  assert.match(camera, /terrain_height_mm\(terrain, battlefield/);
   assert.match(camera, /terrain_cell_bounds_mm/);
   assert.match(camera, /terrain_cell_height_mm/);
   assert.match(architecture, /cell volume directly/);
@@ -63,7 +63,7 @@ test("one deterministic core terrain contract drives renderer geometry and inter
 
 test("the production renderer consumes the same aspect-safe perspective basis with depth", () => {
   assert.match(gpu, /CameraUniform/);
-  assert.match(gpu, /projection\(battlefield\)/);
+  assert.match(gpu, /projection_on_terrain\(battlefield, terrain\)/);
   assert.match(gpu, /TextureFormat::Depth24Plus/);
   assert.match(gpu, /RenderPassDepthStencilAttachment/);
   assert.match(shader, /eye_near/);
@@ -81,13 +81,13 @@ test("the production renderer consumes the same aspect-safe perspective basis wi
 
 test("browser and native input use renderer-owned perspective geometry", () => {
   assert.match(browserBattle, /unit\.interaction_anchor_mm\(\)/);
-  assert.match(browserBattle, /snapshot\.camera\.project_world_point\(/);
-  assert.match(browserBattle, /snapshot\.camera\.ground_point_from_viewport\(/);
+  assert.match(browserBattle, /snapshot\.camera\.project_world_point_on_terrain\(/);
+  assert.match(browserBattle, /snapshot\.camera\.ground_point_from_viewport_on_terrain\(/);
   assert.doesNotMatch(browserBattle, /fn sanitized_zoom\(|half_width.*clip_x/s);
 
   assert.match(nativeInput, /nearest_unit_at_pointer/);
-  assert.match(nativeInput, /project_world_point\(/);
-  assert.match(nativeInput, /ground_point_from_viewport\(/);
+  assert.match(nativeInput, /project_world_point_on_terrain\(/);
+  assert.match(nativeInput, /ground_point_from_viewport_on_terrain\(/);
   assert.match(nativeInput, /units_in_viewport_rect/);
   assert.doesNotMatch(nativeInput, /CLICK_RADIUS_FRACTION|MIN_CLICK_RADIUS_MM|MAX_CLICK_RADIUS_MM/);
 });

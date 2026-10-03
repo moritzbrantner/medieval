@@ -1,7 +1,7 @@
 use std::{cell::RefCell, cmp::Ordering, collections::BTreeSet};
 
 use medieval_core::{
-    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation,
+    BattlePoint, BattleSide, BattlefieldLocation, DeploymentZone, FlatBattlefield, Formation,
     TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalGroundCover, TacticalTerrainCell,
     TacticalTerrainProfile, TacticalUnit, UnitKind,
 };
@@ -140,6 +140,7 @@ struct SandboxStatus {
     outcome: Option<&'static str>,
     selected_units: Vec<String>,
     deployment_zones: [DeploymentZone; 2],
+    battlefield_location: BattlefieldLocation,
     terrain_profile: TacticalTerrainProfile,
     forest_cells: Vec<TacticalTerrainCell>,
     river_cells: Vec<TacticalTerrainCell>,
@@ -208,6 +209,7 @@ impl BrowserSandbox {
     async fn new(
         canvas: HtmlCanvasElement,
         initial_army: SandboxArmySelection,
+        location: BattlefieldLocation,
     ) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let surface: wgpu::Surface<'static> = instance
@@ -235,7 +237,7 @@ impl BrowserSandbox {
             .ok_or_else(|| "selected WebGPU adapter cannot present to the battle canvas".to_owned())?;
         surface.configure(&device, &config);
 
-        let mut battle = sample_battle(initial_army)?;
+        let mut battle = sample_battle(initial_army, location)?;
         drive_opponent(&mut battle)?;
         let controls = TacticalControls::new(&battle, BattleSide::Attacker);
         let snapshot = BattleRenderSnapshot::capture(&battle, &controls.render_view(&battle));
@@ -261,7 +263,11 @@ impl BrowserSandbox {
     }
 
     fn reset(&mut self) -> Result<(), String> {
-        let mut battle = sample_battle(self.initial_army)?;
+        self.reset_at_location(self.battle.terrain().location())
+    }
+
+    fn reset_at_location(&mut self, location: BattlefieldLocation) -> Result<(), String> {
+        let mut battle = sample_battle(self.initial_army, location)?;
         drive_opponent(&mut battle)?;
         self.controls = TacticalControls::new(&battle, BattleSide::Attacker);
         self.battle = battle;
@@ -515,6 +521,7 @@ impl BrowserSandbox {
             outcome: self.outcome(),
             selected_units: selected.into_iter().map(str::to_owned).collect(),
             deployment_zones: self.battle.deployment_zones(),
+            battlefield_location: terrain.location(),
             terrain_profile: terrain.profile(),
             forest_cells: terrain.forest_cells().to_vec(),
             river_cells: terrain.river_cells().to_vec(),
@@ -577,12 +584,23 @@ impl BrowserSandbox {
     }
 }
 
-fn sample_battle(selection: SandboxArmySelection) -> Result<TacticalBattle, String> {
+fn sample_battle(
+    selection: SandboxArmySelection,
+    location: BattlefieldLocation,
+) -> Result<TacticalBattle, String> {
     validate_army_selection(selection)?;
+    let battlefield = FlatBattlefield::new(100_000, 100_000);
     let mut units = player_units(selection);
     units.extend(opponent_units());
-    TacticalBattle::deploy_siege(FlatBattlefield::new(100_000, 100_000), units)
-        .map_err(|error| error.to_string())
+    match location {
+        BattlefieldLocation::MountainPass => {
+            TacticalBattle::deploy_siege_at_location(battlefield, units, location)
+        }
+        BattlefieldLocation::ForestClearing | BattlefieldLocation::RiverFord => {
+            TacticalBattle::deploy_at_location(battlefield, units, location)
+        }
+    }
+    .map_err(|error| error.to_string())
 }
 
 fn player_units(selection: SandboxArmySelection) -> Vec<TacticalUnit> {
@@ -808,8 +826,9 @@ fn projected_pixel(
     width_px: f64,
     height_px: f64,
 ) -> Option<(f64, f64)> {
-    let [x, y] = snapshot.camera.project_world_point(
+    let [x, y] = snapshot.camera.project_world_point_on_terrain(
         snapshot.battlefield,
+        snapshot.terrain,
         world_position_mm,
         width_px as f32,
         height_px as f32,
@@ -894,8 +913,9 @@ fn battlefield_point(
     width_px: f64,
     height_px: f64,
 ) -> Option<BattlePoint> {
-    snapshot.camera.ground_point_from_viewport(
+    snapshot.camera.ground_point_from_viewport_on_terrain(
         snapshot.battlefield,
+        snapshot.terrain,
         x_px as f32,
         y_px as f32,
         width_px as f32,
@@ -942,16 +962,21 @@ fn parse_army_selection(selection_json: &str) -> Result<SandboxArmySelection, Js
         .map_err(|error| js_error(format!("invalid army selection: {error}")))
 }
 
+fn parse_location(value: &str) -> Result<BattlefieldLocation, JsValue> {
+    BattlefieldLocation::from_id(value)
+        .ok_or_else(|| js_error(format!("unknown battlefield location {value}")))
+}
+
 #[wasm_bindgen]
 pub fn battle_sandbox_quote_army(selection_json: &str) -> Result<String, JsValue> {
     let selection = parse_army_selection(selection_json)?;
     serde_json::to_string(&army_setup_quote(selection)).map_err(js_error)
 }
 
-#[wasm_bindgen]
-pub async fn battle_sandbox_start(
+async fn start_sandbox(
     canvas_id: String,
     selection_json: String,
+    location: BattlefieldLocation,
 ) -> Result<String, JsValue> {
     let window = web_sys::window().ok_or_else(|| js_error("browser window is unavailable"))?;
     let document = window
@@ -963,12 +988,29 @@ pub async fn battle_sandbox_start(
         .dyn_into::<HtmlCanvasElement>()
         .map_err(|_| js_error(format!("element #{canvas_id} is not a canvas")))?;
     let selection = parse_army_selection(&selection_json)?;
-    let sandbox = BrowserSandbox::new(canvas, selection)
+    let sandbox = BrowserSandbox::new(canvas, selection, location)
         .await
         .map_err(js_error)?;
     let status = sandbox.status_json().map_err(js_error)?;
     SANDBOX.with(|slot| *slot.borrow_mut() = Some(sandbox));
     Ok(status)
+}
+
+#[wasm_bindgen]
+pub async fn battle_sandbox_start(
+    canvas_id: String,
+    selection_json: String,
+) -> Result<String, JsValue> {
+    start_sandbox(canvas_id, selection_json, BattlefieldLocation::MountainPass).await
+}
+
+#[wasm_bindgen]
+pub async fn battle_sandbox_start_at_location(
+    canvas_id: String,
+    selection_json: String,
+    location: String,
+) -> Result<String, JsValue> {
+    start_sandbox(canvas_id, selection_json, parse_location(&location)?).await
 }
 
 #[wasm_bindgen]
@@ -1031,8 +1073,9 @@ pub fn battle_sandbox_ground_viewport(
         }
         let [x_px, y_px] = snapshot
             .camera
-            .project_ground_point(
+            .project_ground_point_on_terrain(
                 snapshot.battlefield,
+                snapshot.terrain,
                 BattlePoint::new(x_mm, y_mm),
                 width_px as f32,
                 height_px as f32,
@@ -1084,6 +1127,15 @@ pub fn battle_sandbox_reset() -> Result<String, JsValue> {
 }
 
 #[wasm_bindgen]
+pub fn battle_sandbox_set_location(location: &str) -> Result<String, JsValue> {
+    let location = parse_location(location)?;
+    with_sandbox(|sandbox| {
+        sandbox.reset_at_location(location)?;
+        sandbox.status_json()
+    })
+}
+
+#[wasm_bindgen]
 pub fn battle_sandbox_set_paused(paused: bool) -> Result<String, JsValue> {
     with_sandbox(|sandbox| {
         sandbox.set_paused(paused);
@@ -1113,6 +1165,32 @@ pub fn battle_sandbox_pan(direction: &str) -> Result<String, JsValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mustered_armies_deploy_at_every_battlefield_location() {
+        let selections = [
+            SandboxArmySelection {
+                levy: MAX_SANDBOX_BATTALIONS as u16,
+                spearmen: 0,
+                archers: 0,
+                knights: 0,
+            },
+            SandboxArmySelection {
+                levy: 0,
+                spearmen: 1,
+                archers: 1,
+                knights: 1,
+            },
+        ];
+        for location in BattlefieldLocation::ALL {
+            for selection in selections {
+                let battle = sample_battle(selection, location).unwrap_or_else(|error| {
+                    panic!("{location:?} rejected {selection:?}: {error}")
+                });
+                assert_eq!(battle.terrain().location(), location);
+            }
+        }
+    }
 
     #[test]
     fn maximum_wide_battalions_get_distinct_in_bounds_rows() {

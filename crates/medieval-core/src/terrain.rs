@@ -16,6 +16,35 @@ const RIVER_CELL_X: u32 = 3;
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum BattlefieldLocation {
+    #[default]
+    MountainPass,
+    ForestClearing,
+    RiverFord,
+}
+
+impl BattlefieldLocation {
+    pub const ALL: [Self; 3] = [Self::MountainPass, Self::ForestClearing, Self::RiverFord];
+
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::MountainPass => "mountainPass",
+            Self::ForestClearing => "forestClearing",
+            Self::RiverFord => "riverFord",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|location| location.id() == value)
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum TacticalTerrainProfile {
     #[default]
     HeightFoundationV1,
@@ -92,6 +121,60 @@ const TACTICAL_FOREST_CELLS_V3: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT
     },
 ];
 
+const FOREST_CLEARING_CELLS: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] = [
+    TacticalTerrainCell {
+        cell_x: 1,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 1,
+        cell_z: 2,
+    },
+    TacticalTerrainCell {
+        cell_x: 2,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 5,
+        cell_z: 6,
+    },
+    TacticalTerrainCell {
+        cell_x: 6,
+        cell_z: 5,
+    },
+    TacticalTerrainCell {
+        cell_x: 6,
+        cell_z: 6,
+    },
+];
+
+const RIVER_FORD_FOREST_CELLS: [TacticalTerrainCell; TACTICAL_FOREST_CELL_COUNT] = [
+    TacticalTerrainCell {
+        cell_x: 1,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 1,
+        cell_z: 6,
+    },
+    TacticalTerrainCell {
+        cell_x: 2,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 5,
+        cell_z: 6,
+    },
+    TacticalTerrainCell {
+        cell_x: 6,
+        cell_z: 1,
+    },
+    TacticalTerrainCell {
+        cell_x: 6,
+        cell_z: 6,
+    },
+];
+
 const TACTICAL_RIVER_CELLS: [TacticalTerrainCell; TACTICAL_RIVER_CELL_COUNT] = [
     TacticalTerrainCell {
         cell_x: RIVER_CELL_X,
@@ -149,13 +232,21 @@ const TACTICAL_RIVER_CROSSING_CELLS: [TacticalTerrainCell; TACTICAL_RIVER_CROSSI
 #[serde(rename_all = "camelCase")]
 pub struct TacticalTerrain {
     profile: TacticalTerrainProfile,
+    #[serde(default)]
+    location: BattlefieldLocation,
 }
 
 impl TacticalTerrain {
     #[must_use]
     pub const fn battlefield_foundation() -> Self {
+        Self::for_location(BattlefieldLocation::MountainPass)
+    }
+
+    #[must_use]
+    pub const fn for_location(location: BattlefieldLocation) -> Self {
         Self {
             profile: TacticalTerrainProfile::CombatTerrainV4,
+            location,
         }
     }
 
@@ -163,6 +254,7 @@ impl TacticalTerrain {
     pub const fn height_foundation() -> Self {
         Self {
             profile: TacticalTerrainProfile::HeightFoundationV1,
+            location: BattlefieldLocation::MountainPass,
         }
     }
 
@@ -172,22 +264,34 @@ impl TacticalTerrain {
     }
 
     #[must_use]
+    pub const fn location(self) -> BattlefieldLocation {
+        self.location
+    }
+
+    #[must_use]
     pub const fn forest_cells(self) -> &'static [TacticalTerrainCell] {
         match self.profile {
             TacticalTerrainProfile::HeightFoundationV1 => &[],
             TacticalTerrainProfile::ForestMovementV2 => &TACTICAL_FOREST_CELLS_V2,
-            TacticalTerrainProfile::RiverCrossingsV3 | TacticalTerrainProfile::CombatTerrainV4 => {
-                &TACTICAL_FOREST_CELLS_V3
-            }
+            TacticalTerrainProfile::RiverCrossingsV3 => &TACTICAL_FOREST_CELLS_V3,
+            TacticalTerrainProfile::CombatTerrainV4 => match self.location {
+                BattlefieldLocation::MountainPass => &TACTICAL_FOREST_CELLS_V3,
+                BattlefieldLocation::ForestClearing => &FOREST_CLEARING_CELLS,
+                BattlefieldLocation::RiverFord => &RIVER_FORD_FOREST_CELLS,
+            },
         }
     }
 
     #[must_use]
     pub const fn river_cells(self) -> &'static [TacticalTerrainCell] {
         match self.profile {
-            TacticalTerrainProfile::RiverCrossingsV3 | TacticalTerrainProfile::CombatTerrainV4 => {
-                &TACTICAL_RIVER_CELLS
-            }
+            TacticalTerrainProfile::RiverCrossingsV3 => &TACTICAL_RIVER_CELLS,
+            TacticalTerrainProfile::CombatTerrainV4 => match self.location {
+                BattlefieldLocation::MountainPass | BattlefieldLocation::RiverFord => {
+                    &TACTICAL_RIVER_CELLS
+                }
+                BattlefieldLocation::ForestClearing => &[],
+            },
             TacticalTerrainProfile::HeightFoundationV1
             | TacticalTerrainProfile::ForestMovementV2 => &[],
         }
@@ -196,9 +300,13 @@ impl TacticalTerrain {
     #[must_use]
     pub const fn river_crossing_cells(self) -> &'static [TacticalTerrainCell] {
         match self.profile {
-            TacticalTerrainProfile::RiverCrossingsV3 | TacticalTerrainProfile::CombatTerrainV4 => {
-                &TACTICAL_RIVER_CROSSING_CELLS
-            }
+            TacticalTerrainProfile::RiverCrossingsV3 => &TACTICAL_RIVER_CROSSING_CELLS,
+            TacticalTerrainProfile::CombatTerrainV4 => match self.location {
+                BattlefieldLocation::MountainPass | BattlefieldLocation::RiverFord => {
+                    &TACTICAL_RIVER_CROSSING_CELLS
+                }
+                BattlefieldLocation::ForestClearing => &[],
+            },
             TacticalTerrainProfile::HeightFoundationV1
             | TacticalTerrainProfile::ForestMovementV2 => &[],
         }
@@ -257,10 +365,7 @@ impl TacticalTerrain {
         from: BattlePoint,
         destination: BattlePoint,
     ) -> BattlePoint {
-        if !matches!(
-            self.profile,
-            TacticalTerrainProfile::RiverCrossingsV3 | TacticalTerrainProfile::CombatTerrainV4
-        ) {
+        if self.river_cells().is_empty() {
             return destination;
         }
 
@@ -429,19 +534,30 @@ impl TacticalTerrain {
 
     #[must_use]
     pub fn cell_height_mm(self, battlefield: FlatBattlefield, cell_x: u32, cell_z: u32) -> u32 {
-        let _profile = self.profile;
         let cell_x = cell_x.min(TACTICAL_TERRAIN_GRID_SIZE - 1);
         let cell_z = cell_z.min(TACTICAL_TERRAIN_GRID_SIZE - 1);
-        let sample_x = cell_x * 2 + 1;
-        let sample_z = cell_z * 2 + 1;
-        let center = TACTICAL_TERRAIN_GRID_SIZE;
-        let distance = sample_x.abs_diff(center).max(sample_z.abs_diff(center));
-        let max_distance = TACTICAL_TERRAIN_GRID_SIZE - 1;
-        let elevation_scale = max_distance.saturating_sub(distance);
-        let peak_scale = TACTICAL_TERRAIN_GRID_SIZE.saturating_sub(2).max(1);
         let max_height =
             battlefield.width_mm.min(battlefield.depth_mm) / TERRAIN_MAX_HEIGHT_DIVISOR;
-        max_height.saturating_mul(elevation_scale) / peak_scale
+
+        if self.profile != TacticalTerrainProfile::CombatTerrainV4 {
+            return mountain_height_mm(max_height, cell_x, cell_z);
+        }
+
+        match self.location {
+            BattlefieldLocation::MountainPass => mountain_height_mm(max_height, cell_x, cell_z),
+            BattlefieldLocation::ForestClearing => {
+                let sample_x = cell_x * 2 + 1;
+                let sample_z = cell_z * 2 + 1;
+                let center = TACTICAL_TERRAIN_GRID_SIZE;
+                let distance = sample_x.abs_diff(center).max(sample_z.abs_diff(center));
+                max_height.saturating_mul(distance)
+                    / (TACTICAL_TERRAIN_GRID_SIZE.saturating_sub(1) * 5).max(1)
+            }
+            BattlefieldLocation::RiverFord => {
+                let bank_distance = cell_x.abs_diff(RIVER_CELL_X);
+                max_height.saturating_mul(bank_distance) / (TACTICAL_TERRAIN_GRID_SIZE * 2).max(1)
+            }
+        }
     }
 
     #[must_use]
@@ -465,6 +581,17 @@ impl TacticalTerrain {
         let z1 = scaled_boundary(battlefield.depth_mm, cell_z + 1);
         Some((x0, x1, z0, z1))
     }
+}
+
+fn mountain_height_mm(max_height: u32, cell_x: u32, cell_z: u32) -> u32 {
+    let sample_x = cell_x * 2 + 1;
+    let sample_z = cell_z * 2 + 1;
+    let center = TACTICAL_TERRAIN_GRID_SIZE;
+    let distance = sample_x.abs_diff(center).max(sample_z.abs_diff(center));
+    let max_distance = TACTICAL_TERRAIN_GRID_SIZE - 1;
+    let elevation_scale = max_distance.saturating_sub(distance);
+    let peak_scale = TACTICAL_TERRAIN_GRID_SIZE.saturating_sub(2).max(1);
+    max_height.saturating_mul(elevation_scale) / peak_scale
 }
 
 fn terrain_cell_index(coordinate_mm: u32, span_mm: u32) -> u32 {
@@ -503,6 +630,33 @@ mod tests {
         assert_eq!(decoded.forest_cells(), terrain.forest_cells());
         assert_eq!(decoded.river_cells(), terrain.river_cells());
         assert_eq!(decoded.profile(), TacticalTerrainProfile::CombatTerrainV4);
+        assert_eq!(decoded.location(), BattlefieldLocation::MountainPass);
+    }
+
+    #[test]
+    fn battlefield_locations_are_distinct_core_owned_terrain_configurations() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let mountain = TacticalTerrain::for_location(BattlefieldLocation::MountainPass);
+        let forest = TacticalTerrain::for_location(BattlefieldLocation::ForestClearing);
+        let ford = TacticalTerrain::for_location(BattlefieldLocation::RiverFord);
+
+        assert!(mountain.height_mm(battlefield, BattlePoint::new(50_000, 50_000)) > 0);
+        assert!(
+            forest.height_mm(battlefield, BattlePoint::new(50_000, 50_000))
+                < mountain.height_mm(battlefield, BattlePoint::new(50_000, 50_000))
+        );
+        assert!(
+            forest.river_cells().is_empty(),
+            "forest clearing must not inherit the river chokepoint"
+        );
+        assert!(!ford.river_cells().is_empty());
+        assert!(!ford.river_crossing_cells().is_empty());
+        assert_ne!(forest.forest_cells(), ford.forest_cells());
+
+        for location in BattlefieldLocation::ALL {
+            assert_eq!(BattlefieldLocation::from_id(location.id()), Some(location));
+        }
+        assert_eq!(BattlefieldLocation::from_id("unknown"), None);
     }
 
     #[test]

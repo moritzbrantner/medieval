@@ -31,7 +31,7 @@ const [
 test("Pages exposes a focused single-player tactical sandbox", () => {
   assert.match(index, /id="open-battle-sandbox"/);
   assert.match(index, />Battle Sandbox</);
-  assert.match(launcher, /battleSandboxButton\?\.addEventListener\("click", openBattlePreview\)/);
+  assert.match(launcher, /battleSandboxButton\?\.addEventListener\("click", \(\) =>/);
   assert.match(launcher, /new URL\("battle\.html", window\.location\.href\)/);
   assert.match(html, /<canvas[\s\S]*id="battle-canvas"/);
   assert.match(html, /id="pause-battle"/);
@@ -42,12 +42,18 @@ test("Pages exposes a focused single-player tactical sandbox", () => {
   assert.match(html, /id="army-options"/);
   assert.match(html, /id="start-sandbox-battle"/);
   assert.match(html, /id="battle-stage"[\s\S]*hidden/);
+  assert.match(html, /id="battle-location"/);
+  assert.match(index, /id="sandbox-battle-location"/);
+  assert.match(index, /id="online-battle-location"/);
+  assert.match(script, /battle_sandbox_start_at_location/);
+  assert.match(script, /battle_sandbox_set_location/);
+  assert.match(launcher, /searchParams\.set\("location", location\)/);
   assert.match(html, /type="module" src="battle-sandbox\.js"/);
 });
 
 test("pre-battle army selection is quoted and validated by Rust", () => {
   assert.match(script, /battle_sandbox_quote_army/);
-  assert.match(script, /battle_sandbox_start\(canvas\.id, JSON\.stringify\(armySelection\)\)/);
+  assert.match(script, /battle_sandbox_start_at_location\(\s*canvas\.id,\s*JSON\.stringify\(armySelection\),\s*locationSelect\.value,?\s*\)/);
   assert.match(wasmRust, /SANDBOX_ARMY_BUDGET: u32 = 1_500/);
   assert.match(wasmRust, /MAX_SANDBOX_BATTALIONS: u32 = 12/);
   assert.match(wasmRust, /unit\.recruitment_cost\(\)/);
@@ -92,6 +98,16 @@ test("browser sandbox renders through wgpu and advances the real tactical core",
   assert.match(wasmRust, /battle_sandbox_pointer/);
 });
 
+test("battlefield choice stays core-owned while browser and renderer only adapt it", () => {
+  assert.match(terrainCore, /enum BattlefieldLocation/);
+  assert.match(terrainCore, /MountainPass/);
+  assert.match(terrainCore, /ForestClearing/);
+  assert.match(terrainCore, /RiverFord/);
+  assert.match(tacticalCore, /deploy_at_location/);
+  assert.match(rendererScene, /pub terrain: TacticalTerrain/);
+  assert.doesNotMatch(script, /FOREST_CLEARING_CELLS|RIVER_FORD_FOREST_CELLS|mountain_height_mm/);
+});
+
 test("river legality and chokepoint routing stay core-owned while the renderer only projects cells", () => {
   assert.match(terrainCore, /RiverCrossingsV3/);
   assert.match(terrainCore, /fn cell_is_passable/);
@@ -128,7 +144,7 @@ test("browser snapshots reconcile autonomous routing before exposing selection",
 
 test("Pages creates browser bindings from the tactical WASM artifact", () => {
   assert.match(pages, /web-battle-wasm\/Cargo\.toml/);
-  assert.match(pages, /wasm-bindgen-cli --version 0\.2\.127 --locked/);
+  assert.match(pages, /wasm-bindgen-cli --version 0\.2\.128 --locked/);
   assert.match(pages, /medieval_web_battle\.wasm/);
   assert.match(pages, /--target web/);
   assert.match(pages, /--out-name medieval_web_battle/);

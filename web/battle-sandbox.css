@@ -17,6 +17,7 @@ body {
 }
 
 button,
+select,
 a {
   font: inherit;
 }
@@ -35,11 +36,22 @@ button.secondary {
   background: #28231a;
 }
 
+.battle-location-select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #887452;
+  border-radius: 4px;
+  background: #28231a;
+  color: #fff7e6;
+}
+
 button:hover {
   filter: brightness(1.08);
 }
 
 button:focus-visible,
+select:focus-visible,
 a:focus-visible,
 canvas:focus-visible {
   outline: 2px solid #e0bd76;

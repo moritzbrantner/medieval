@@ -7,8 +7,9 @@ import init, {
   battle_sandbox_quote_army,
   battle_sandbox_reset,
   battle_sandbox_set_formation,
+  battle_sandbox_set_location,
   battle_sandbox_set_paused,
-  battle_sandbox_start,
+  battle_sandbox_start_at_location,
   battle_sandbox_status,
   battle_sandbox_unit_viewport,
 } from "./pkg/medieval_web_battle.js";
@@ -34,6 +35,10 @@ const armyRemaining = document.querySelector("#army-remaining");
 const armySetupReason = document.querySelector("#army-setup-reason");
 const armySetupError = document.querySelector("#army-setup-error");
 const startBattleButton = document.querySelector("#start-sandbox-battle");
+const locationSelect = document.querySelector("#battle-location");
+const battleLocations = new Set(["mountainPass", "forestClearing", "riverFord"]);
+const requestedLocation = new URLSearchParams(window.location.search).get("location");
+if (battleLocations.has(requestedLocation)) locationSelect.value = requestedLocation;
 
 let currentStatus;
 const controlsE2E = new URLSearchParams(window.location.search).has("e2e-controls");
@@ -146,12 +151,19 @@ async function beginBattle() {
   battleStage.hidden = false;
   syncCanvasSize();
   try {
-    const status = await battle_sandbox_start(canvas.id, JSON.stringify(armySelection));
+    const status = await battle_sandbox_start_at_location(
+      canvas.id,
+      JSON.stringify(armySelection),
+      locationSelect.value,
+    );
     battleStarted = true;
     renderStatus(status);
     canvas.focus();
     animationActive = true;
-    if (controlsE2E) document.documentElement.dataset.controlsE2eReady = "true";
+    if (controlsE2E) {
+      await battleInputBindings.ready;
+      document.documentElement.dataset.controlsE2eReady = "true";
+    }
     requestAnimationFrame(animate);
   } catch (error) {
     battleStage.hidden = true;
@@ -207,6 +219,7 @@ function renderStatus(rawStatus) {
   selectionText.textContent = currentStatus.selectedUnits.length
     ? `Selected: ${currentStatus.selectedUnits.map(readableUnitName).join(", ")}`
     : "No units selected.";
+  locationSelect.value = currentStatus.battlefieldLocation;
   pauseButton.textContent = currentStatus.paused && !currentStatus.outcome ? "Resume" : "Pause";
   pauseButton.disabled = Boolean(currentStatus.outcome);
   const selectionDisabled = currentStatus.selectedUnits.length === 0 || Boolean(currentStatus.outcome);
@@ -374,6 +387,19 @@ resetButton.addEventListener("click", () => {
   }
 });
 startBattleButton.addEventListener("click", beginBattle);
+locationSelect.addEventListener("change", () => {
+  if (!currentStatus || !battleLocations.has(locationSelect.value)) return;
+  clearError();
+  try {
+    renderStatus(battle_sandbox_set_location(locationSelect.value));
+    const url = new URL(window.location.href);
+    url.searchParams.set("location", locationSelect.value);
+    history.replaceState(null, "", url);
+    canvas.focus();
+  } catch (error) {
+    reportError(error);
+  }
+});
 window.addEventListener("resize", syncCanvasSize);
 
 async function start() {

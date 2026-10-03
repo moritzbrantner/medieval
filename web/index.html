@@ -26,6 +26,15 @@
               <span class="mode-copy">Rule provinces, raise armies, and conquer the map turn by turn.</span>
             </button>
 
+            <label class="battle-location-field" for="sandbox-battle-location">
+              <span>Sandbox battlefield</span>
+              <select id="sandbox-battle-location">
+                <option value="mountainPass">Mountain Pass</option>
+                <option value="forestClearing">Forest Clearing</option>
+                <option value="riverFord">River Ford</option>
+              </select>
+            </label>
+
             <button id="open-battle-sandbox" class="mode-button" type="button">
               <span class="mode-title">Battle Sandbox</span>
               <span class="mode-copy">Command a field army against a deterministic opponent in a single-player tactical battle.</span>
@@ -130,6 +139,15 @@
               Host a private two-player lobby or join an invite. Medieval checks release compatibility over the direct peer
               channel before the battle gate can open.
             </p>
+
+            <label class="battle-location-field online-battle-location" for="online-battle-location">
+              <span>Battlefield</span>
+              <select id="online-battle-location">
+                <option value="mountainPass">Mountain Pass</option>
+                <option value="forestClearing">Forest Clearing</option>
+                <option value="riverFord">River Ford</option>
+              </select>
+            </label>
 
             <label class="lobby-code-label" for="lobby-code">Invite code</label>
             <input id="lobby-code" class="lobby-code-input" type="text" autocomplete="off" spellcheck="false" placeholder="Enter a friend's lobby code" />

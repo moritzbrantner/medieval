@@ -25,6 +25,38 @@ async function clickUnit(page, unitId, options = {}) {
   if (options.shift) await page.keyboard.up("Shift");
 }
 
+test("battlefield selector rebuilds the Rust-owned sandbox across all three locations", async ({ page }) => {
+  await page.goto("/battle.html?e2e-controls=1");
+  await expect(page.locator("#army-setup")).toBeVisible();
+  await page.getByRole("button", { name: "Add Levy battalion" }).click();
+  await page.getByRole("button", { name: "Enter battle" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  const selector = page.locator("#battle-location");
+
+  await expect(selector).toHaveValue("mountainPass");
+  expect((await status(page)).battlefieldLocation).toBe("mountainPass");
+
+  await selector.selectOption("forestClearing");
+  await expect.poll(async () => (await status(page)).battlefieldLocation).toBe("forestClearing");
+  let current = await status(page);
+  expect(current.riverCells).toEqual([]);
+  expect(current.riverCrossingCells).toEqual([]);
+  expect(current.siege).toBeNull();
+
+  await selector.selectOption("riverFord");
+  await expect.poll(async () => (await status(page)).battlefieldLocation).toBe("riverFord");
+  current = await status(page);
+  expect(current.riverCells).toHaveLength(8);
+  expect(current.riverCrossingCells).toHaveLength(2);
+  expect(current.siege).toBeNull();
+
+  await selector.selectOption("mountainPass");
+  await expect.poll(async () => (await status(page)).battlefieldLocation).toBe("mountainPass");
+  current = await status(page);
+  expect(current.siege).toMatchObject({ gateState: "closed" });
+  await expect(page.locator("#battle-error")).toBeHidden();
+});
+
 test("physical tactical controls reach Rust-owned battle state", async ({ page }) => {
   await page.goto("/battle.html?e2e-controls=1");
   await expect(page.locator("#army-setup")).toBeVisible();
@@ -203,7 +235,7 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
   const resetSpears = current.units.find((unit) => unit.id === "attacker-spears");
   expect(resetSpears).toMatchObject({
     xMm: 22_000,
-    yMm: 24_000,
+    yMm: 10_000,
     formation: "line",
     formationFiles: 28,
     attackRangeMm: 1_500,
