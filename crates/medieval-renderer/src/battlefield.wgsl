@@ -137,7 +137,9 @@ fn shade(color: vec3<f32>, normal: vec3<f32>) -> vec4<f32> {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     var color = vec3<f32>(0.69, 0.18, 0.12);
-    if input.material > 13.5 {
+    if input.material > 14.5 {
+        color = vec3<f32>(0.95, 0.85, 0.35);
+    } else if input.material > 13.5 {
         color = vec3<f32>(0.18, 0.45, 0.92);
     } else if input.material > 12.5 {
         color = vec3<f32>(0.86, 0.22, 0.15);

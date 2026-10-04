@@ -281,3 +281,20 @@ test("withdrawal preserves escaped soldiers and projects the core terminal resul
   await expect(page.getByRole("button", { name: "Withdraw", exact: true })).toBeDisabled();
   await page.screenshot({ path: test.info().outputPath("withdrawal.png") });
 });
+
+
+test("formation facing follows physical movement and appears in the battlefield", async ({ page }) => {
+  await page.goto("/battle.html?e2e-controls=1");
+  await page.getByRole("button", { name: "Enter battle" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  expect((await status(page)).units.find(unit => unit.id === "attacker-spears").facing).toEqual({ x: 1, y: 0 });
+  await clickUnit(page, "attacker-spears");
+  const ground = await canvasPoint(page, "groundViewport", 22_000, 30_000);
+  await page.mouse.click(ground.x, ground.y, { button: "right" });
+  await page.getByRole("button", { name: "Resume", exact: true }).click();
+  await expect.poll(async () => (await status(page)).units.find(unit => unit.id === "attacker-spears").facing).toEqual({ x: 0, y: 1 });
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  await expect(page.locator("#battle-error")).toBeHidden();
+  await page.screenshot({ path: test.info().outputPath("formation-facing.png") });
+});
