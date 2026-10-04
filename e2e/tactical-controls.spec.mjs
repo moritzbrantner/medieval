@@ -37,7 +37,18 @@ test("battlefield selector rebuilds the Rust-owned sandbox across all three loca
   expect((await status(page)).battlefieldLocation).toBe("mountainPass");
 
   await selector.selectOption("forestClearing");
-  await expect.poll(async () => (await status(page)).battlefieldLocation).toBe("forestClearing");
+  await expect.poll(async () => page.evaluate(async () => {
+    const { battle_sandbox_status } = await import("./pkg/medieval_web_battle.js");
+    return {
+      projected: window.__medievalControlsE2E.status().battlefieldLocation,
+      authoritative: (() => {
+        try { return JSON.parse(battle_sandbox_status()).battlefieldLocation; }
+        catch (error) { return String(error); }
+      })(),
+      selector: document.querySelector("#battle-location").value,
+      error: document.querySelector("#battle-error").textContent,
+    };
+  })).toEqual({ projected: "forestClearing", authoritative: "forestClearing", selector: "forestClearing", error: "" });
   let current = await status(page);
   expect(current.riverCells).toEqual([]);
   expect(current.riverCrossingCells).toEqual([]);
@@ -372,5 +383,19 @@ test("physical group movement, queued waypoints and attack-move reach the core",
     expect(unit.movementMode).toBe("march");
     expect(unit.queuedMovements).toEqual([]);
   }
+  await expect(page.locator("#battle-error")).toBeHidden();
+});
+
+test("battlefield dropdown commits keyboard choices while simulation refreshes", async ({ page }) => {
+  await page.goto("/battle.html?e2e-controls=1");
+  await page.getByRole("button", { name: "Enter battle" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  const selector=page.locator("#battle-location");
+  const tick=(await status(page)).tick;
+  await selector.click();
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(async () => (await status(page)).tick).toBeGreaterThan(tick+6);
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await status(page)).battlefieldLocation).toBe("forestClearing");
   await expect(page.locator("#battle-error")).toBeHidden();
 });

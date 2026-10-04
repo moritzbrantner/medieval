@@ -10,3 +10,6 @@ pub use scene::{
     BattleRenderSnapshot, RenderSiegeArea, RenderSiegeCapture, RenderSiegeSnapshot,
     RenderSiegeTower, RenderUnitInstance, RenderViewState,
 };
+
+mod terrain_mesh;
+pub use terrain_mesh::{TerrainMesh, TerrainVertex};
