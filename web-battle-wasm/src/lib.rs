@@ -177,6 +177,7 @@ struct UnitStatus {
     source_army_id: Option<String>,
     combat_stats: Option<medieval_core::UnitStats>,
     facing: Option<medieval_core::Facing>,
+    charge: Option<medieval_core::CavalryChargeState>,
     engagement_arc: Option<medieval_core::CombatArc>,
     morale: u16,
     fatigue: u16,
@@ -533,6 +534,7 @@ impl BrowserSandbox {
                         .map(|provenance| provenance.source_army_id.clone()),
                     combat_stats: unit.stats(),
                     facing: unit.facing(),
+                    charge: unit.charge_state(),
                     engagement_arc: unit
                         .engagement_target()
                         .and_then(|id| self.battle.units().iter().find(|target| target.id() == id))
