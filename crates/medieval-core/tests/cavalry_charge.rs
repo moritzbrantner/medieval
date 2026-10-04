@@ -252,3 +252,55 @@ fn forest_entry_and_intercepting_formations_interrupt_run_up() {
         }
     );
 }
+
+#[test]
+fn final_contact_displacement_completes_a_threshold_charge() {
+    let mut charged = contact(battle(5_500, UnitKind::Levy, Facing::west(), false));
+    assert_eq!(charge(&charged), Charge::Contact { run_up_mm: 4_000 });
+    let mut neutral = without_charge(&charged);
+    resolve_next_pulse(&mut charged);
+    resolve_next_pulse(&mut neutral);
+    assert!(survivors(&charged) < survivors(&neutral));
+}
+
+#[test]
+fn moving_target_cannot_consume_impact_before_actual_melee_contact() {
+    let mut moving = battle(4_575, UnitKind::Levy, Facing::west(), false);
+    moving
+        .issue_move_order(MovementOrder {
+            unit_id: "d".into(),
+            destination: BattlePoint::new(25_000, 10_000),
+        })
+        .unwrap();
+    moving.advance_ticks(40);
+    assert_eq!(
+        moving.units()[1].position().x_mm - moving.units()[0].position().x_mm,
+        1_575
+    );
+    assert_eq!(charge(&moving), Charge::Contact { run_up_mm: 4_000 });
+    assert_eq!(survivors(&moving), 320);
+    let checkpoint = serde_json::to_string(&moving).unwrap();
+    let mut replay: TacticalBattle = serde_json::from_str(&checkpoint).unwrap();
+    for battle in [&mut moving, &mut replay] {
+        let position = battle.units()[1].position();
+        battle
+            .issue_move_order(MovementOrder {
+                unit_id: "d".into(),
+                destination: position,
+            })
+            .unwrap();
+    }
+    let mut neutral = without_charge(&moving);
+    moving.advance_ticks(20);
+    replay.advance_ticks(10);
+    replay.advance_ticks(10);
+    neutral.advance_ticks(20);
+    assert_eq!(moving, replay);
+    assert!(survivors(&moving) < survivors(&neutral));
+    assert_eq!(
+        charge(&moving),
+        Charge::Recovering {
+            ticks_remaining: 40
+        }
+    );
+}

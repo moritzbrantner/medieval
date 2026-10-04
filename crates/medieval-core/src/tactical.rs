@@ -1134,16 +1134,6 @@ impl TacticalBattle {
             self.units[index].charge = Some(previous.interrupted());
             return;
         }
-        if points_within_distance(next, target.position, COMBAT_CONTACT_DISTANCE_MM) {
-            self.units[index].charge = Some(Charge::Contact {
-                run_up_mm: previous.run_up_mm().min(crate::charge::CHARGE_RUN_UP_MM),
-            });
-            return;
-        }
-        if next == before.position {
-            self.units[index].charge = Some(previous.interrupted());
-            return;
-        }
         let displacement = next
             .x_mm
             .abs_diff(before.position.x_mm)
@@ -1152,6 +1142,14 @@ impl TacticalBattle {
             .run_up_mm()
             .saturating_add(displacement)
             .min(crate::charge::CHARGE_RUN_UP_MM);
+        if points_within_distance(next, target.position, COMBAT_CONTACT_DISTANCE_MM) {
+            self.units[index].charge = Some(Charge::Contact { run_up_mm });
+            return;
+        }
+        if next == before.position {
+            self.units[index].charge = Some(previous.interrupted());
+            return;
+        }
         self.units[index].charge = Some(if run_up_mm >= crate::charge::CHARGE_RUN_UP_MM {
             Charge::Charging { run_up_mm }
         } else {
@@ -1349,6 +1347,7 @@ impl TacticalBattle {
 
         let mut casualties: BTreeMap<String, u32> = BTreeMap::new();
         let mut engaged_units = BTreeSet::new();
+        let mut consumed_charges = BTreeSet::new();
 
         for attacker in &snapshot {
             if attacker.state != TacticalUnitState::Formed
@@ -1441,6 +1440,16 @@ impl TacticalBattle {
                     );
                     *casualties.entry(left.id.clone()).or_default() += u32::from(left_losses);
                     *casualties.entry(right.id.clone()).or_default() += u32::from(right_losses);
+                    if left_frontage > 0
+                        && left.engagement_target.as_deref() == Some(right.id.as_str())
+                    {
+                        consumed_charges.insert(left.id.clone());
+                    }
+                    if right_frontage > 0
+                        && right.engagement_target.as_deref() == Some(left.id.as_str())
+                    {
+                        consumed_charges.insert(right.id.clone());
+                    }
                     engaged_units.insert(left.id.clone());
                     engaged_units.insert(right.id.clone());
                 }
@@ -1524,7 +1533,9 @@ impl TacticalBattle {
             }
         }
         for unit in &mut self.units {
-            if matches!(unit.charge, Some(crate::CavalryChargeState::Contact { .. })) {
+            if consumed_charges.contains(&unit.id)
+                && matches!(unit.charge, Some(crate::CavalryChargeState::Contact { .. }))
+            {
                 unit.charge = Some(crate::CavalryChargeState::Recovering {
                     ticks_remaining: crate::charge::CHARGE_RECOVERY_TICKS,
                 });
