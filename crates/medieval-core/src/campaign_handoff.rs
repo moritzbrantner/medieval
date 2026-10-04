@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Army, CampaignError, CampaignState, UnitKind};
+use crate::{
+    Army, BattlePoint, BattleSide, CampaignError, CampaignState, FlatBattlefield, Formation,
+    TacticalBattle, TacticalError, TacticalUnit, UNIT_KINDS, UnitKind,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +29,102 @@ pub struct TacticalForceSeed {
 pub struct TacticalUnitSeed {
     pub kind: UnitKind,
     pub soldiers: u64,
+}
+
+impl TacticalBattle {
+    /// Builds core-owned tactical composition and retains its campaign provenance.
+    ///
+    /// Counts are canonicalized by kind and split into `u16`-sized units without
+    /// truncation. Initial positions and movement use a deterministic baseline;
+    /// campaign battlefield profiles and editable deployment are separate concerns.
+    pub fn from_campaign_seed(
+        battlefield: FlatBattlefield,
+        mut seed: TacticalBattleSeed,
+    ) -> Result<Self, TacticalError> {
+        // Validate dimensions before allocating the force composition.
+        Self::new(battlefield, Vec::new())?;
+        let mut units = Vec::new();
+        for (side, force) in [
+            (BattleSide::Attacker, &mut seed.attacker),
+            (BattleSide::Defender, &mut seed.defender),
+        ] {
+            canonicalize_force(force, side)?;
+            let count: u64 = force
+                .units
+                .iter()
+                .map(|unit| unit.soldiers.div_ceil(u64::from(u16::MAX)))
+                .sum();
+            let capacity =
+                usize::try_from(count).map_err(|_| TacticalError::CampaignForceTooLarge(side))?;
+            units
+                .try_reserve(capacity)
+                .map_err(|_| TacticalError::CampaignForceTooLarge(side))?;
+            let x = match side {
+                BattleSide::Attacker => battlefield.width_mm / 6,
+                BattleSide::Defender => battlefield.width_mm - battlefield.width_mm / 6,
+            };
+            let mut row = 0_u64;
+            for entry in &force.units {
+                let kind_id = match entry.kind {
+                    UnitKind::Levy => "levy",
+                    UnitKind::Spearmen => "spearmen",
+                    UnitKind::Archers => "archers",
+                    UnitKind::Knights => "knights",
+                };
+                let side_id = match side {
+                    BattleSide::Attacker => "attacker",
+                    BattleSide::Defender => "defender",
+                };
+                let mut remaining = entry.soldiers;
+                let mut chunk = 0_u64;
+                while remaining > 0 {
+                    let soldiers = remaining.min(u64::from(u16::MAX)) as u16;
+                    let y = (u128::from(battlefield.depth_mm) * u128::from(row + 1)
+                        / u128::from(count + 1)) as u32;
+                    units.push(
+                        TacticalUnit::new(
+                            format!("campaign-{side_id}-{kind_id}-{chunk:020}"),
+                            side,
+                            soldiers,
+                            BattlePoint::new(x, y),
+                            Formation::Line {
+                                files: soldiers.min(10),
+                            },
+                            100,
+                        )
+                        .with_unit_kind(entry.kind),
+                    );
+                    remaining -= u64::from(soldiers);
+                    row += 1;
+                    chunk += 1;
+                }
+            }
+        }
+        let mut battle = Self::new(battlefield, units)?;
+        battle.campaign_seed = Some(seed);
+        Ok(battle)
+    }
+}
+
+fn canonicalize_force(
+    force: &mut TacticalForceSeed,
+    side: BattleSide,
+) -> Result<(), TacticalError> {
+    let mut units = Vec::new();
+    for kind in UNIT_KINDS {
+        let soldiers = force
+            .units
+            .iter()
+            .filter(|unit| unit.kind == kind)
+            .try_fold(0_u64, |count, unit| count.checked_add(unit.soldiers))
+            .ok_or(TacticalError::CampaignForceTooLarge(side))?;
+        if soldiers > 0 {
+            units.push(TacticalUnitSeed { kind, soldiers });
+        }
+    }
+    force.units = units;
+    force.source_army_ids.sort();
+    Ok(())
 }
 
 impl CampaignState {
