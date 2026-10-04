@@ -198,3 +198,45 @@ fn fs_character(input: CharacterVertexOutput) -> @location(0) vec4<f32> {
     }
     return shade(color, input.normal);
 }
+
+struct TerrainInput {
+    @location(7) position: vec4<f32>,
+    @location(8) normal: vec4<f32>,
+    @location(9) color: vec4<f32>,
+};
+struct TerrainOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) world_position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec3<f32>,
+};
+@vertex
+fn vs_terrain(input: TerrainInput) -> TerrainOutput {
+    var output: TerrainOutput;
+    output.position = project_world(input.position.xyz);
+    output.world_position = input.position.xyz;
+    output.normal = input.normal.xyz;
+    output.color = input.color.rgb;
+    return output;
+}
+fn soil_noise(point: vec2<f32>) -> f32 {
+    let cell = floor(point);
+    let fraction = fract(point);
+    let smooth_fraction = fraction * fraction * (vec2<f32>(3.0) - 2.0 * fraction);
+    let hashes = vec4<f32>(
+        dot(cell, vec2<f32>(127.1, 311.7)),
+        dot(cell + vec2<f32>(1.0, 0.0), vec2<f32>(127.1, 311.7)),
+        dot(cell + vec2<f32>(0.0, 1.0), vec2<f32>(127.1, 311.7)),
+        dot(cell + vec2<f32>(1.0, 1.0), vec2<f32>(127.1, 311.7)),
+    );
+    let values = fract(sin(hashes) * 43758.5453);
+    return mix(mix(values.x, values.y, smooth_fraction.x), mix(values.z, values.w, smooth_fraction.x), smooth_fraction.y);
+}
+@fragment
+fn fs_terrain(input: TerrainOutput) -> @location(0) vec4<f32> {
+    let broad = soil_noise(input.world_position.xz / 6500.0);
+    let grain = soil_noise(input.world_position.xz / 650.0);
+    let top = input.normal.y > 0.9;
+    let variation = select(0.80 + grain * 0.25, 0.78 + broad * 0.30 + grain * 0.10, top);
+    return shade(input.color * variation, input.normal);
+}
