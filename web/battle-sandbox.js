@@ -305,7 +305,8 @@ function renderStatus(rawStatus) {
       ? ` · engaging ${readableUnitName(unit.engagementTarget)}`
       : "";
     const kind = { levy: "Levy", spearmen: "Spearmen", archers: "Archers", knights: "Knights" }[unit.unitKind] ?? "Legacy unit";
-    detail.textContent = `${kind} · ${unitState(unit)} · ${unit.soldiers} soldiers · ${readableFormation(unit)} · range ${readableRange(unit.attackRangeMm)} · morale ${unit.morale} · fatigue ${unit.fatigue}${order}`;
+    const ammunition = unit.ammunition === 0 ? " · ammunition exhausted" : Number.isInteger(unit.ammunition) ? ` · ammunition ${unit.ammunition} volleys` : "";
+    detail.textContent = `${kind} · ${unitState(unit)} · ${unit.soldiers} soldiers · ${readableFormation(unit)} · range ${readableRange(unit.attackRangeMm)} · morale ${unit.morale} · fatigue ${unit.fatigue}${ammunition}${order}`;
 
     row.append(name, side, detail);
     fragment.append(row);
