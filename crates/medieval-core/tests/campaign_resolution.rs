@@ -451,3 +451,36 @@ fn existing_nonadjacent_retreat_destinations_are_rejected_on_load_and_completed_
     assert!(campaign.apply_tactical_battle_result(&result).is_err());
     assert_eq!(campaign, before);
 }
+
+#[test]
+fn completed_reports_cannot_overlap_the_same_pending_battle_or_be_recorded_twice() {
+    let base = campaign();
+    let result = victory(&base, BattleSide::Attacker);
+    let mut completed = base.clone();
+    let report = completed.apply_tactical_battle_result(&result).unwrap();
+    for staged in [false, true] {
+        let mut conflicting = base.clone();
+        if staged {
+            conflicting.reconcile_tactical_casualties(&result).unwrap();
+        }
+        conflicting.tactical_battle_reports.push(report.clone());
+        assert!(CampaignSave::from_campaign(conflicting.clone(), "england").is_err());
+        let before = conflicting.clone();
+        assert!(conflicting.apply_tactical_battle_result(&result).is_err());
+        assert_eq!(conflicting, before);
+    }
+    completed.tactical_battle_reports.push(report);
+    assert!(CampaignSave::from_campaign(completed, "england").is_err());
+}
+
+#[test]
+fn completed_report_attacker_identity_must_match_its_retained_source_roster() {
+    let mut campaign = campaign();
+    let result = victory(&campaign, BattleSide::Attacker);
+    campaign.apply_tactical_battle_result(&result).unwrap();
+    campaign.tactical_battle_reports[0]
+        .result
+        .seed
+        .attacker_army_id = "unrelated-army".into();
+    assert!(CampaignSave::from_campaign(campaign, "england").is_err());
+}

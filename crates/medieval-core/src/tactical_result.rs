@@ -324,6 +324,19 @@ impl TacticalBattleResult {
 fn result_rosters(
     seed: &TacticalBattleSeed,
 ) -> Result<Vec<TacticalArmyResult>, TacticalResultError> {
+    if seed.turn == 0
+        || seed.attacker.source_army_ids != [seed.attacker_army_id.clone()]
+        || seed.attacker.faction_id.is_empty()
+        || seed.defender.faction_id.is_empty()
+        || seed.attacker.faction_id == seed.defender.faction_id
+        || seed.from_province.is_empty()
+        || seed.target_province.is_empty()
+        || seed.from_province == seed.target_province
+    {
+        return Err(TacticalResultError::InvalidProvenance(
+            "seed does not describe a campaign conflict".into(),
+        ));
+    }
     let mut armies = Vec::new();
     for (side, force) in [
         (BattleSide::Attacker, &seed.attacker),
