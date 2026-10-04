@@ -2,7 +2,8 @@
   "name": "medieval-browser-acceptance",
   "private": true,
   "scripts": {
-    "test:e2e:controls": "playwright test e2e/tactical-controls.spec.mjs e2e/terrain-presentation.spec.mjs --project=chromium"
+    "test:e2e:controls": "playwright test e2e/tactical-controls.spec.mjs e2e/terrain-presentation.spec.mjs --project=chromium",
+    "test:e2e:campaign": "playwright test e2e/campaign-battle.spec.mjs e2e/pending-battle-save.spec.mjs e2e/campaign-vertical-slice.spec.mjs --project=chromium"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0"
