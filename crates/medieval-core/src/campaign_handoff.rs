@@ -102,7 +102,7 @@ impl TacticalBattle {
         }
         let mut battle = Self::new(battlefield, units)?;
         battle.campaign_seed = Some(seed);
-        Ok(battle)
+        Ok(battle.start())
     }
 }
 

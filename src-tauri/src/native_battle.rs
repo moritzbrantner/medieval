@@ -605,7 +605,8 @@ fn sample_session(location: BattlefieldLocation) -> NativeBattleSession {
         ],
         location,
     )
-    .expect("native renderer sample battle is valid");
+    .expect("native renderer sample battle is valid")
+    .start();
     let player_side = BattleSide::Attacker;
     let mut controls = TacticalControls::new(&battle, player_side);
     controls
