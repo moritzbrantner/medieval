@@ -10,7 +10,9 @@ mod save;
 mod tactical;
 mod terrain;
 pub use battle::{ArmyRoster, BattleOutcome, BattleReport};
-pub use campaign_deployment::{FormationFootprint, TacticalBattlefieldProfile};
+pub use campaign_deployment::{
+    FormationFootprint, ProvinceBattlefieldContext, TacticalBattlefieldProfile,
+};
 pub use campaign_handoff::{TacticalBattleSeed, TacticalForceSeed, TacticalUnitSeed};
 pub use deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
 pub use save::{CAMPAIGN_SAVE_SCHEMA_VERSION, CampaignSave, SaveError};
@@ -63,6 +65,8 @@ pub struct Province {
     pub owner: String,
     pub wealth: u32,
     pub neighbors: Vec<String>,
+    #[serde(default)]
+    pub battlefield: ProvinceBattlefieldContext,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -658,6 +662,10 @@ pub fn new_campaign() -> CampaignState {
                 owner: "england".into(),
                 wealth: 5,
                 neighbors: vec!["normandy".into()],
+                battlefield: ProvinceBattlefieldContext {
+                    location: BattlefieldLocation::MountainPass,
+                    fortified: false,
+                },
             },
             Province {
                 id: "normandy".into(),
@@ -665,6 +673,10 @@ pub fn new_campaign() -> CampaignState {
                 owner: "england".into(),
                 wealth: 6,
                 neighbors: vec!["wessex".into(), "brittany".into(), "paris".into()],
+                battlefield: ProvinceBattlefieldContext {
+                    location: BattlefieldLocation::ForestClearing,
+                    fortified: false,
+                },
             },
             Province {
                 id: "brittany".into(),
@@ -672,6 +684,10 @@ pub fn new_campaign() -> CampaignState {
                 owner: "france".into(),
                 wealth: 4,
                 neighbors: vec!["normandy".into(), "anjou".into()],
+                battlefield: ProvinceBattlefieldContext {
+                    location: BattlefieldLocation::ForestClearing,
+                    fortified: false,
+                },
             },
             Province {
                 id: "anjou".into(),
@@ -679,6 +695,10 @@ pub fn new_campaign() -> CampaignState {
                 owner: "france".into(),
                 wealth: 4,
                 neighbors: vec!["brittany".into(), "paris".into()],
+                battlefield: ProvinceBattlefieldContext {
+                    location: BattlefieldLocation::RiverFord,
+                    fortified: false,
+                },
             },
             Province {
                 id: "paris".into(),
@@ -686,6 +706,10 @@ pub fn new_campaign() -> CampaignState {
                 owner: "france".into(),
                 wealth: 8,
                 neighbors: vec!["normandy".into(), "anjou".into(), "flanders".into()],
+                battlefield: ProvinceBattlefieldContext {
+                    location: BattlefieldLocation::MountainPass,
+                    fortified: true,
+                },
             },
             Province {
                 id: "flanders".into(),
@@ -693,6 +717,10 @@ pub fn new_campaign() -> CampaignState {
                 owner: "france".into(),
                 wealth: 7,
                 neighbors: vec!["paris".into()],
+                battlefield: ProvinceBattlefieldContext {
+                    location: BattlefieldLocation::RiverFord,
+                    fortified: false,
+                },
             },
         ],
         armies: vec![

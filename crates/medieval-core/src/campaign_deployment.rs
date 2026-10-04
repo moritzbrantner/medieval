@@ -20,6 +20,37 @@ pub enum TacticalBattlefieldProfile {
     Siege { location: BattlefieldLocation },
 }
 
+impl Default for TacticalBattlefieldProfile {
+    fn default() -> Self {
+        Self::Field {
+            location: BattlefieldLocation::MountainPass,
+        }
+    }
+}
+
+/// Campaign-owned context. Missing historical metadata retains the legacy field.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ProvinceBattlefieldContext {
+    pub location: BattlefieldLocation,
+    pub fortified: bool,
+}
+
+impl ProvinceBattlefieldContext {
+    #[must_use]
+    pub const fn profile(self) -> TacticalBattlefieldProfile {
+        if self.fortified {
+            TacticalBattlefieldProfile::Siege {
+                location: self.location,
+            }
+        } else {
+            TacticalBattlefieldProfile::Field {
+                location: self.location,
+            }
+        }
+    }
+}
+
 impl TacticalBattlefieldProfile {
     pub(crate) const fn location(self) -> BattlefieldLocation {
         match self {
