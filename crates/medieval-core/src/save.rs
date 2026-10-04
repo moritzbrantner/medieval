@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::CampaignState;
 
-pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 1;
+pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,12 +67,18 @@ impl CampaignSave {
     pub fn from_json(json: &str) -> Result<Self, SaveError> {
         let header: SaveHeader = serde_json::from_str(json)
             .map_err(|error| SaveError::InvalidJson(error.to_string()))?;
-        if header.schema_version != CAMPAIGN_SAVE_SCHEMA_VERSION {
+        if header.schema_version != 1 && header.schema_version != CAMPAIGN_SAVE_SCHEMA_VERSION {
             return Err(SaveError::UnsupportedVersion(header.schema_version));
         }
 
-        let save: Self = serde_json::from_str(json)
+        let mut save: Self = serde_json::from_str(json)
             .map_err(|error| SaveError::InvalidJson(error.to_string()))?;
+        if header.schema_version == 1 {
+            if save.campaign.pending_tactical_result.is_some() {
+                return invalid("version 1 cannot contain reconciled tactical casualties");
+            }
+            save.schema_version = CAMPAIGN_SAVE_SCHEMA_VERSION;
+        }
         save.validate()?;
         Ok(save)
     }

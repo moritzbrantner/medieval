@@ -89,7 +89,7 @@ test("campaign transitions share one busy gate so stale orders cannot cross turn
 });
 
 test("save schema version and validation remain Rust-owned", () => {
-  assert.match(saveCore, /pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 1/);
+  assert.match(saveCore, /pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = [1-9]\d*;/);
   assert.match(saveCore, /pub fn from_json\(json: &str\) -> Result<Self, SaveError>/);
   assert.match(saveCore, /pub fn validate\(&self\) -> Result<\(\), SaveError>/);
   assert.match(saveCore, /UnsupportedVersion/);
