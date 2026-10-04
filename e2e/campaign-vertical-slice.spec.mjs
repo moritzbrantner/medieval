@@ -73,7 +73,11 @@ test("recruit, physically fight, capture and reload the reconciled campaign", as
     await clickUnit(page, frame, unit.id, index > 0);
   }
   await expect.poll(async () => (await tacticalStatus(frame)).selectedUnits.length).toBe(players.length);
+  expect((await tacticalStatus(frame)).units.filter((unit) => unit.side === "player").every((unit) => unit.formation === "line")).toBe(true);
+  await battle.getByRole("button", { name: "Column formation", exact: true }).click();
+  expect((await tacticalStatus(frame)).units.filter((unit) => unit.side === "player").every((unit) => unit.formation === "column")).toBe(true);
   await battle.getByRole("button", { name: "Line formation", exact: true }).click();
+  expect((await tacticalStatus(frame)).units.filter((unit) => unit.side === "player").every((unit) => unit.formation === "line")).toBe(true);
   await clickUnit(page, frame, enemy.id, false, "right");
   expect((await tacticalStatus(frame)).units.filter((unit) => unit.side === "player").every((unit) => unit.engagementTarget === enemy.id)).toBe(true);
   await page.screenshot({ path: test.info().outputPath("campaign-deployment-and-orders.png") });
@@ -121,7 +125,10 @@ test("recruit, physically fight, capture and reload the reconciled campaign", as
   }
   expect(report.result.armies.flatMap((army) => army.units).some((unit) => unit.casualties > 0)).toBe(true);
   await expect(page.locator("#battle-report")).toContainText("Paris captured.");
+  await page.evaluate(() => localStorage.removeItem("medieval-campaign-save-v1"));
   await page.locator("#save-campaign").click();
+  await expect(page.locator("#save-status")).toHaveText(`Saved ${completed.year}, turn ${completed.turn}.`);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("medieval-campaign-save-v1")).campaign)).toEqual(completed);
   await page.reload();
   await page.locator("#open-campaign").click();
   await page.locator("#load-campaign").click();
