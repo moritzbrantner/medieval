@@ -175,6 +175,9 @@ struct UnitStatus {
     soldiers: u16,
     unit_kind: Option<UnitKind>,
     source_army_id: Option<String>,
+    combat_stats: Option<medieval_core::UnitStats>,
+    facing: Option<medieval_core::Facing>,
+    engagement_arc: Option<medieval_core::CombatArc>,
     morale: u16,
     fatigue: u16,
     formation: &'static str,
@@ -516,6 +519,12 @@ impl BrowserSandbox {
                     source_army_id: unit
                         .campaign_provenance()
                         .map(|provenance| provenance.source_army_id.clone()),
+                    combat_stats: unit.stats(),
+                    facing: unit.facing(),
+                    engagement_arc: unit
+                        .engagement_target()
+                        .and_then(|id| self.battle.units().iter().find(|target| target.id() == id))
+                        .and_then(|target| target.incoming_arc(unit.position())),
                     morale: unit.morale(),
                     fatigue: unit.fatigue(),
                     formation,
@@ -784,6 +793,10 @@ fn unit(
         speed_mm_per_tick,
     )
     .with_unit_kind(unit_kind)
+    .with_facing(match side {
+        BattleSide::Attacker => medieval_core::Facing::east(),
+        BattleSide::Defender => medieval_core::Facing::west(),
+    })
 }
 
 fn drive_opponent(battle: &mut TacticalBattle) -> Result<(), String> {
