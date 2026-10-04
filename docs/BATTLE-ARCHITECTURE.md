@@ -195,3 +195,18 @@ rosters, and campaign winner queried after all consequences. An identical replay
 returns that report without applying casualties, moving armies, or adding another
 report/log entry. Historical report validation does not depend on armies still
 existing in later turns. Tactical outcomes are written only in save schema 2.
+
+## Pending battle durability
+
+Campaign save schema 2 preserves the pre-battle boundary through pending battle
+identity, campaign army rosters and province battlefield context. Loading rebuilds
+exactly the same source-aware tactical seed; schema 1 pending saves migrate to 2.
+Save validation rejects illegal hostile-movement provenance, incompatible staged
+results and future completed reports before replacing the live session.
+
+Hostile movement persists its pending candidate before making it live. Fight and
+Auto-resolve persist their completed campaign candidate through the same save
+boundary. Browser storage failures restore the previous Rust save; desktop writes
+complete before committing the candidate session. Leaving an unfinished tactical
+session keeps the pre-battle save, so loading offers either choice again. This
+boundary intentionally does not serialize a running renderer or mid-battle state.

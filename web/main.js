@@ -481,6 +481,7 @@ async function moveSelectedArmy(destination) {
   errorBox.hidden = true;
   try {
     campaign = await invoke("move_army", { armyId, destination });
+    if (campaign.pendingBattle) setSaveStatus("Pending battle autosaved. Fight or Auto-resolve can resume after loading.");
     await refreshCampaignWinner();
     selectedProvinceId = destination;
     clearMovementSelection();
@@ -562,6 +563,7 @@ async function fightPendingBattle() {
       if (document === null) return;
       campaign = await invoke("apply_tactical_battle_result", { document });
     }
+    setSaveStatus("Battle outcome autosaved.");
     await refreshCampaignWinner();
     const report = campaign.tacticalBattleReports?.at(-1);
     if (report) selectedProvinceId = report.result.seed.targetProvince;
@@ -588,6 +590,7 @@ async function resolvePendingBattle() {
   errorBox.hidden = true;
   try {
     campaign = await invoke("resolve_pending_battle", { seed });
+    setSaveStatus("Battle outcome autosaved.");
     await refreshCampaignWinner();
     const report = campaign.battleReports?.at(-1);
     if (report) selectedProvinceId = report.targetProvince;
