@@ -26,6 +26,9 @@ async function clickUnit(page, unitId, options = {}) {
 }
 
 test("battlefield selector rebuilds the Rust-owned sandbox across all three locations", async ({ page }) => {
+  page.on("console", message => {
+    if (message.type() === "error") console.log("[DEBUG-197-browser]", message.text());
+  });
   await page.goto("/battle.html?e2e-controls=1");
   await expect(page.locator("#army-setup")).toBeVisible();
   await page.getByRole("button", { name: "Add Levy battalion" }).click();
@@ -41,7 +44,10 @@ test("battlefield selector rebuilds the Rust-owned sandbox across all three loca
     const { battle_sandbox_status } = await import("./pkg/medieval_web_battle.js");
     return {
       projected: window.__medievalControlsE2E.status().battlefieldLocation,
-      authoritative: JSON.parse(battle_sandbox_status()).battlefieldLocation,
+      authoritative: (() => {
+        try { return JSON.parse(battle_sandbox_status()).battlefieldLocation; }
+        catch (error) { return String(error); }
+      })(),
       selector: document.querySelector("#battle-location").value,
       error: document.querySelector("#battle-error").textContent,
     };
