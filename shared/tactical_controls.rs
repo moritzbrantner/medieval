@@ -45,12 +45,14 @@ enum TacticalControlIntent {
     MoveSelected { destination: BattlePoint },
     EngageSelected { target_unit_id: String },
     StopSelected,
+    Withdraw,
 }
 
 impl TacticalControlRequest {
     fn into_intent(self) -> Result<TacticalControlIntent, TacticalControlError> {
         let kind = self.kind;
         match kind.as_str() {
+            "withdraw" => Ok(TacticalControlIntent::Withdraw),
             "fitCamera" => Ok(TacticalControlIntent::FitCamera),
             "panCamera" => Ok(TacticalControlIntent::PanCamera {
                 delta_x_mm: required(self.delta_x_mm, &kind, "deltaXMm")?,
@@ -214,6 +216,13 @@ impl TacticalControls {
                 self.engage_selected(battle, &target_unit_id)
             }
             TacticalControlIntent::StopSelected => self.stop_selected(battle),
+            TacticalControlIntent::Withdraw => {
+                battle
+                    .withdraw(self.player_side)
+                    .map_err(|error| TacticalControlError::RuleRejected(error.to_string()))?;
+                self.sync_with_battle(battle);
+                Ok(())
+            }
         }
     }
 
@@ -415,7 +424,7 @@ impl TacticalControls {
                 .iter()
                 .find(|unit| unit.id() == unit_id)
                 .ok_or_else(|| TacticalControlError::UnknownUnit(unit_id.to_owned()))?;
-            if unit.side() != self.player_side || unit.is_routed() || unit.is_destroyed() {
+            if unit.side() != self.player_side || !unit.can_receive_orders() {
                 return Err(TacticalControlError::UncontrollableUnit(unit_id.to_owned()));
             }
             requested.insert(unit_id.to_owned());
@@ -443,8 +452,7 @@ impl TacticalControls {
         battle.units().iter().any(|unit| {
             unit.id() == unit_id
                 && unit.side() == player_side
-                && !unit.is_routed()
-                && !unit.is_destroyed()
+                && unit.can_receive_orders()
         })
     }
 }

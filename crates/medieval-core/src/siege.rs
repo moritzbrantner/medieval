@@ -254,9 +254,7 @@ impl SiegeBattleState {
         let mut attacker_present = false;
         let mut defender_present = false;
         for unit in units.iter().filter(|unit| {
-            !unit.is_routed()
-                && !unit.is_destroyed()
-                && self.layout.capture_point.contains(unit.position())
+            unit.can_receive_orders() && self.layout.capture_point.contains(unit.position())
         }) {
             match unit.side() {
                 BattleSide::Attacker => attacker_present = true,
