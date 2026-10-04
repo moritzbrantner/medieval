@@ -639,6 +639,15 @@ impl TacticalBattle {
         let Some(siege) = &mut self.siege else {
             return Err(TacticalError::NotSiegeBattle);
         };
+        if gate_state == SiegeGateState::Closed
+            && self.units.iter().any(|unit| {
+                unit.side == BattleSide::Attacker
+                    && unit.is_withdrawing()
+                    && unit.position.x_mm >= siege.layout.gate.min_x_mm
+            })
+        {
+            return Err(TacticalError::SiegeExitInUse);
+        }
         siege.gate_state = gate_state;
         Ok(())
     }
@@ -1346,6 +1355,7 @@ pub enum TacticalError {
     },
     TargetDestroyed(String),
     NotSiegeBattle,
+    SiegeExitInUse,
 }
 
 impl fmt::Display for TacticalError {
@@ -1453,6 +1463,9 @@ impl fmt::Display for TacticalError {
             ),
             Self::TargetDestroyed(unit_id) => {
                 write!(formatter, "tactical unit {unit_id} is already destroyed")
+            }
+            Self::SiegeExitInUse => {
+                write!(formatter, "withdrawing units still need the siege exit")
             }
             Self::NotSiegeBattle => write!(formatter, "battle has no siege state"),
         }

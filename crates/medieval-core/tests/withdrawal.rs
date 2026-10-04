@@ -317,3 +317,63 @@ fn withdrawing_units_cannot_continue_capturing_a_siege_objective() {
     assert!(battle.units()[0].is_withdrawing());
     assert_eq!(battle.siege_snapshot().unwrap().capture.progress, progress);
 }
+
+#[test]
+fn a_withdrawing_attacker_keeps_its_siege_exit_until_crossing_the_wall() {
+    let mut battle = TacticalBattle::deploy_siege_at_location(
+        FlatBattlefield::new(100_000, 100_000),
+        vec![
+            TacticalUnit::new(
+                "a",
+                BattleSide::Attacker,
+                40,
+                BattlePoint::new(30_000, 50_000),
+                Formation::Line { files: 10 },
+                10_000,
+            ),
+            unit("d", BattleSide::Defender, 40, 90_000, 1_000),
+        ],
+        BattlefieldLocation::ForestClearing,
+    )
+    .unwrap()
+    .start();
+    battle.open_siege_gate().unwrap();
+    battle
+        .issue_move_order(medieval_core::MovementOrder {
+            unit_id: "a".into(),
+            destination: BattlePoint::new(80_000, 50_000),
+        })
+        .unwrap();
+    battle.advance_ticks(25);
+    battle.withdraw(BattleSide::Attacker).unwrap();
+    let mut battle: TacticalBattle =
+        serde_json::from_str(&serde_json::to_string(&battle).unwrap()).unwrap();
+    let before = battle.clone();
+    assert_eq!(
+        battle.close_siege_gate(),
+        Err(TacticalError::SiegeExitInUse)
+    );
+    assert_eq!(battle, before);
+    for _ in 0..100 {
+        if battle.units()[0].position().x_mm < battle.siege_snapshot().unwrap().layout.gate.min_x_mm
+        {
+            break;
+        }
+        battle.advance_ticks(1);
+    }
+    assert_eq!(battle.state(), TacticalBattleState::Running);
+    assert!(
+        battle.units()[0].position().x_mm < battle.siege_snapshot().unwrap().layout.gate.min_x_mm
+    );
+    battle.close_siege_gate().unwrap();
+    battle.advance_ticks(100);
+    assert!(battle.units()[0].is_escaped());
+    assert!(matches!(
+        battle.state(),
+        TacticalBattleState::Finished {
+            winner: Some(BattleSide::Defender),
+            reason: TacticalFinishReason::Withdrawal,
+            ..
+        }
+    ));
+}
