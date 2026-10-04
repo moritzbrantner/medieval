@@ -203,6 +203,27 @@ impl CampaignSave {
             {
                 return invalid("pending battle references an unknown province");
             }
+            let source = campaign
+                .provinces
+                .iter()
+                .find(|province| province.id == pending.from_province)
+                .ok_or_else(|| {
+                    SaveError::InvalidState("pending battle origin does not exist".into())
+                })?;
+            if pending.attacker_faction != campaign.active_faction
+                || pending.attacker_faction == pending.defender_faction
+                || pending.from_province == pending.target_province
+                || !source.neighbors.contains(&pending.target_province)
+            {
+                return invalid("pending battle does not describe a legal hostile movement");
+            }
+            if campaign
+                .armies
+                .iter()
+                .any(|army| army.id == pending.attacker_army_id && !army.moved_this_turn)
+            {
+                return invalid("pending battle attacker has not spent its movement");
+            }
             if campaign.pending_tactical_result.is_none() {
                 let attacker = campaign
                     .armies

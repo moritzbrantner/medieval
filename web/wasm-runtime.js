@@ -98,6 +98,20 @@ export async function createWasmInvoke() {
     return readResult();
   }
 
+  function persistTransition(transition, shouldSave = () => true) {
+    const previousDocument = call("medieval_export_save");
+    const nextCampaign = transition();
+    try {
+      if (shouldSave(nextCampaign)) {
+        browserStorage().setItem(SAVE_KEY, call("medieval_export_save"));
+      }
+      return nextCampaign;
+    } catch (error) {
+      callWithString("medieval_import_save", previousDocument);
+      throw error;
+    }
+  }
+
   return async function invoke(command, args = {}) {
     switch (command) {
       case "campaign_state":
@@ -111,19 +125,22 @@ export async function createWasmInvoke() {
       case "legal_army_destinations":
         return callWithString("medieval_legal_army_destinations", args.armyId);
       case "move_army":
-        return callWithTwoStrings("medieval_move_army", args.armyId, args.destination);
+        return persistTransition(
+          () => callWithTwoStrings("medieval_move_army", args.armyId, args.destination),
+          (campaign) => Boolean(campaign.pendingBattle),
+        );
       case "recruitment_options":
         return callWithString("medieval_recruitment_options", args.provinceId);
       case "queue_recruitment":
         return callWithTwoStrings("medieval_queue_recruitment", args.provinceId, args.unit);
       case "finish_reconciled_tactical_battle":
-        return call("medieval_finish_reconciled_tactical_battle");
+        return persistTransition(() => call("medieval_finish_reconciled_tactical_battle"));
       case "pending_tactical_battle_seed":
         return call("medieval_pending_tactical_battle_seed");
       case "apply_tactical_battle_result":
-        return callWithString("medieval_apply_tactical_battle_result", args.document);
+        return persistTransition(() => callWithString("medieval_apply_tactical_battle_result", args.document));
       case "resolve_pending_battle":
-        return callWithSeed("medieval_resolve_pending_battle", args.seed);
+        return persistTransition(() => callWithSeed("medieval_resolve_pending_battle", args.seed));
       case "save_campaign": {
         const document = call("medieval_export_save");
         browserStorage().setItem(SAVE_KEY, document);

@@ -236,19 +236,34 @@ fn legal_army_destinations(
         .map_err(|error| error.to_string())
 }
 
+fn move_session_army(
+    session: &mut GameSession,
+    path: &Path,
+    army_id: &str,
+    destination: &str,
+) -> Result<CampaignState, String> {
+    ensure_campaign_running(session)?;
+    let mut next = session.clone();
+    next.campaign
+        .move_army(army_id, destination)
+        .map_err(|error| error.to_string())?;
+    if next.campaign.pending_battle.is_some() {
+        save_session_to_path(&next, path)?;
+    }
+    *session = next;
+    Ok(session.campaign.clone())
+}
+
 #[tauri::command]
 fn move_army(
+    app: AppHandle,
     state: State<'_, GameState>,
     army_id: String,
     destination: String,
 ) -> Result<CampaignState, String> {
+    let path = campaign_save_path(&app)?;
     let mut session = lock_session(&state)?;
-    ensure_campaign_running(&session)?;
-    session
-        .campaign
-        .move_army(&army_id, &destination)
-        .map_err(|error| error.to_string())?;
-    Ok(session.campaign.clone())
+    move_session_army(&mut session, &path, &army_id, &destination)
 }
 
 #[tauri::command]
@@ -280,13 +295,20 @@ fn queue_recruitment(
 }
 
 #[tauri::command]
-fn resolve_pending_battle(state: State<'_, GameState>, seed: u64) -> Result<CampaignState, String> {
+fn resolve_pending_battle(
+    app: AppHandle,
+    state: State<'_, GameState>,
+    seed: u64,
+) -> Result<CampaignState, String> {
+    let path = campaign_save_path(&app)?;
     let mut session = lock_session(&state)?;
+    let mut next = session.clone();
     ensure_campaign_running(&session)?;
-    session
-        .campaign
+    next.campaign
         .resolve_pending_battle(seed)
         .map_err(|error| error.to_string())?;
+    save_session_to_path(&next, &path)?;
+    *session = next;
     Ok(session.campaign.clone())
 }
 
@@ -299,26 +321,36 @@ fn pending_tactical_battle_seed(state: State<'_, GameState>) -> Result<TacticalB
 }
 
 #[tauri::command]
-fn finish_reconciled_tactical_battle(state: State<'_, GameState>) -> Result<CampaignState, String> {
+fn finish_reconciled_tactical_battle(
+    app: AppHandle,
+    state: State<'_, GameState>,
+) -> Result<CampaignState, String> {
+    let path = campaign_save_path(&app)?;
     let mut session = lock_session(&state)?;
-    session
-        .campaign
+    let mut next = session.clone();
+    next.campaign
         .finish_reconciled_tactical_battle()
         .map_err(|error| error.to_string())?;
+    save_session_to_path(&next, &path)?;
+    *session = next;
     Ok(session.campaign.clone())
 }
 
 #[tauri::command]
 fn apply_tactical_battle_result(
+    app: AppHandle,
     state: State<'_, GameState>,
     document: String,
 ) -> Result<CampaignState, String> {
     let result = TacticalBattleResult::from_json(&document).map_err(|error| error.to_string())?;
+    let path = campaign_save_path(&app)?;
     let mut session = lock_session(&state)?;
-    session
-        .campaign
+    let mut next = session.clone();
+    next.campaign
         .apply_tactical_battle_result(&result)
         .map_err(|error| error.to_string())?;
+    save_session_to_path(&next, &path)?;
+    *session = next;
     Ok(session.campaign.clone())
 }
 
@@ -443,6 +475,28 @@ mod tests {
         if let Some(parent) = path.parent() {
             let _ = fs::remove_dir_all(parent);
         }
+    }
+
+    #[test]
+    fn hostile_movement_is_saved_before_becoming_live() {
+        let path = test_save_path("campaign-save.json");
+        let mut session = GameSession::default();
+        move_session_army(&mut session, &path, "england-main", "paris").unwrap();
+        assert!(session.campaign.pending_battle.is_some());
+        assert_eq!(load_session_from_path(&path).unwrap(), session);
+        remove_test_directory(&path);
+    }
+
+    #[test]
+    fn failed_pending_battle_save_rolls_back_hostile_movement() {
+        let path = test_save_path("campaign-save.json");
+        let parent = path.parent().unwrap();
+        fs::write(parent, "blocks creation of the save directory").unwrap();
+        let mut session = GameSession::default();
+        let before = session.clone();
+        assert!(move_session_army(&mut session, &path, "england-main", "paris").is_err());
+        assert_eq!(session, before);
+        fs::remove_file(parent).unwrap();
     }
 
     #[test]
