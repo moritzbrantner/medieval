@@ -12,6 +12,7 @@ async function pendingBattle(page) {
   await page.locator('[data-province="paris"]').click();
   await expect(page.locator("#fight-battle")).toBeEnabled();
   await expect(page.locator("#resolve-battle")).toBeEnabled();
+  await expect(page.locator('[data-siege-limitation="closed-gate"]')).toContainText("gate stays closed");
 }
 
 test("Auto-resolve commits source-aware campaign consequences", async ({ page }) => {

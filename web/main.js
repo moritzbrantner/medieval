@@ -286,6 +286,14 @@ function renderPendingBattle() {
   fightBattleButton.textContent = campaign.pendingTacticalResult ? "Apply battle outcome" : "Fight";
 
   pendingBattleDetail.append(text, note);
+  const target = campaign.provinces.find((province) => province.id === battle.targetProvince);
+  if (!campaign.pendingTacticalResult && target?.battlefield?.fortified) {
+    const siege = document.createElement("p");
+    siege.className = "battle-note";
+    siege.dataset.siegeLimitation = "closed-gate";
+    siege.textContent = `${provinceName(battle.targetProvince)} is fortified and its gate stays closed: assaults cannot breach it yet, so a played siege can only be withdrawn. Auto-resolve decides the siege.`;
+    pendingBattleDetail.append(siege);
+  }
 }
 
 function renderBattleReport() {
