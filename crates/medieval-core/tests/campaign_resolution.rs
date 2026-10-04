@@ -389,3 +389,49 @@ fn saves_preserve_reports_and_reject_unsupported_legacy_claims_or_corrupt_surren
     assert_eq!(corrupted, before);
     assert!(CampaignSave::from_campaign(corrupted, "england").is_err());
 }
+
+#[test]
+fn a_serialized_winner_flip_cannot_capture_the_province_or_move_the_wrong_force() {
+    for original_winner in [BattleSide::Attacker, BattleSide::Defender] {
+        let mut campaign = campaign();
+        let result = victory(&campaign, original_winner);
+        let mut document = serde_json::to_value(result).unwrap();
+        document["winner"] = serde_json::json!(if original_winner == BattleSide::Attacker {
+            "defender"
+        } else {
+            "attacker"
+        });
+        let inconsistent: TacticalBattleResult = serde_json::from_value(document).unwrap();
+        let before = campaign.clone();
+        assert!(inconsistent.validate().is_err());
+        assert!(
+            campaign
+                .apply_tactical_battle_result(&inconsistent)
+                .is_err()
+        );
+        assert_eq!(campaign, before);
+    }
+}
+
+#[test]
+fn withdrawal_and_draw_claims_must_match_escaped_and_routed_survivors() {
+    let mut campaign = campaign();
+    let mut battle = deployed(&campaign);
+    battle.withdraw(BattleSide::Attacker).unwrap();
+    let result = finish(battle);
+    let before = campaign.clone();
+    let mut flipped = result.clone();
+    flipped.winner = Some(BattleSide::Attacker);
+    let mut false_draw = result;
+    false_draw.winner = None;
+    false_draw.reason = TacticalFinishReason::MutualDefeat;
+    for inconsistent in [flipped, false_draw] {
+        assert!(inconsistent.validate().is_err());
+        assert!(
+            campaign
+                .apply_tactical_battle_result(&inconsistent)
+                .is_err()
+        );
+        assert_eq!(campaign, before);
+    }
+}

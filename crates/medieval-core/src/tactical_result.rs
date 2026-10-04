@@ -248,9 +248,60 @@ impl TacticalBattleResult {
                 }
             }
         }
+        self.validate_terminal_outcome()?;
         if self.settlement_capture != capture_outcome(&self.seed, self.winner, self.reason)? {
             return Err(TacticalResultError::InvalidProvenance(
                 "settlement capture differs from terminal outcome".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_terminal_outcome(&self) -> Result<(), TacticalResultError> {
+        let units = |side| {
+            self.armies
+                .iter()
+                .filter(move |army| army.side == side)
+                .flat_map(|army| &army.units)
+        };
+        // A side that withdrew has no formed units. Before withdrawal, absence
+        // of escape plus non-routed survivors identifies the formed force.
+        let formed = |side| {
+            units(side).all(|unit| unit.escaped_soldiers == 0)
+                && units(side).any(|unit| unit.surviving_soldiers > unit.routed_soldiers)
+        };
+        let defeated = |side| {
+            units(side).all(|unit| {
+                unit.escaped_soldiers == 0 && unit.surviving_soldiers == unit.routed_soldiers
+            })
+        };
+        let withdrawn = |side| {
+            units(side).any(|unit| unit.initial_soldiers > 0)
+                && units(side).all(|unit| unit.surviving_soldiers == unit.escaped_soldiers)
+        };
+        let opposite = |side| match side {
+            BattleSide::Attacker => BattleSide::Defender,
+            BattleSide::Defender => BattleSide::Attacker,
+        };
+        let consistent = match (self.reason, self.winner) {
+            (TacticalFinishReason::ForceDefeated, Some(winner)) => {
+                formed(winner) && defeated(opposite(winner))
+            }
+            (TacticalFinishReason::SiegeCapture, Some(winner)) => formed(winner),
+            (TacticalFinishReason::Withdrawal, Some(winner)) => {
+                formed(winner) && withdrawn(opposite(winner))
+            }
+            (TacticalFinishReason::MutualDefeat, None) => {
+                defeated(BattleSide::Attacker) && defeated(BattleSide::Defender)
+            }
+            (TacticalFinishReason::MutualWithdrawal, None) => {
+                withdrawn(BattleSide::Attacker) && withdrawn(BattleSide::Defender)
+            }
+            _ => false,
+        };
+        if !consistent {
+            return Err(TacticalResultError::InvalidProvenance(
+                "terminal reason and winner contradict army states".into(),
             ));
         }
         Ok(())
