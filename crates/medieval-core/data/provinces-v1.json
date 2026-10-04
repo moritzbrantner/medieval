@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "battlefieldProfiles": [
+    {
+      "id": "mountain-pass-field",
+      "context": {
+        "location": "mountainPass",
+        "fortified": false
+      }
+    },
+    {
+      "id": "forest-clearing-field",
+      "context": {
+        "location": "forestClearing",
+        "fortified": false
+      }
+    },
+    {
+      "id": "river-ford-field",
+      "context": {
+        "location": "riverFord",
+        "fortified": false
+      }
+    },
+    {
+      "id": "mountain-pass-siege",
+      "context": {
+        "location": "mountainPass",
+        "fortified": true
+      }
+    }
+  ],
+  "provinces": [
+    {
+      "id": "wessex",
+      "name": "Wessex",
+      "startingOwner": "england",
+      "neighbors": [
+        "normandy"
+      ],
+      "battlefieldProfile": "mountain-pass-field",
+      "settlement": {
+        "fortified": false
+      },
+      "baseEconomy": {
+        "wealth": 5
+      }
+    },
+    {
+      "id": "normandy",
+      "name": "Normandy",
+      "startingOwner": "england",
+      "neighbors": [
+        "wessex",
+        "brittany",
+        "paris"
+      ],
+      "battlefieldProfile": "forest-clearing-field",
+      "settlement": {
+        "fortified": false
+      },
+      "baseEconomy": {
+        "wealth": 6
+      }
+    },
+    {
+      "id": "brittany",
+      "name": "Brittany",
+      "startingOwner": "france",
+      "neighbors": [
+        "normandy",
+        "anjou"
+      ],
+      "battlefieldProfile": "forest-clearing-field",
+      "settlement": {
+        "fortified": false
+      },
+      "baseEconomy": {
+        "wealth": 4
+      }
+    },
+    {
+      "id": "anjou",
+      "name": "Anjou",
+      "startingOwner": "france",
+      "neighbors": [
+        "brittany",
+        "paris"
+      ],
+      "battlefieldProfile": "river-ford-field",
+      "settlement": {
+        "fortified": false
+      },
+      "baseEconomy": {
+        "wealth": 4
+      }
+    },
+    {
+      "id": "paris",
+      "name": "Paris",
+      "startingOwner": "france",
+      "neighbors": [
+        "normandy",
+        "anjou",
+        "flanders"
+      ],
+      "battlefieldProfile": "mountain-pass-siege",
+      "settlement": {
+        "fortified": true
+      },
+      "baseEconomy": {
+        "wealth": 8
+      }
+    },
+    {
+      "id": "flanders",
+      "name": "Flanders",
+      "startingOwner": "france",
+      "neighbors": [
+        "paris"
+      ],
+      "battlefieldProfile": "river-ford-field",
+      "settlement": {
+        "fortified": false
+      },
+      "baseEconomy": {
+        "wealth": 7
+      }
+    }
+  ]
+}
