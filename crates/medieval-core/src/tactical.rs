@@ -1668,6 +1668,8 @@ fn melee_casualties(
     let effective_frontage = stat_adjusted_frontage(effective_frontage, attacker, defender, false);
     let effective_frontage =
         effective_frontage.saturating_mul(contact_factor_milli(attacker, defender)) / 1_000;
+    let effective_frontage =
+        effective_frontage.saturating_mul(matchup_factor_milli(attacker, defender)) / 1_000;
     let losses = (effective_frontage / MELEE_CASUALTY_DIVISOR).max(1);
     u16::try_from(losses.min(u32::from(defender.soldiers))).unwrap()
 }
@@ -1697,6 +1699,36 @@ fn ranged_casualties(
     let effective_frontage = stat_adjusted_frontage(effective_frontage, attacker, defender, true);
     let losses = (effective_frontage / RANGED_CASUALTY_DIVISOR).max(1);
     u16::try_from(losses.min(u32::from(defender.soldiers))).unwrap()
+}
+
+// Only explicit combat profiles participate; historical kind metadata is visual.
+fn matchup_factor_milli(attacker: &TacticalUnit, defender: &TacticalUnit) -> u32 {
+    let (Some(attacker_profile), Some(defender_profile)) =
+        (attacker.combat_profile(), defender.combat_profile())
+    else {
+        return 1_000;
+    };
+    match (attacker_profile.kind, defender_profile.kind) {
+        (crate::UnitKind::Spearmen, crate::UnitKind::Knights)
+            if attacker.incoming_arc(defender.position) == Some(crate::CombatArc::Front) =>
+        {
+            1_750
+        }
+        (crate::UnitKind::Knights, crate::UnitKind::Spearmen)
+            if defender.incoming_arc(attacker.position) == Some(crate::CombatArc::Front) =>
+        {
+            600
+        }
+        (crate::UnitKind::Knights, crate::UnitKind::Levy | crate::UnitKind::Archers)
+            if matches!(
+                defender.incoming_arc(attacker.position),
+                Some(crate::CombatArc::Flank | crate::CombatArc::Rear)
+            ) =>
+        {
+            1_250
+        }
+        _ => 1_000,
+    }
 }
 
 fn contact_factor_milli(attacker: &TacticalUnit, defender: &TacticalUnit) -> u32 {
