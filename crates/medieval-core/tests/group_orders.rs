@@ -443,3 +443,43 @@ fn direct_formation_changes_preserve_queued_placement_constraints() {
     );
     assert_eq!(battle, before);
 }
+
+#[test]
+fn appending_between_arrival_and_queue_promotion_keeps_pending_waypoints() {
+    let mut battle = battle();
+    battle
+        .issue_group_movement(group(&["a"], 35_000, 20_000, false, MovementMode::March))
+        .unwrap();
+    battle
+        .issue_group_movement(group(&["a"], 45_000, 20_000, true, MovementMode::March))
+        .unwrap();
+    for _ in 0..100 {
+        if unit(&battle, "a").destination().is_none() {
+            break;
+        }
+        battle.advance_ticks(1);
+    }
+    assert_eq!(unit(&battle, "a").destination(), None);
+    assert_eq!(unit(&battle, "a").queued_movements().len(), 1);
+    battle
+        .issue_group_movement(group(&["a"], 55_000, 20_000, true, MovementMode::March))
+        .unwrap();
+    assert_eq!(
+        unit(&battle, "a")
+            .queued_movements()
+            .iter()
+            .map(|waypoint| waypoint.destination)
+            .collect::<Vec<_>>(),
+        vec![
+            BattlePoint::new(45_000, 20_000),
+            BattlePoint::new(55_000, 20_000)
+        ]
+    );
+    battle.advance_ticks(200);
+    assert_eq!(
+        unit(&battle, "a").position(),
+        BattlePoint::new(55_000, 20_000)
+    );
+    assert_eq!(unit(&battle, "a").destination(), None);
+    assert!(unit(&battle, "a").queued_movements().is_empty());
+}

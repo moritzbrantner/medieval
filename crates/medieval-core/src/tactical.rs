@@ -937,7 +937,8 @@ impl TacticalBattle {
         self.ensure_can_receive_orders(index)?;
         if queued
             && (self.units[index].destination.is_some()
-                || self.units[index].engagement_target.is_some())
+                || self.units[index].engagement_target.is_some()
+                || !self.units[index].queued_movements.is_empty())
         {
             if self.units[index].queued_movements.len() >= crate::MAX_QUEUED_WAYPOINTS {
                 return Err(TacticalError::WaypointLimitReached(unit_id.to_owned()));
