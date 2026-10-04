@@ -247,9 +247,6 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
 
 test("unit kinds reach status and visible rows directly from core", async ({ page }) => {
   await page.goto("/battle.html?e2e-controls=1");
-  await page.getByRole("button", { name: "Add Spearmen battalion" }).click();
-  await page.getByRole("button", { name: "Add Archers battalion" }).click();
-  await page.getByRole("button", { name: "Add Knights battalion" }).click();
   await page.getByRole("button", { name: "Enter battle" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
   const projected = await status(page);
@@ -257,4 +254,5 @@ test("unit kinds reach status and visible rows directly from core", async ({ pag
   for (const kind of ["spearmen", "archers", "knights"]) {
     await expect(page.locator(`.unit-row[data-unit-kind="${kind}"]`).first()).toBeVisible();
   }
+  await page.screenshot({ path: test.info().outputPath("unit-kinds.png") });
 });
