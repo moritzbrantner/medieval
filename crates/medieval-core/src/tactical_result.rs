@@ -44,6 +44,16 @@ pub struct TacticalUnitResult {
     pub escaped_soldiers: u64,
     /// Pursuit casualties are a subset of total casualties.
     pub pursuit_casualties: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ammunition: Option<TacticalAmmunitionResult>,
+}
+
+/// Volley budgets summed across the source army's deployed formations of a kind.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TacticalAmmunitionResult {
+    pub initial_volleys: u64,
+    pub remaining_volleys: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +158,20 @@ impl TacticalBattle {
                 ));
             }
             let entry = &mut armies[army_index].units[kind_index];
+            if let Some(remaining) = unit.ammunition() {
+                let missile = unit
+                    .stats()
+                    .and_then(|stats| stats.missile)
+                    .ok_or_else(|| TacticalResultError::InvalidProvenance(unit.id().to_owned()))?;
+                let ammunition = entry
+                    .ammunition
+                    .get_or_insert_with(TacticalAmmunitionResult::default);
+                checked_add(
+                    &mut ammunition.initial_volleys,
+                    u64::from(missile.ammunition),
+                )?;
+                checked_add(&mut ammunition.remaining_volleys, u64::from(remaining))?;
+            }
             checked_add(&mut entry.surviving_soldiers, survivors)?;
             checked_add(&mut entry.casualties, casualties)?;
             if unit.is_routed() {
@@ -235,6 +259,30 @@ impl TacticalBattleResult {
                     return Err(TacticalResultError::InvalidProvenance(
                         army.source_army_id.clone(),
                     ));
+                }
+                if let Some(ammunition) = &unit.ammunition {
+                    let missile = crate::UnitCombatProfile::v1(unit.kind)
+                        .stats()
+                        .missile
+                        .ok_or_else(|| {
+                            TacticalResultError::InvalidProvenance(
+                                "non-missile unit has ammunition".into(),
+                            )
+                        })?;
+                    let budget = unit
+                        .initial_soldiers
+                        .div_ceil(u64::from(u16::MAX))
+                        .checked_mul(u64::from(missile.ammunition))
+                        .ok_or_else(|| {
+                            TacticalResultError::ConservationViolation(army.source_army_id.clone())
+                        })?;
+                    if ammunition.initial_volleys != budget
+                        || ammunition.remaining_volleys > ammunition.initial_volleys
+                    {
+                        return Err(TacticalResultError::ConservationViolation(
+                            army.source_army_id.clone(),
+                        ));
+                    }
                 }
                 if unit.surviving_soldiers.checked_add(unit.casualties)
                     != Some(unit.initial_soldiers)
@@ -370,6 +418,7 @@ fn result_rosters(
                         routed_soldiers: 0,
                         escaped_soldiers: 0,
                         pursuit_casualties: 0,
+                        ammunition: None,
                     })
                     .collect(),
             });
