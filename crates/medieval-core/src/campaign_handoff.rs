@@ -219,6 +219,9 @@ impl CampaignState {
     /// follow-up boundaries so campaign truth is not silently coupled to one
     /// renderer or battlefield presentation.
     pub fn pending_tactical_battle_seed(&self) -> Result<TacticalBattleSeed, CampaignError> {
+        if self.pending_tactical_result.is_some() {
+            return Err(CampaignError::TacticalCasualtiesAlreadyReconciled);
+        }
         let pending = self
             .pending_battle
             .as_ref()

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 mod battle;
 mod campaign_deployment;
 mod campaign_handoff;
+mod campaign_reconciliation;
 mod deployment;
 mod save;
 mod tactical;
@@ -51,6 +52,8 @@ pub struct CampaignState {
     pub provinces: Vec<Province>,
     pub armies: Vec<Army>,
     pub pending_battle: Option<PendingBattle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_tactical_result: Option<TacticalBattleResult>,
     pub recruitment_queue: Vec<RecruitmentOrder>,
     pub battle_reports: Vec<BattleReport>,
     pub log: Vec<String>,
@@ -188,6 +191,9 @@ pub enum CampaignError {
     ArmyAlreadyMoved(String),
     BattlePending,
     NoPendingBattle,
+    InvalidTacticalResult(String),
+    TacticalResultMismatch,
+    TacticalCasualtiesAlreadyReconciled,
     DestinationNotAdjacent {
         from: String,
         destination: String,
@@ -232,6 +238,17 @@ impl fmt::Display for CampaignError {
                 write!(formatter, "resolve the pending battle before continuing")
             }
             Self::NoPendingBattle => write!(formatter, "there is no pending battle to resolve"),
+            Self::InvalidTacticalResult(message) => {
+                write!(formatter, "invalid tactical result: {message}")
+            }
+            Self::TacticalResultMismatch => write!(
+                formatter,
+                "tactical result does not match the pending campaign battle"
+            ),
+            Self::TacticalCasualtiesAlreadyReconciled => write!(
+                formatter,
+                "finish the reconciled tactical battle before resolving another result"
+            ),
             Self::DestinationNotAdjacent { from, destination } => {
                 write!(formatter, "{destination} is not adjacent to {from}")
             }
@@ -754,6 +771,7 @@ pub fn new_campaign() -> CampaignState {
             },
         ],
         pending_battle: None,
+        pending_tactical_result: None,
         recruitment_queue: Vec::new(),
         battle_reports: Vec::new(),
         log: vec!["The campaign begins in 1087.".into()],

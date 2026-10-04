@@ -180,6 +180,10 @@ impl CampaignSave {
             }
         }
 
+        campaign
+            .validate_reconciled_tactical_state()
+            .map_err(|error| SaveError::InvalidState(error.to_string()))?;
+
         if let Some(pending) = &campaign.pending_battle {
             if !faction_ids.contains(pending.attacker_faction.as_str())
                 || !faction_ids.contains(pending.defender_faction.as_str())
@@ -191,20 +195,22 @@ impl CampaignSave {
             {
                 return invalid("pending battle references an unknown province");
             }
-            let attacker = campaign
-                .armies
-                .iter()
-                .find(|army| army.id == pending.attacker_army_id)
-                .ok_or_else(|| {
-                    SaveError::InvalidState(format!(
-                        "pending battle references unknown attacker army {}",
-                        pending.attacker_army_id
-                    ))
-                })?;
-            if attacker.owner != pending.attacker_faction
-                || attacker.province != pending.from_province
-            {
-                return invalid("pending battle attacker does not match its army state");
+            if campaign.pending_tactical_result.is_none() {
+                let attacker = campaign
+                    .armies
+                    .iter()
+                    .find(|army| army.id == pending.attacker_army_id)
+                    .ok_or_else(|| {
+                        SaveError::InvalidState(format!(
+                            "pending battle references unknown attacker army {}",
+                            pending.attacker_army_id
+                        ))
+                    })?;
+                if attacker.owner != pending.attacker_faction
+                    || attacker.province != pending.from_province
+                {
+                    return invalid("pending battle attacker does not match its army state");
+                }
             }
             let target_owner = campaign
                 .provinces

@@ -66,6 +66,9 @@ pub struct BattleReport {
 
 impl CampaignState {
     pub fn resolve_pending_battle(&mut self, seed: u64) -> Result<BattleReport, CampaignError> {
+        if self.pending_tactical_result.is_some() {
+            return Err(CampaignError::TacticalCasualtiesAlreadyReconciled);
+        }
         let pending = self
             .pending_battle
             .clone()
@@ -228,6 +231,9 @@ impl CampaignState {
     /// Configure a freshly-created campaign so the chosen faction receives the
     /// first human turn without applying a synthetic economy tick.
     pub fn select_player_faction(&mut self, faction_id: &str) -> Result<(), CampaignError> {
+        if self.pending_tactical_result.is_some() {
+            return Err(CampaignError::TacticalCasualtiesAlreadyReconciled);
+        }
         self.faction(faction_id)?;
         self.active_faction = faction_id.to_owned();
         for faction in &mut self.factions {
