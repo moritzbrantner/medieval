@@ -208,3 +208,66 @@ fn campaign_units_project_their_authoritative_stat_profile() {
         assert_eq!(unit.stats(), Some(unit.combat_profile().unwrap().stats()));
     }
 }
+
+fn small_ranged_battle(defender_kind: UnitKind) -> TacticalBattle {
+    let attacker = TacticalUnit::new(
+        "a",
+        BattleSide::Attacker,
+        40,
+        BattlePoint::new(10_000, 20_000),
+        Formation::Line { files: 10 },
+        100,
+    )
+    .with_combat_stats(UnitCombatProfile::v1(UnitKind::Archers));
+    let defender = TacticalUnit::new(
+        "d",
+        BattleSide::Defender,
+        80,
+        BattlePoint::new(25_000, 20_000),
+        Formation::Line { files: 10 },
+        100,
+    )
+    .with_combat_stats(UnitCombatProfile::v1(defender_kind));
+    let mut battle = TacticalBattle::new(
+        FlatBattlefield::new(100_000, 100_000),
+        vec![attacker, defender],
+    )
+    .unwrap();
+    battle.issue_engagement_order("a", "d").unwrap();
+    battle
+}
+
+#[test]
+fn default_campaign_frontage_exposes_armor_over_successive_volleys() {
+    let mut levy = small_ranged_battle(UnitKind::Levy);
+    let mut knights = small_ranged_battle(UnitKind::Knights);
+    levy.advance_ticks(120);
+    knights.advance_ticks(120);
+    let survivors = |battle: &TacticalBattle| {
+        battle
+            .units()
+            .iter()
+            .find(|unit| unit.id() == "d")
+            .unwrap()
+            .soldiers()
+    };
+    assert!(survivors(&knights) > survivors(&levy));
+    assert!(survivors(&levy) < 80);
+}
+
+#[test]
+fn fractional_ranged_damage_survives_serialization_and_tick_partition() {
+    let mut direct = small_ranged_battle(UnitKind::Knights);
+    direct.advance_ticks(20);
+    let document = serde_json::to_value(&direct).unwrap();
+    assert!(document["rangedDamageCredit"]["a"]["d"].as_u64().unwrap() > 0);
+    let mut replay: TacticalBattle = serde_json::from_value(document.clone()).unwrap();
+    direct.advance_ticks(100);
+    for _ in 0..5 {
+        replay.advance_ticks(20);
+    }
+    assert_eq!(direct, replay);
+    let mut corrupt = document;
+    corrupt["rangedDamageCredit"]["a"]["d"] = serde_json::json!(1_000);
+    assert!(serde_json::from_value::<TacticalBattle>(corrupt).is_err());
+}
