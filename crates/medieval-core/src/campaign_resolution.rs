@@ -55,9 +55,12 @@ impl CampaignState {
         if let Some(report) = self
             .tactical_battle_reports
             .iter()
-            .find(|report| &report.result == result)
+            .find(|report| same_battle(&report.result, result))
         {
             report.validate_for_campaign(self)?;
+            if &report.result != result {
+                return Err(CampaignError::TacticalResultMismatch);
+            }
             return Ok(report.clone());
         }
         let mut next = self.clone();
@@ -184,6 +187,21 @@ impl TacticalCampaignReport {
         campaign: &CampaignState,
     ) -> Result<(), CampaignError> {
         self.validate()?;
+        if self.result.seed.turn > campaign.turn {
+            return Err(CampaignError::TacticalResultMismatch);
+        }
+        if campaign.pending_battle.as_ref().is_some_and(|pending| {
+            self.result.seed.turn == campaign.turn
+                && self.result.seed.attacker_army_id == pending.attacker_army_id
+        }) || campaign
+            .tactical_battle_reports
+            .iter()
+            .filter(|report| same_battle(&report.result, &self.result))
+            .count()
+            > 1
+        {
+            return Err(CampaignError::TacticalResultMismatch);
+        }
         let target = campaign
             .provinces
             .iter()
@@ -270,4 +288,8 @@ fn surviving_roster(source: &TacticalArmyResult) -> Vec<TacticalUnitSeed> {
             })
         })
         .collect()
+}
+
+fn same_battle(left: &TacticalBattleResult, right: &TacticalBattleResult) -> bool {
+    left.seed.turn == right.seed.turn && left.seed.attacker_army_id == right.seed.attacker_army_id
 }

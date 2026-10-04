@@ -451,3 +451,80 @@ fn existing_nonadjacent_retreat_destinations_are_rejected_on_load_and_completed_
     assert!(campaign.apply_tactical_battle_result(&result).is_err());
     assert_eq!(campaign, before);
 }
+
+#[test]
+fn completed_reports_cannot_overlap_the_same_pending_battle_or_be_recorded_twice() {
+    let base = campaign();
+    let result = victory(&base, BattleSide::Attacker);
+    let mut completed = base.clone();
+    let report = completed.apply_tactical_battle_result(&result).unwrap();
+    for staged in [false, true] {
+        let mut conflicting = base.clone();
+        if staged {
+            conflicting.reconcile_tactical_casualties(&result).unwrap();
+        }
+        conflicting.tactical_battle_reports.push(report.clone());
+        assert!(CampaignSave::from_campaign(conflicting.clone(), "england").is_err());
+        let before = conflicting.clone();
+        assert!(conflicting.apply_tactical_battle_result(&result).is_err());
+        assert_eq!(conflicting, before);
+    }
+    completed.tactical_battle_reports.push(report);
+    assert!(CampaignSave::from_campaign(completed, "england").is_err());
+}
+
+#[test]
+fn completed_report_attacker_identity_must_match_its_retained_source_roster() {
+    let mut campaign = campaign();
+    let result = victory(&campaign, BattleSide::Attacker);
+    campaign.apply_tactical_battle_result(&result).unwrap();
+    campaign.tactical_battle_reports[0]
+        .result
+        .seed
+        .attacker_army_id = "unrelated-army".into();
+    assert!(CampaignSave::from_campaign(campaign, "england").is_err());
+}
+
+#[test]
+fn completed_reports_from_future_turns_are_rejected_on_load_and_replay() {
+    let mut campaign = campaign();
+    let result = victory(&campaign, BattleSide::Attacker);
+    campaign.apply_tactical_battle_result(&result).unwrap();
+    campaign.tactical_battle_reports[0].result.seed.turn = campaign.turn + 1;
+    assert!(CampaignSave::from_campaign(campaign.clone(), "england").is_err());
+    let future = campaign.tactical_battle_reports[0].result.clone();
+    let before = campaign.clone();
+    assert!(campaign.apply_tactical_battle_result(&future).is_err());
+    assert_eq!(campaign, before);
+}
+
+#[test]
+fn a_winning_force_can_include_an_escaped_routed_unit() {
+    let mut campaign = campaign();
+    let attacker = campaign
+        .armies
+        .iter_mut()
+        .find(|army| army.id == "england-main")
+        .unwrap();
+    attacker.spearmen = 20;
+    let mut document = serde_json::to_value(deployed(&campaign)).unwrap();
+    let mut routed_attacker = false;
+    for unit in document["units"].as_array_mut().unwrap() {
+        if unit["side"] == "defender" {
+            unit["state"] = serde_json::json!("routed");
+        } else if !routed_attacker {
+            unit["state"] = serde_json::json!({"escaped": {"routed": true}});
+            routed_attacker = true;
+        }
+    }
+    let result = finish(serde_json::from_value(document).unwrap());
+    assert_eq!(result.winner, Some(BattleSide::Attacker));
+    assert!(
+        result
+            .armies
+            .iter()
+            .any(|army| army.side == BattleSide::Attacker
+                && army.units.iter().any(|unit| unit.escaped_soldiers > 0))
+    );
+    campaign.apply_tactical_battle_result(&result).unwrap();
+}
