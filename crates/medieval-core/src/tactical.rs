@@ -191,6 +191,14 @@ pub struct TacticalUnit {
     )]
     attack_range_mm: u32,
     destination: Option<BattlePoint>,
+    #[serde(default, skip_serializing_if = "crate::MovementMode::is_march")]
+    movement_mode: crate::MovementMode,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "crate::group_orders::deserialize_waypoints"
+    )]
+    queued_movements: Vec<crate::MovementWaypoint>,
     engagement_target: Option<String>,
     fatigue: u16,
     morale: u16,
@@ -254,6 +262,8 @@ impl TacticalUnit {
             campaign_provenance: None,
             attack_range_mm: COMBAT_CONTACT_DISTANCE_MM,
             destination: None,
+            movement_mode: crate::MovementMode::March,
+            queued_movements: Vec::new(),
             engagement_target: None,
             fatigue: 0,
             morale: MAX_TACTICAL_MORALE,
@@ -318,6 +328,16 @@ impl TacticalUnit {
     pub const fn with_facing(mut self, facing: crate::Facing) -> Self {
         self.facing = Some(facing);
         self
+    }
+
+    #[must_use]
+    pub const fn movement_mode(&self) -> crate::MovementMode {
+        self.movement_mode
+    }
+
+    #[must_use]
+    pub fn queued_movements(&self) -> &[crate::MovementWaypoint] {
+        &self.queued_movements
     }
 
     #[must_use]
@@ -859,6 +879,8 @@ impl TacticalBattle {
             };
             unit.engagement_target = None;
             unit.arrival_facing = None;
+            unit.queued_movements.clear();
+            unit.movement_mode = crate::MovementMode::March;
             unit.destination = None;
         }
         self.update_completion();
@@ -902,6 +924,36 @@ impl TacticalBattle {
         Ok(())
     }
 
+    pub(crate) fn issue_unit_waypoint(
+        &mut self,
+        unit_id: &str,
+        waypoint: crate::MovementWaypoint,
+        queued: bool,
+    ) -> Result<(), TacticalError> {
+        self.ensure_running()?;
+        let index = self
+            .unit_index(unit_id)
+            .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
+        self.ensure_can_receive_orders(index)?;
+        if queued
+            && (self.units[index].destination.is_some()
+                || self.units[index].engagement_target.is_some()
+                || !self.units[index].queued_movements.is_empty())
+        {
+            if self.units[index].queued_movements.len() >= crate::MAX_QUEUED_WAYPOINTS {
+                return Err(TacticalError::WaypointLimitReached(unit_id.to_owned()));
+            }
+            self.units[index].queued_movements.push(waypoint);
+        } else {
+            self.issue_move_order(MovementOrder {
+                unit_id: unit_id.to_owned(),
+                destination: waypoint.destination,
+            })?;
+            self.units[index].movement_mode = waypoint.mode;
+        }
+        Ok(())
+    }
+
     pub fn issue_move_order(&mut self, order: MovementOrder) -> Result<(), TacticalError> {
         self.ensure_running()?;
         let unit_index = self
@@ -925,6 +977,8 @@ impl TacticalBattle {
         let unit = &mut self.units[unit_index];
         unit.interrupt_charge();
         unit.engagement_target = None;
+        unit.queued_movements.clear();
+        unit.movement_mode = crate::MovementMode::March;
         unit.arrival_facing = None;
         unit.destination = (unit.position != order.destination).then_some(order.destination);
         Ok(())
@@ -995,6 +1049,8 @@ impl TacticalBattle {
             unit.interrupt_charge();
         }
         unit.destination = None;
+        unit.queued_movements.clear();
+        unit.movement_mode = crate::MovementMode::March;
         unit.arrival_facing = None;
         unit.engagement_target = Some(target_unit_id.to_owned());
         Ok(())
@@ -1012,6 +1068,18 @@ impl TacticalBattle {
         self.ensure_can_receive_orders(unit_index)?;
         if formation.files() == 0 {
             return Err(TacticalError::InvalidFormation(unit_id.to_owned()));
+        }
+        if self.units[unit_index].destination.is_some()
+            || !self.units[unit_index].queued_movements.is_empty()
+        {
+            let mut candidate = self.clone();
+            candidate.units[unit_index].formation = formation;
+            if let Some(destination) = self.units[unit_index].destination {
+                candidate.validate_formation_placement(unit_id, destination)?;
+            }
+            for waypoint in &self.units[unit_index].queued_movements {
+                candidate.validate_formation_placement(unit_id, waypoint.destination)?;
+            }
         }
         if self.units[unit_index].formation != formation {
             self.units[unit_index].interrupt_charge();
@@ -1136,7 +1204,60 @@ impl TacticalBattle {
         })
     }
 
+    fn advance_movement_orders(&mut self) {
+        for unit in &mut self.units {
+            if unit.state == TacticalUnitState::Formed
+                && unit.destination.is_none()
+                && unit.engagement_target.is_none()
+                && !unit.queued_movements.is_empty()
+            {
+                let waypoint = unit.queued_movements.remove(0);
+                unit.destination =
+                    (unit.position != waypoint.destination).then_some(waypoint.destination);
+                unit.movement_mode = waypoint.mode;
+                unit.arrival_facing = None;
+                unit.interrupt_charge();
+            }
+        }
+        let snapshot = self.units.clone();
+        for (index, unit) in snapshot.iter().enumerate() {
+            if unit.state != TacticalUnitState::Formed
+                || unit.movement_mode != crate::MovementMode::AttackMove
+            {
+                continue;
+            }
+            if unit.destination.is_none() {
+                self.units[index].engagement_target = None;
+                self.units[index].movement_mode = crate::MovementMode::March;
+                continue;
+            }
+            let radius = unit.attack_range_mm().max(5_000);
+            let eligible = |enemy: &&TacticalUnit| {
+                enemy.side != unit.side
+                    && enemy.state == TacticalUnitState::Formed
+                    && points_within_distance(unit.position, enemy.position, radius)
+            };
+            let retained = snapshot
+                .iter()
+                .filter(eligible)
+                .find(|enemy| Some(enemy.id.as_str()) == unit.engagement_target.as_deref());
+            let target = retained.or_else(|| {
+                snapshot.iter().filter(eligible).min_by(|left, right| {
+                    point_distance_squared(unit.position, left.position)
+                        .cmp(&point_distance_squared(unit.position, right.position))
+                        .then_with(|| left.id.cmp(&right.id))
+                })
+            });
+            let target = target.map(|enemy| enemy.id.clone());
+            if self.units[index].engagement_target != target {
+                self.units[index].interrupt_charge();
+                self.units[index].engagement_target = target;
+            }
+        }
+    }
+
     fn advance_movement_phase(&mut self) {
+        self.advance_movement_orders();
         let snapshot = self.units.clone();
         for index in 0..self.units.len() {
             match snapshot[index].state {
@@ -1252,9 +1373,12 @@ impl TacticalBattle {
             return;
         }
 
-        let destination = unit
-            .destination
-            .or_else(|| target.map(|target| target.position));
+        let destination = if unit.movement_mode == crate::MovementMode::AttackMove {
+            target.map(|target| target.position).or(unit.destination)
+        } else {
+            unit.destination
+                .or_else(|| target.map(|target| target.position))
+        };
         let Some(destination) = destination else {
             self.units[index].fatigue = self.units[index]
                 .fatigue
@@ -1600,6 +1724,8 @@ impl TacticalBattle {
                 self.units[index].state = TacticalUnitState::Destroyed;
                 self.units[index].destination = None;
                 self.units[index].arrival_facing = None;
+                self.units[index].queued_movements.clear();
+                self.units[index].movement_mode = crate::MovementMode::March;
                 self.units[index].engagement_target = None;
                 continue;
             }
@@ -1615,6 +1741,8 @@ impl TacticalBattle {
                     };
                     self.units[index].destination = None;
                     self.units[index].arrival_facing = None;
+                    self.units[index].queued_movements.clear();
+                    self.units[index].movement_mode = crate::MovementMode::March;
                     self.units[index].engagement_target = None;
                 }
             }
@@ -1656,6 +1784,9 @@ impl TacticalBattle {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TacticalError {
+    InvalidMovementGroup,
+    GroupDestinationOutOfBounds(String),
+    WaypointLimitReached(String),
     InvalidBattlefield {
         width_mm: u32,
         depth_mm: u32,
@@ -1725,6 +1856,18 @@ pub enum TacticalError {
 impl fmt::Display for TacticalError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidMovementGroup => write!(
+                formatter,
+                "movement group must contain distinct units from one side"
+            ),
+            Self::GroupDestinationOutOfBounds(id) => write!(
+                formatter,
+                "group destination places {id} outside the battlefield"
+            ),
+            Self::WaypointLimitReached(id) => write!(
+                formatter,
+                "tactical unit {id} has too many queued waypoints"
+            ),
             Self::InvalidBattlefield { width_mm, depth_mm } => write!(
                 formatter,
                 "battlefield dimensions must be positive, got {width_mm}x{depth_mm} mm"
