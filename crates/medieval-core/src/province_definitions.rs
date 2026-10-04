@@ -182,6 +182,16 @@ impl ProvinceDefinitions {
                 }
             }
         }
+        let mut reachable = BTreeSet::new();
+        let mut frontier = vec![document.provinces[0].id.as_str()];
+        while let Some(id) = frontier.pop() {
+            if reachable.insert(id) {
+                frontier.extend(provinces[id].neighbors.iter().map(String::as_str));
+            }
+        }
+        if reachable.len() != provinces.len() {
+            return invalid("province adjacency graph is disconnected");
+        }
         Ok(Self { document })
     }
     #[must_use]

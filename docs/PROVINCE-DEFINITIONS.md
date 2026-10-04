@@ -23,7 +23,7 @@ definition document; they have no gameplay effect until a consumer implements
 that extension.
 
 Validation rejects duplicate IDs, empty display names, dangling or repeated
-neighbors, self-adjacency, nonreciprocal borders, unknown battlefield profiles,
+neighbors, self-adjacency, nonreciprocal borders, disconnected maps, unknown battlefield profiles,
 invalid contexts, inconsistent fortifications, and an economy beyond the
 campaign's income range. Campaign construction additionally validates starting
 owners against factions and starting army positions against owned provinces.
