@@ -19,7 +19,9 @@ real deterministic opponent, attacks Paris and chooses Fight. The tactical
 renderer must project all 60 campaign archers and the retained army provenance.
 Physical clicks select the army, a semantic control changes formation, and
 physical right-clicks issue engagement orders, retargeting remaining enemies as
-needed. The simulation advances on its normal frame clock until core victory.
+needed. Each retarget must reach every selected formed unit, and the battlefield
+canvas must fit the visible campaign frame. The simulation advances on its normal
+frame clock until core victory.
 
 Acceptance then verifies source-aware casualty conservation, the surviving
 campaign roster, capture of Paris, the battle report, and identical state after

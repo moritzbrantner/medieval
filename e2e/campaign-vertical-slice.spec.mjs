@@ -62,6 +62,7 @@ test("recruit, physically fight, capture and reload the reconciled campaign", as
   await battle.getByRole("button", { name: "Pause", exact: true }).click();
   const frame = page.frames().find((candidate) => candidate.url().includes("battle.html?campaign"));
   if (!frame) throw new Error("campaign frame did not open");
+  expect(await frame.evaluate(() => document.querySelector("#battle-canvas").getBoundingClientRect().bottom <= window.innerHeight)).toBe(true);
   const deployed = await tacticalStatus(frame);
   expect(deployed.battlefieldLocation).toBe("forestClearing");
   expect(deployed.siege).toBeNull();
@@ -107,6 +108,9 @@ test("recruit, physically fight, capture and reload the reconciled campaign", as
     await battle.getByRole("button", { name: "Pause", exact: true }).click();
     await clickUnit(page, frame, next.id, false, "right");
     targetId = next.id;
+    const retargeted = await tacticalStatus(frame);
+    expect(retargeted.selectedUnits.length).toBeGreaterThan(0);
+    expect(retargeted.units.filter(unit => retargeted.selectedUnits.includes(unit.id)).every(unit => unit.engagementTarget === next.id)).toBe(true);
     await battle.getByRole("button", { name: "Resume", exact: true }).click();
   }
   await expect(page.locator("#pending-battle")).toBeHidden({ timeout: 5_000 });
