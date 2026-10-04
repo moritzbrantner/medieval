@@ -465,6 +465,29 @@ pub struct TacticalBattle {
     state: TacticalBattleState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     withdrawal: Option<WithdrawalSides>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    ranged_damage_credit: BTreeMap<String, BTreeMap<String, RangedDamageCredit>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u16", into = "u16")]
+struct RangedDamageCredit(u16);
+
+impl TryFrom<u16> for RangedDamageCredit {
+    type Error = &'static str;
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        if value < 1_000 {
+            Ok(Self(value))
+        } else {
+            Err("ranged damage credit must be below 1,000")
+        }
+    }
+}
+
+impl From<RangedDamageCredit> for u16 {
+    fn from(value: RangedDamageCredit) -> Self {
+        value.0
+    }
 }
 
 #[derive(Deserialize)]
@@ -485,6 +508,8 @@ struct TacticalBattleWire {
     state: TacticalBattleState,
     #[serde(default)]
     withdrawal: Option<WithdrawalSides>,
+    #[serde(default)]
+    ranged_damage_credit: BTreeMap<String, BTreeMap<String, RangedDamageCredit>>,
 }
 
 impl From<TacticalBattleWire> for TacticalBattle {
@@ -499,6 +524,7 @@ impl From<TacticalBattleWire> for TacticalBattle {
             completion_rules: wire.completion_rules,
             state: wire.state,
             withdrawal: wire.withdrawal,
+            ranged_damage_credit: wire.ranged_damage_credit,
             units: wire.units,
         }
     }
@@ -596,6 +622,7 @@ impl TacticalBattle {
             completion_rules: None,
             state: TacticalBattleState::Running,
             withdrawal: None,
+            ranged_damage_credit: BTreeMap::new(),
             units,
         })
     }
@@ -1240,7 +1267,24 @@ impl TacticalBattle {
             ) {
                 continue;
             }
-            let losses = ranged_casualties(attacker, target, self.terrain, self.battlefield);
+            let losses = if attacker.stats().is_some() || target.stats().is_some() {
+                let damage = ranged_damage_milli(attacker, target, self.terrain, self.battlefield);
+                let credit = self
+                    .ranged_damage_credit
+                    .entry(attacker.id.clone())
+                    .or_default()
+                    .entry(target.id.clone())
+                    .or_default();
+                let total = damage.saturating_add(u32::from(credit.0));
+                credit.0 = u16::try_from(total % 1_000).expect("fractional damage fits u16");
+                if damage > 0 {
+                    engaged_units.insert(attacker.id.clone());
+                }
+                u16::try_from((total / 1_000).min(u32::from(target.soldiers)))
+                    .expect("casualties are bounded by target soldiers")
+            } else {
+                ranged_casualties(attacker, target, self.terrain, self.battlefield)
+            };
             if losses > 0 {
                 *casualties.entry(target.id.clone()).or_default() += u32::from(losses);
                 engaged_units.insert(attacker.id.clone());
@@ -1665,6 +1709,37 @@ fn contact_factor_milli(attacker: &TacticalUnit, defender: &TacticalUnit) -> u32
         .stats()
         .map_or(1_000, |stats| u32::from(stats.formation_resistance_milli));
     1_000 + (bonus * 1_000 / resistance).min(750)
+}
+
+fn ranged_damage_milli(
+    attacker: &TacticalUnit,
+    defender: &TacticalUnit,
+    terrain: TacticalTerrain,
+    battlefield: FlatBattlefield,
+) -> u32 {
+    let fatigue = 1_000_u64.saturating_sub(u64::from(attacker.fatigue) / 2);
+    let morale = 750_u64 + u64::from(attacker.morale) / 4;
+    let frontage = u64::from(attacker.frontage_slots()) * 1_000 * fatigue * morale / 1_000_000;
+    let frontage = frontage
+        * u64::from(terrain.elevation_damage_factor_milli(
+            battlefield,
+            attacker.position,
+            defender.position,
+        ))
+        / 1_000;
+    let frontage = frontage
+        * u64::from(terrain.ranged_target_damage_factor_milli(battlefield, defender.position))
+        / 1_000;
+    let attack = attacker
+        .stats()
+        .and_then(|stats| stats.missile)
+        .map_or(1_000, |missile| u64::from(missile.damage_milli));
+    let resistance = 1_000
+        + defender
+            .stats()
+            .map_or(0, |stats| u64::from(stats.armor_milli));
+    u32::try_from(frontage * attack / resistance / u64::from(RANGED_CASUALTY_DIVISOR))
+        .expect("bounded frontage and stat factors fit u32 damage")
 }
 
 fn stat_adjusted_frontage(

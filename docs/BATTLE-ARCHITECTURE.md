@@ -194,3 +194,9 @@ legacy behavior, including their explicit movement/range and optional kind
 metadata. Unknown profile versions fail deserialization. The profile owns the
 kind when present. Browser status and render snapshots project core stat values
 without maintaining another stat table or computing combat in presentation code.
+
+V1 ranged damage retains thousandths through the casualty divisor, then carries
+fractional damage per attacker/target pair across combat pulses. This makes armor
+observable in the default ten-file formations without rounding every shot up to
+one casualty. The carry is bounded below 1,000 and serialized for replay. Historical
+combat without stat profiles keeps its existing minimum-one-casualty behavior.
