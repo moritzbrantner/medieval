@@ -490,12 +490,13 @@ mod tests {
     #[test]
     fn failed_pending_battle_save_rolls_back_hostile_movement() {
         let path = test_save_path("campaign-save.json");
-        fs::create_dir_all(&path).unwrap();
+        let parent = path.parent().unwrap();
+        fs::write(parent, "blocks creation of the save directory").unwrap();
         let mut session = GameSession::default();
         let before = session.clone();
         assert!(move_session_army(&mut session, &path, "england-main", "paris").is_err());
         assert_eq!(session, before);
-        remove_test_directory(&path);
+        fs::remove_file(parent).unwrap();
     }
 
     #[test]
