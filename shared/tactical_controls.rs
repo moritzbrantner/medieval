@@ -3,7 +3,7 @@ use std::{
     fmt,
 };
 
-use medieval_core::{BattlePoint, BattleSide, Facing, FormationOrder, MovementOrder, TacticalBattle};
+use medieval_core::{BattlePoint, BattleSide, Facing, FormationOrder, GroupMovementOrder, MovementMode, MovementOrder, TacticalBattle};
 use medieval_renderer::{Camera3d, RenderViewState};
 use serde::Deserialize;
 
@@ -33,6 +33,7 @@ pub struct TacticalControlRequest {
     pub facing: Option<Facing>,
     pub quarter_turns: Option<i8>,
     pub width_mm: Option<u32>,
+    pub queued: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -45,7 +46,8 @@ enum TacticalControlIntent {
     AssignControlGroup { group: u8 },
     RecallControlGroup { group: u8, additive: bool },
     SetOrderPreview { active: bool },
-    MoveSelected { destination: BattlePoint },
+    MoveSelected { destination: BattlePoint, queued: bool, mode: MovementMode },
+    ArmAttackMove,
     EngageSelected { target_unit_id: String },
     RotateSelected { facing: Facing },
     TurnSelected { quarter_turns: i8 },
@@ -91,7 +93,10 @@ impl TacticalControlRequest {
             "setOrderPreview" => Ok(TacticalControlIntent::SetOrderPreview {
                 active: required(self.active, &kind, "active")?,
             }),
-            "moveSelected" => Ok(TacticalControlIntent::MoveSelected {
+            "armAttackMove" => Ok(TacticalControlIntent::ArmAttackMove),
+            "moveSelected" | "attackMoveSelected" => Ok(TacticalControlIntent::MoveSelected {
+                queued: self.queued.unwrap_or(false),
+                mode: if kind == "attackMoveSelected" { MovementMode::AttackMove } else { MovementMode::March },
                 destination: BattlePoint::new(
                     required(self.x_mm, &kind, "xMm")?,
                     required(self.y_mm, &kind, "yMm")?,
@@ -181,6 +186,7 @@ pub struct TacticalControls {
     selected_units: BTreeSet<String>,
     control_groups: BTreeMap<u8, BTreeSet<String>>,
     order_preview: bool,
+    attack_move_armed: bool,
 }
 
 impl TacticalControls {
@@ -192,6 +198,7 @@ impl TacticalControls {
             selected_units: BTreeSet::new(),
             control_groups: BTreeMap::new(),
             order_preview: false,
+            attack_move_armed: false,
         }
     }
 
@@ -232,8 +239,14 @@ impl TacticalControls {
                 self.order_preview = active && !self.selected_units.is_empty();
                 Ok(())
             }
-            TacticalControlIntent::MoveSelected { destination } => {
-                self.move_selected(battle, destination)
+            TacticalControlIntent::ArmAttackMove => {
+                self.sync_with_battle(battle);
+                self.ensure_selection()?;
+                self.attack_move_armed = true;
+                Ok(())
+            }
+            TacticalControlIntent::MoveSelected { destination, queued, mode } => {
+                self.move_selected(battle, destination, queued, mode)
             }
             TacticalControlIntent::EngageSelected { target_unit_id } => {
                 self.engage_selected(battle, &target_unit_id)
@@ -307,11 +320,13 @@ impl TacticalControls {
         }
         if self.selected_units.is_empty() {
             self.order_preview = false;
+            self.attack_move_armed = false;
         }
         Ok(())
     }
 
     fn clear_selection(&mut self) {
+        self.attack_move_armed = false;
         self.selected_units.clear();
         self.order_preview = false;
     }
@@ -345,6 +360,7 @@ impl TacticalControls {
         }
         if self.selected_units.is_empty() {
             self.order_preview = false;
+            self.attack_move_armed = false;
         }
         Ok(())
     }
@@ -367,18 +383,16 @@ impl TacticalControls {
         &mut self,
         battle: &mut TacticalBattle,
         destination: BattlePoint,
+        queued: bool,
+        mode: MovementMode,
     ) -> Result<(), TacticalControlError> {
         self.sync_with_battle(battle);
         self.ensure_selection()?;
-        let mut next = battle.clone();
-        for unit_id in &self.selected_units {
-            next.issue_move_order(MovementOrder {
-                unit_id: unit_id.clone(),
-                destination,
-            })
-            .map_err(|error| TacticalControlError::RuleRejected(error.to_string()))?;
-        }
-        *battle = next;
+        battle.issue_group_movement(GroupMovementOrder {
+            unit_ids: self.selected_units.iter().cloned().collect(),
+            destination, mode, queued,
+        }).map_err(|error| TacticalControlError::RuleRejected(error.to_string()))?;
+        self.attack_move_armed = false;
         self.order_preview = false;
         Ok(())
     }
@@ -418,6 +432,7 @@ impl TacticalControls {
             .map_err(|error| TacticalControlError::RuleRejected(error.to_string()))?;
         }
         *battle = next;
+        self.attack_move_armed = false;
         self.order_preview = false;
         Ok(())
     }
@@ -431,8 +446,12 @@ impl TacticalControls {
         }
         if self.selected_units.is_empty() {
             self.order_preview = false;
+            self.attack_move_armed = false;
         }
     }
+
+    #[must_use]
+    pub const fn attack_move_armed(&self) -> bool { self.attack_move_armed }
 
     #[must_use]
     pub fn render_view(&self, battle: &TacticalBattle) -> RenderViewState {
@@ -675,7 +694,7 @@ mod tests {
                     .find(|unit| unit.id() == unit_id)
                     .unwrap()
                     .destination(),
-                Some(destination)
+                Some(BattlePoint::new(if unit_id == "attacker-a" {55_000} else {65_000},60_000))
             );
         }
         let before = battle.clone();

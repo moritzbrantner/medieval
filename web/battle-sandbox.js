@@ -261,6 +261,7 @@ function renderStatus(rawStatus) {
     campaignResultSent = true;
     window.parent.postMessage({ kind: "medieval-campaign-battle-finished", document }, window.location.origin);
   }
+  document.querySelector("#attack-move").setAttribute("aria-pressed", String(currentStatus.attackMoveArmed));
   const reason = currentStatus.battleState?.reason;
   const withdrawalText = reason === "withdrawal"
     ? { playerVictory: "Victory — the opposing force withdrew.", playerDefeat: "Your force withdrew from the battlefield." }[currentStatus.outcome]
@@ -282,6 +283,7 @@ function renderStatus(rawStatus) {
   withdrawButton.disabled = !currentStatus.canWithdraw;
   const selectionDisabled = currentStatus.selectedUnits.length === 0 || Boolean(currentStatus.outcome);
   stopButton.disabled = selectionDisabled;
+  document.querySelector("#attack-move").disabled = selectionDisabled;
   lineFormationButton.disabled = selectionDisabled;
   columnFormationButton.disabled = selectionDisabled;
 
@@ -393,6 +395,7 @@ canvas.addEventListener("pointerdown", (event) => {
         rect.width,
         rect.height,
         event.shiftKey,
+        event.ctrlKey,
       ),
     );
   } catch (error) {
@@ -426,6 +429,7 @@ const battleInputBindings = attachBattleInputBindings({
     runControl({ kind: "stopSelected" });
   },
   setFormation,
+  armAttackMove() { runControl({ kind: "armAttackMove" }); },
   turnSelected(quarterTurns) {
     runControl({ kind: "turnSelected", quarterTurns });
   },
@@ -440,6 +444,7 @@ withdrawButton.addEventListener("click", () => runControl({ kind: "withdraw" }))
 
 pauseButton.addEventListener("click", togglePause);
 stopButton.addEventListener("click", () => runControl({ kind: "stopSelected" }));
+document.querySelector("#attack-move").addEventListener("click", () => runControl({ kind: "armAttackMove" }));
 document.querySelector("#set-frontage").addEventListener("click", () => {
   const input = document.querySelector("#frontage-metres");
   if (!input.reportValidity()) return;
