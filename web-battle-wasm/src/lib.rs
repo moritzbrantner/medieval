@@ -36,7 +36,7 @@ thread_local! {
     static SANDBOX: RefCell<Option<BrowserSandbox>> = const { RefCell::new(None) };
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SandboxArmySelection {
     levy: u16,
@@ -243,12 +243,17 @@ impl BrowserSandbox {
         let height = canvas.height().max(1);
         let config = surface
             .get_default_config(&adapter, width, height)
-            .ok_or_else(|| "selected WebGPU adapter cannot present to the battle canvas".to_owned())?;
+            .ok_or_else(|| {
+                "selected WebGPU adapter cannot present to the battle canvas".to_owned()
+            })?;
         surface.configure(&device, &config);
 
         let mut battle = match &campaign_seed {
-            Some(seed) => TacticalBattle::from_campaign_seed(FlatBattlefield::new(120_000, 80_000), seed.clone())
-                .map_err(|error| error.to_string())?,
+            Some(seed) => TacticalBattle::from_campaign_seed(
+                FlatBattlefield::new(120_000, 80_000),
+                seed.clone(),
+            )
+            .map_err(|error| error.to_string())?,
             None => sample_battle(initial_army, location)?,
         };
         drive_opponent(&mut battle)?;
@@ -358,7 +363,12 @@ impl BrowserSandbox {
                 });
                 let request = if let Some(unit) = selectable {
                     TacticalControlRequest {
-                        kind: if shift { "selectToggle" } else { "selectReplace" }.to_owned(),
+                        kind: if shift {
+                            "selectToggle"
+                        } else {
+                            "selectReplace"
+                        }
+                        .to_owned(),
                         unit_ids: Some(vec![unit.id().to_owned()]),
                         ..TacticalControlRequest::default()
                     }
@@ -384,13 +394,9 @@ impl BrowserSandbox {
                         target_unit_id: Some(unit.id().to_owned()),
                         ..TacticalControlRequest::default()
                     }
-                } else if let Some(point) = battlefield_point(
-                    &snapshot,
-                    x_px,
-                    y_px,
-                    width_px,
-                    height_px,
-                ) {
+                } else if let Some(point) =
+                    battlefield_point(&snapshot, x_px, y_px, width_px, height_px)
+                {
                     TacticalControlRequest {
                         kind: "moveSelected".to_owned(),
                         x_mm: Some(point.x_mm),
@@ -507,7 +513,9 @@ impl BrowserSandbox {
                     side: side_name(unit.side()),
                     soldiers: unit.soldiers(),
                     unit_kind: unit.unit_kind(),
-                    source_army_id: unit.campaign_provenance().map(|provenance| provenance.source_army_id.clone()),
+                    source_army_id: unit
+                        .campaign_provenance()
+                        .map(|provenance| provenance.source_army_id.clone()),
                     morale: unit.morale(),
                     fatigue: unit.fatigue(),
                     formation,
@@ -786,7 +794,8 @@ fn drive_opponent(battle: &mut TacticalBattle) -> Result<(), String> {
         .units()
         .iter()
         .filter(|unit| {
-            unit.side() == BattleSide::Attacker && (unit.can_receive_orders() || unit.is_withdrawing())
+            unit.side() == BattleSide::Attacker
+                && (unit.can_receive_orders() || unit.is_withdrawing())
         })
         .map(|unit| (unit.id().to_owned(), unit.position()))
         .collect::<Vec<_>>();
@@ -796,9 +805,7 @@ fn drive_opponent(battle: &mut TacticalBattle) -> Result<(), String> {
     let defenders = battle
         .units()
         .iter()
-        .filter(|unit| {
-            unit.side() == BattleSide::Defender && unit.can_receive_orders()
-        })
+        .filter(|unit| unit.side() == BattleSide::Defender && unit.can_receive_orders())
         .map(|unit| {
             (
                 unit.id().to_owned(),
@@ -837,9 +844,7 @@ fn distance_squared(left: BattlePoint, right: BattlePoint) -> u64 {
 }
 
 fn validate_viewport(x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
-    if [x, y, width, height].iter().any(|value| !value.is_finite())
-        || width <= 0.0
-        || height <= 0.0
+    if [x, y, width, height].iter().any(|value| !value.is_finite()) || width <= 0.0 || height <= 0.0
     {
         return Err("pointer viewport must contain finite positive dimensions".to_owned());
     }
@@ -873,12 +878,8 @@ fn pick_unit(
         .units
         .iter()
         .filter_map(|unit| {
-            let (anchor_x, anchor_y) = projected_pixel(
-                snapshot,
-                unit.interaction_anchor_mm(),
-                width_px,
-                height_px,
-            )?;
+            let (anchor_x, anchor_y) =
+                projected_pixel(snapshot, unit.interaction_anchor_mm(), width_px, height_px)?;
             let anchor_dx = anchor_x - x_px;
             let anchor_dy = anchor_y - y_px;
             let anchor_distance = anchor_dx * anchor_dx + anchor_dy * anchor_dy;
@@ -910,8 +911,7 @@ fn pick_unit(
                 && x_px <= max_x + PICK_PADDING_PX
                 && y_px >= min_y - PICK_PADDING_PX
                 && y_px <= max_y + PICK_PADDING_PX;
-            let anchor_hit =
-                anchor_distance <= PICK_FALLBACK_RADIUS_PX * PICK_FALLBACK_RADIUS_PX;
+            let anchor_hit = anchor_distance <= PICK_FALLBACK_RADIUS_PX * PICK_FALLBACK_RADIUS_PX;
             if !inside_formation && !anchor_hit {
                 return None;
             }
@@ -1027,7 +1027,13 @@ pub async fn battle_sandbox_start(
     canvas_id: String,
     selection_json: String,
 ) -> Result<String, JsValue> {
-    start_sandbox(canvas_id, selection_json, BattlefieldLocation::MountainPass, None).await
+    start_sandbox(
+        canvas_id,
+        selection_json,
+        BattlefieldLocation::MountainPass,
+        None,
+    )
+    .await
 }
 
 #[wasm_bindgen]
@@ -1040,18 +1046,39 @@ pub async fn battle_sandbox_start_at_location(
 }
 
 #[wasm_bindgen]
-pub async fn battle_sandbox_start_campaign(canvas_id: String, seed_json: String) -> Result<String, JsValue> {
-    let seed: medieval_core::TacticalBattleSeed = serde_json::from_str(&seed_json).map_err(js_error)?;
+pub async fn battle_sandbox_start_campaign(
+    canvas_id: String,
+    seed_json: String,
+) -> Result<String, JsValue> {
+    let seed: medieval_core::TacticalBattleSeed =
+        serde_json::from_str(&seed_json).map_err(js_error)?;
     // The sandbox muster is bypassed: campaign composition and profile come
     // exclusively from the retained seed and the core deployment constructor.
-    start_sandbox(canvas_id, serde_json::to_string(&SandboxArmySelection { levy: 0, spearmen: 0, archers: 0, knights: 0 }).map_err(js_error)?,
-        BattlefieldLocation::MountainPass, Some(seed)).await
+    start_sandbox(
+        canvas_id,
+        serde_json::to_string(&SandboxArmySelection {
+            levy: 0,
+            spearmen: 0,
+            archers: 0,
+            knights: 0,
+        })
+        .map_err(js_error)?,
+        BattlefieldLocation::MountainPass,
+        Some(seed),
+    )
+    .await
 }
 
 #[wasm_bindgen]
 pub fn battle_sandbox_campaign_result() -> Result<String, JsValue> {
-    with_sandbox(|sandbox| sandbox.battle.campaign_result().map_err(|error| error.to_string())?.to_json()
-        .map_err(|error| error.to_string()))
+    with_sandbox(|sandbox| {
+        sandbox
+            .battle
+            .campaign_result()
+            .map_err(|error| error.to_string())?
+            .to_json()
+            .map_err(|error| error.to_string())
+    })
 }
 
 #[wasm_bindgen]
@@ -1088,13 +1115,9 @@ pub fn battle_sandbox_unit_viewport(
             .iter()
             .find(|unit| unit.unit_id == unit_id)
             .ok_or_else(|| format!("unit {unit_id} is not visible"))?;
-        let (x_px, y_px) = projected_pixel(
-            &snapshot,
-            unit.interaction_anchor_mm(),
-            width_px,
-            height_px,
-        )
-        .ok_or_else(|| format!("unit {unit_id} does not project into the viewport"))?;
+        let (x_px, y_px) =
+            projected_pixel(&snapshot, unit.interaction_anchor_mm(), width_px, height_px)
+                .ok_or_else(|| format!("unit {unit_id} does not project into the viewport"))?;
         serde_json::to_string(&ViewportPoint { x_px, y_px }).map_err(|error| error.to_string())
     })
 }
@@ -1225,9 +1248,8 @@ mod tests {
         ];
         for location in BattlefieldLocation::ALL {
             for selection in selections {
-                let battle = sample_battle(selection, location).unwrap_or_else(|error| {
-                    panic!("{location:?} rejected {selection:?}: {error}")
-                });
+                let battle = sample_battle(selection, location)
+                    .unwrap_or_else(|error| panic!("{location:?} rejected {selection:?}: {error}"));
                 assert_eq!(battle.terrain().location(), location);
             }
         }
@@ -1247,8 +1269,7 @@ mod tests {
             assert_eq!(unit.position().x_mm, PLAYER_DEPLOYMENT_X_MM);
             assert_eq!(
                 unit.position().y_mm,
-                PLAYER_DEPLOYMENT_FIRST_Y_MM
-                    + slot as u32 * PLAYER_DEPLOYMENT_ROW_SPACING_MM
+                PLAYER_DEPLOYMENT_FIRST_Y_MM + slot as u32 * PLAYER_DEPLOYMENT_ROW_SPACING_MM
             );
             assert!(unit.position().y_mm < 100_000);
         }

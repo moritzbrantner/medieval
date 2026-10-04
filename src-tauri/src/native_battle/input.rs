@@ -826,6 +826,7 @@ fn apply_shared_input(
         controls,
         player_side,
         input: state,
+        ..
     } = &mut *session;
     state.apply(battle, controls, *player_side, input)
 }
@@ -1216,6 +1217,7 @@ mod tests {
             controls,
             player_side,
             input,
+            ..
         } = &mut session;
         input
             .apply_browser(battle, controls, *player_side, first)
