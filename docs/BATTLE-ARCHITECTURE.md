@@ -165,3 +165,9 @@ mutation. Autoresolve and new tactical deployment reject an already reconciled
 pending battle, so another casualty calculation cannot replace its outcome.
 Campaign saves validate this intermediate phase, including a destroyed attacker,
 and historical saves without the optional result retain their existing behavior.
+
+Campaign saves containing these semantics use schema version 2. The reader accepts
+version 1 only for unreconciled historical state and upgrades it before the next
+write. A version-1 document claiming reconciled casualties is rejected. Older
+readers therefore reject a version-2 save instead of ignoring the recorded result
+and autoresolving an already-reduced army again.

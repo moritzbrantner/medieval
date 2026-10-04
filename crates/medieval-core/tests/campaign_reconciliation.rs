@@ -294,6 +294,7 @@ fn historical_campaign_saves_default_to_the_unreconciled_phase() {
     let mut document =
         serde_json::to_value(CampaignSave::from_campaign(base.clone(), "england").unwrap())
             .unwrap();
+    document["schemaVersion"] = serde_json::json!(1);
     document["campaign"]
         .as_object_mut()
         .unwrap()
@@ -413,4 +414,34 @@ fn a_result_without_its_pending_battle_cannot_mutate_campaign_armies() {
         Err(CampaignError::NoPendingBattle)
     );
     assert_eq!(campaign, before);
+}
+
+#[test]
+fn reconciled_saves_use_version_two_and_cannot_be_disguised_as_legacy_documents() {
+    let mut campaign = campaign();
+    let result = combat_result(&campaign);
+    campaign.reconcile_tactical_casualties(&result).unwrap();
+    let save = CampaignSave::from_campaign(campaign, "england").unwrap();
+    assert_eq!(save.schema_version, 2);
+    let mut document = serde_json::to_value(&save).unwrap();
+    assert_eq!(document["schemaVersion"], 2);
+    document["schemaVersion"] = serde_json::json!(1);
+    assert!(matches!(
+        CampaignSave::from_json(&serde_json::to_string(&document).unwrap()),
+        Err(medieval_core::SaveError::InvalidState(_))
+    ));
+}
+
+#[test]
+fn loading_version_one_preserves_state_and_upgrades_the_next_write_to_version_two() {
+    let original = campaign();
+    let mut document =
+        serde_json::to_value(CampaignSave::from_campaign(original.clone(), "england").unwrap())
+            .unwrap();
+    document["schemaVersion"] = serde_json::json!(1);
+    let upgraded = CampaignSave::from_json(&serde_json::to_string(&document).unwrap()).unwrap();
+    assert_eq!(upgraded.campaign, original);
+    assert_eq!(upgraded.schema_version, 2);
+    let written: serde_json::Value = serde_json::from_str(&upgraded.to_json().unwrap()).unwrap();
+    assert_eq!(written["schemaVersion"], 2);
 }

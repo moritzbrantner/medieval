@@ -57,6 +57,7 @@ fn profile_uses_stable_province_identity_and_survives_storage_reordering() {
 fn legacy_campaign_saves_and_seeds_keep_the_original_field_profile() {
     let save = CampaignSave::from_campaign(pending_campaign(), "england").unwrap();
     let mut document = serde_json::to_value(save).unwrap();
+    document["schemaVersion"] = serde_json::json!(1);
     for province in document["campaign"]["provinces"].as_array_mut().unwrap() {
         province.as_object_mut().unwrap().remove("battlefield");
     }
