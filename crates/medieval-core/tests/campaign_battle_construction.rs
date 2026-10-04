@@ -83,3 +83,83 @@ fn sandbox_battles_still_round_trip_without_campaign_metadata() {
         battle
     );
 }
+
+#[test]
+fn campaign_army_storage_order_does_not_change_battle() {
+    let mut campaign = medieval_core::new_campaign();
+    let mut reserve = campaign
+        .armies
+        .iter()
+        .find(|army| army.id == "france-main")
+        .unwrap()
+        .clone();
+    reserve.id = "france-reserve".into();
+    campaign.armies.push(reserve);
+    campaign.move_army("england-main", "paris").unwrap();
+    let field = FlatBattlefield::new(120_000, 80_000);
+    let first =
+        TacticalBattle::from_campaign_seed(field, campaign.pending_tactical_battle_seed().unwrap())
+            .unwrap();
+    campaign.armies.reverse();
+    let second =
+        TacticalBattle::from_campaign_seed(field, campaign.pending_tactical_battle_seed().unwrap())
+            .unwrap();
+    assert_eq!(first, second);
+    assert_eq!(
+        first.campaign_seed().unwrap().defender.source_army_ids,
+        ["france-main", "france-reserve"]
+    );
+}
+
+#[test]
+fn duplicate_kinds_and_zero_counts_have_one_canonical_composition() {
+    let expected = seed();
+    let mut fragmented = expected.clone();
+    fragmented.attacker.units[0].soldiers -= 20;
+    fragmented
+        .attacker
+        .units
+        .push(medieval_core::TacticalUnitSeed {
+            kind: UnitKind::Levy,
+            soldiers: 20,
+        });
+    fragmented
+        .attacker
+        .units
+        .push(medieval_core::TacticalUnitSeed {
+            kind: UnitKind::Knights,
+            soldiers: 0,
+        });
+    let field = FlatBattlefield::new(120_000, 80_000);
+    assert_eq!(
+        TacticalBattle::from_campaign_seed(field, expected).unwrap(),
+        TacticalBattle::from_campaign_seed(field, fragmented).unwrap()
+    );
+}
+
+#[test]
+fn unrepresentable_composition_is_rejected_without_truncation() {
+    let mut seed = seed();
+    seed.attacker.units[0].soldiers = u64::MAX;
+    seed.attacker.units.push(medieval_core::TacticalUnitSeed {
+        kind: UnitKind::Levy,
+        soldiers: 1,
+    });
+    assert_eq!(
+        TacticalBattle::from_campaign_seed(FlatBattlefield::new(120_000, 80_000), seed),
+        Err(medieval_core::TacticalError::CampaignForceTooLarge(
+            medieval_core::BattleSide::Attacker
+        ))
+    );
+}
+
+#[test]
+fn invalid_battlefield_is_rejected_before_constructing_units() {
+    assert_eq!(
+        TacticalBattle::from_campaign_seed(FlatBattlefield::new(0, 80_000), seed()),
+        Err(medieval_core::TacticalError::InvalidBattlefield {
+            width_mm: 0,
+            depth_mm: 80_000
+        })
+    );
+}
