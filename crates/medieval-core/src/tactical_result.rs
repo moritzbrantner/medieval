@@ -1,10 +1,10 @@
-use std::fmt;
+use std::{collections::BTreeSet, fmt};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     BattleSide, TacticalArmySeed, TacticalBattle, TacticalBattleSeed, TacticalBattleState,
-    TacticalFinishReason, TacticalForceSeed, TacticalUnitSeed, UnitKind,
+    TacticalFinishReason, TacticalForceSeed, UnitKind,
 };
 
 pub const TACTICAL_BATTLE_RESULT_SCHEMA_VERSION: u32 = 1;
@@ -113,7 +113,13 @@ impl TacticalBattle {
                 unit.initial_soldiers = 0;
             }
         }
+        let mut unit_ids = BTreeSet::new();
         for unit in self.units() {
+            if !unit_ids.insert(unit.id()) {
+                return Err(TacticalResultError::ConservationViolation(
+                    unit.id().to_owned(),
+                ));
+            }
             let provenance = unit
                 .campaign_provenance()
                 .ok_or(TacticalResultError::MissingArmyProvenance)?;
@@ -197,6 +203,15 @@ impl TacticalBattleResult {
     pub fn validate(&self) -> Result<(), TacticalResultError> {
         if self.schema_version != TACTICAL_BATTLE_RESULT_SCHEMA_VERSION {
             return Err(TacticalResultError::UnsupportedVersion(self.schema_version));
+        }
+        let draw_reason = matches!(
+            self.reason,
+            TacticalFinishReason::MutualDefeat | TacticalFinishReason::MutualWithdrawal
+        );
+        if draw_reason != self.winner.is_none() {
+            return Err(TacticalResultError::InvalidProvenance(
+                "winner does not match the terminal reason".into(),
+            ));
         }
         let expected = result_rosters(&self.seed)?;
         if self.armies.len() != expected.len() {

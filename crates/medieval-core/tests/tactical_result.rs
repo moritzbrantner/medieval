@@ -44,7 +44,24 @@ fn combat_fixture(seed: TacticalBattleSeed) -> TacticalBattle {
         };
         unit["position"] = serde_json::json!({"xMm":x, "yMm":10_000});
     }
-    serde_json::from_value(document).unwrap()
+    let mut battle: TacticalBattle = serde_json::from_value(document).unwrap();
+    let attacker = battle
+        .units()
+        .iter()
+        .find(|unit| unit.side() == BattleSide::Attacker)
+        .unwrap()
+        .id()
+        .to_owned();
+    let defenders: Vec<_> = battle
+        .units()
+        .iter()
+        .filter(|unit| unit.side() == BattleSide::Defender)
+        .map(|unit| unit.id().to_owned())
+        .collect();
+    for defender in defenders {
+        battle.issue_engagement_order(&defender, &attacker).unwrap();
+    }
+    battle
 }
 
 fn finish(mut battle: TacticalBattle) -> TacticalBattle {
@@ -189,7 +206,7 @@ fn pursuit_losses_remain_part_of_each_source_armys_total_casualties() {
         .map(|unit| unit.id().to_owned())
         .collect();
     for defender in defenders {
-        battle.engage(&defender, &attacker).unwrap();
+        battle.issue_engagement_order(&defender, &attacker).unwrap();
     }
     battle.withdraw(BattleSide::Attacker).unwrap();
     let result = finish(battle).campaign_result().unwrap();
@@ -382,4 +399,34 @@ fn old_battle_records_without_unit_provenance_cannot_guess_campaign_losses() {
         legacy.campaign_result(),
         Err(TacticalResultError::MissingArmyProvenance)
     );
+}
+
+#[test]
+fn escaped_routed_soldiers_remain_overlapping_survivor_subsets() {
+    let mut document = serde_json::to_value(battle(seed())).unwrap();
+    let reserve = document["units"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|unit| unit["campaignProvenance"]["sourceArmyId"] == "france-reserve")
+        .unwrap();
+    reserve["state"] = serde_json::json!("routed");
+    let mut battle: TacticalBattle = serde_json::from_value(document).unwrap();
+    battle.withdraw(BattleSide::Defender).unwrap();
+    let result = finish(battle).campaign_result().unwrap();
+    let reserve = &result.armies[2].units[0];
+    assert_eq!(reserve.surviving_soldiers, 20);
+    assert_eq!(reserve.routed_soldiers, 20);
+    assert_eq!(reserve.escaped_soldiers, 20);
+    result.validate().unwrap();
+}
+
+#[test]
+fn result_validation_rejects_winners_that_contradict_the_terminal_reason() {
+    let mut result = finish(combat_fixture(seed())).campaign_result().unwrap();
+    result.winner = None;
+    assert!(matches!(
+        result.validate(),
+        Err(TacticalResultError::InvalidProvenance(_))
+    ));
 }
