@@ -6,6 +6,7 @@ mod battle;
 mod campaign_deployment;
 mod campaign_handoff;
 mod campaign_reconciliation;
+mod campaign_resolution;
 mod charge;
 mod deployment;
 pub use charge::CavalryChargeState;
@@ -34,6 +35,9 @@ pub use campaign_deployment::{
 };
 pub use campaign_handoff::{
     TacticalArmySeed, TacticalBattleSeed, TacticalForceSeed, TacticalUnitSeed,
+};
+pub use campaign_resolution::{
+    TacticalCampaignReport, TacticalCampaignRetreat, TacticalCampaignSurrender,
 };
 pub use deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
 pub use save::{CAMPAIGN_SAVE_SCHEMA_VERSION, CampaignSave, SaveError};
@@ -74,6 +78,8 @@ pub struct CampaignState {
     pub pending_tactical_result: Option<TacticalBattleResult>,
     pub recruitment_queue: Vec<RecruitmentOrder>,
     pub battle_reports: Vec<BattleReport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tactical_battle_reports: Vec<TacticalCampaignReport>,
     pub log: Vec<String>,
 }
 
@@ -735,6 +741,7 @@ pub fn new_campaign_with_province_definitions(
         pending_tactical_result: None,
         recruitment_queue: Vec::new(),
         battle_reports: Vec::new(),
+        tactical_battle_reports: Vec::new(),
         log: vec!["The campaign begins in 1087.".into()],
     })
 }

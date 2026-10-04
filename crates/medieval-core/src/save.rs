@@ -74,8 +74,10 @@ impl CampaignSave {
         let mut save: Self = serde_json::from_str(json)
             .map_err(|error| SaveError::InvalidJson(error.to_string()))?;
         if header.schema_version == 1 {
-            if save.campaign.pending_tactical_result.is_some() {
-                return invalid("version 1 cannot contain reconciled tactical casualties");
+            if save.campaign.pending_tactical_result.is_some()
+                || !save.campaign.tactical_battle_reports.is_empty()
+            {
+                return invalid("version 1 cannot contain tactical battle outcomes");
             }
             save.schema_version = CAMPAIGN_SAVE_SCHEMA_VERSION;
         }
@@ -273,6 +275,30 @@ impl CampaignSave {
                     .is_some_and(|province| !province_ids.contains(province.as_str()))
             {
                 return invalid("battle report references an unknown province");
+            }
+        }
+
+        for report in &campaign.tactical_battle_reports {
+            report
+                .validate_for_campaign(campaign)
+                .map_err(|error| SaveError::InvalidState(error.to_string()))?;
+            if !faction_ids.contains(report.result.seed.attacker.faction_id.as_str())
+                || !faction_ids.contains(report.result.seed.defender.faction_id.as_str())
+                || report
+                    .campaign_winner
+                    .as_ref()
+                    .is_some_and(|id| !faction_ids.contains(id.as_str()))
+            {
+                return invalid("tactical battle report references an unknown faction");
+            }
+            if !province_ids.contains(report.result.seed.from_province.as_str())
+                || !province_ids.contains(report.result.seed.target_province.as_str())
+                || report
+                    .retreats
+                    .iter()
+                    .any(|retreat| !province_ids.contains(retreat.to_province.as_str()))
+            {
+                return invalid("tactical battle report references an unknown province");
             }
         }
 
