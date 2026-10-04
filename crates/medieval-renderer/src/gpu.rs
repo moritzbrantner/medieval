@@ -9,6 +9,7 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     BattleRenderSnapshot, Camera3d, RenderSiegeArea, RenderSiegeCapture, RenderSiegeTower,
+    TerrainMesh, TerrainVertex,
     character_assets::{CharacterAssetPack, CharacterVertex},
     terrain::{
         TERRAIN_GRID_SIZE, terrain_cell_bounds_mm, terrain_cell_height_mm, terrain_height_mm,
@@ -16,7 +17,6 @@ use crate::{
 };
 
 const SOLDIER_CENTER_Y_MM: f32 = 900.0;
-const GROUND_BASE_DEPTH_MM: f32 = 200.0;
 const DEPLOYMENT_BOUNDARY_HALF_WIDTH_MM: f32 = 180.0;
 const DEPLOYMENT_BOUNDARY_HEIGHT_MM: f32 = 40.0;
 const FOREST_TREES_PER_CELL: u32 = 4;
@@ -47,46 +47,6 @@ struct GpuWorldInstance {
 }
 
 impl GpuWorldInstance {
-    fn terrain_cell(
-        terrain: TacticalTerrain,
-        battlefield: FlatBattlefield,
-        cell_x: u32,
-        cell_z: u32,
-        max_height_mm: f32,
-    ) -> Option<Self> {
-        let (x0, x1, z0, z1) = terrain_cell_bounds_mm(battlefield, cell_x, cell_z)?;
-        if x1 <= x0 || z1 <= z0 {
-            return None;
-        }
-        let top = terrain_cell_height_mm(terrain, battlefield, cell_x, cell_z) as f32;
-        let bottom = -GROUND_BASE_DEPTH_MM;
-        let half_height = (top - bottom) / 2.0;
-        Some(Self {
-            center_material: [
-                (x0 as f32 + x1 as f32) / 2.0,
-                bottom + half_height,
-                (z0 as f32 + z1 as f32) / 2.0,
-                2.0,
-            ],
-            half_extent_routed: [
-                (x1 - x0) as f32 / 2.0,
-                half_height,
-                (z1 - z0) as f32 / 2.0,
-                0.0,
-            ],
-            visual: [
-                0.0,
-                0.0,
-                if max_height_mm > 0.0 {
-                    top / max_height_mm
-                } else {
-                    0.0
-                },
-                0.0,
-            ],
-        })
-    }
-
     fn deployment_boundary_segment(
         terrain: TacticalTerrain,
         zone: DeploymentZone,
@@ -413,6 +373,43 @@ impl CameraUniform {
     }
 }
 
+struct TerrainGpuBatch {
+    vertex_buffer: wgpu::Buffer,
+    vertex_count: u32,
+    key: Option<(TacticalTerrain, FlatBattlefield)>,
+}
+impl TerrainGpuBatch {
+    fn new(device: &wgpu::Device) -> Self {
+        Self {
+            vertex_buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Medieval terrain vertices"),
+                size: std::mem::size_of::<TerrainVertex>() as u64,
+                usage: wgpu::BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            }),
+            vertex_count: 0,
+            key: None,
+        }
+    }
+    fn upload(&mut self, device: &wgpu::Device, terrain: TacticalTerrain, field: FlatBattlefield) {
+        let key = (terrain, field);
+        if self.key == Some(key) {
+            return;
+        }
+        let mesh = TerrainMesh::prepare(terrain, field);
+        self.vertex_count =
+            u32::try_from(mesh.vertices.len()).expect("terrain vertex budget fits u32");
+        if !mesh.vertices.is_empty() {
+            self.vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Medieval terrain surface and exposed cliffs"),
+                contents: bytemuck::cast_slice(&mesh.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        }
+        self.key = Some(key);
+    }
+}
+
 struct DepthTarget {
     width: u32,
     height: u32,
@@ -425,6 +422,8 @@ pub struct GpuBattleRenderer {
     queue: Option<wgpu::Queue>,
     pipeline: wgpu::RenderPipeline,
     character_pipeline: wgpu::RenderPipeline,
+    terrain_pipeline: wgpu::RenderPipeline,
+    terrain_batch: TerrainGpuBatch,
     camera_buffer: wgpu::Buffer,
     _palette_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -510,6 +509,8 @@ impl GpuBattleRenderer {
         let pipeline = create_world_pipeline(device, target_format, &pipeline_layout, &shader);
         let character_pipeline =
             create_character_pipeline(device, target_format, &pipeline_layout, &shader);
+        let terrain_pipeline =
+            create_terrain_pipeline(device, target_format, &pipeline_layout, &shader);
         let character_batches = [
             CharacterGpuBatch::new(device, "Medieval soldier mesh", &assets.soldier.vertices),
             CharacterGpuBatch::new(device, "Medieval archer mesh", &assets.archer.vertices),
@@ -520,6 +521,8 @@ impl GpuBattleRenderer {
             queue: None,
             pipeline,
             character_pipeline,
+            terrain_pipeline,
+            terrain_batch: TerrainGpuBatch::new(device),
             camera_buffer,
             _palette_buffer: palette_buffer,
             camera_bind_group,
@@ -541,6 +544,8 @@ impl GpuBattleRenderer {
         queue: &wgpu::Queue,
         snapshot: &BattleRenderSnapshot,
     ) {
+        self.terrain_batch
+            .upload(device, snapshot.terrain, snapshot.battlefield);
         let instances = gpu_instances(snapshot);
         if instances.world.len() > self.instance_capacity {
             self.instance_capacity = instances.world.len().next_power_of_two();
@@ -563,6 +568,7 @@ impl GpuBattleRenderer {
             batch.upload(device, queue, character_instances);
         }
         self.instance_count = self.world_instance_count
+            + u32::from(self.terrain_batch.vertex_count > 0)
             + self
                 .character_batches
                 .iter()
@@ -634,8 +640,13 @@ impl GpuBattleRenderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        if self.terrain_batch.vertex_count > 0 {
+            pass.set_pipeline(&self.terrain_pipeline);
+            pass.set_vertex_buffer(0, self.terrain_batch.vertex_buffer.slice(..));
+            pass.draw(0..self.terrain_batch.vertex_count, 0..1);
+        }
+        pass.set_pipeline(&self.pipeline);
         pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
         pass.draw(0..CUBE_VERTEX_COUNT, 0..self.world_instance_count);
 
@@ -651,6 +662,11 @@ impl GpuBattleRenderer {
     }
 
     #[must_use]
+    pub const fn terrain_vertex_count(&self) -> u32 {
+        self.terrain_batch.vertex_count
+    }
+
+    #[must_use]
     pub const fn instance_count(&self) -> u32 {
         self.instance_count
     }
@@ -662,7 +678,6 @@ struct GpuSceneInstances {
 }
 
 fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
-    let terrain_capacity = (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE) as usize;
     let deployment_capacity = (2 * TERRAIN_GRID_SIZE) as usize;
     let forest_capacity = snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize;
     let river_capacity = snapshot.river_cells.len();
@@ -671,31 +686,8 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
             + siege.towers.len()
             + 1
     });
-    let mut world = Vec::with_capacity(
-        terrain_capacity + deployment_capacity + forest_capacity + river_capacity + siege_capacity,
-    );
-    let max_terrain_height_mm = (0..TERRAIN_GRID_SIZE)
-        .flat_map(|cell_z| {
-            (0..TERRAIN_GRID_SIZE).map(move |cell_x| {
-                terrain_cell_height_mm(snapshot.terrain, snapshot.battlefield, cell_x, cell_z)
-            })
-        })
-        .max()
-        .unwrap_or(0) as f32;
-
-    for cell_z in 0..TERRAIN_GRID_SIZE {
-        for cell_x in 0..TERRAIN_GRID_SIZE {
-            if let Some(cell) = GpuWorldInstance::terrain_cell(
-                snapshot.terrain,
-                snapshot.battlefield,
-                cell_x,
-                cell_z,
-                max_terrain_height_mm,
-            ) {
-                world.push(cell);
-            }
-        }
-    }
+    let mut world =
+        Vec::with_capacity(deployment_capacity + forest_capacity + river_capacity + siege_capacity);
     for cell in &snapshot.river_cells {
         let crossing = snapshot.river_crossing_cells.contains(cell);
         if let Some(river) =
@@ -809,24 +801,63 @@ fn create_world_pipeline(
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
 ) -> wgpu::RenderPipeline {
-    let vertex_buffers = [Some(wgpu::VertexBufferLayout {
+    let buffers = [Some(wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<GpuWorldInstance>() as wgpu::BufferAddress,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &INSTANCE_ATTRIBUTES,
     })];
+    create_geometry_pipeline(
+        device,
+        target_format,
+        layout,
+        shader,
+        ("vs_main", "fs_main"),
+        &buffers,
+    )
+}
+fn create_terrain_pipeline(
+    device: &wgpu::Device,
+    target_format: wgpu::TextureFormat,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+        wgpu::vertex_attr_array![7=>Float32x4,8=>Float32x4,9=>Float32x4];
+    let buffers = [Some(wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<TerrainVertex>() as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &ATTRIBUTES,
+    })];
+    create_geometry_pipeline(
+        device,
+        target_format,
+        layout,
+        shader,
+        ("vs_terrain", "fs_terrain"),
+        &buffers,
+    )
+}
+fn create_geometry_pipeline(
+    device: &wgpu::Device,
+    target_format: wgpu::TextureFormat,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    entry_points: (&str, &str),
+    vertex_buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
+) -> wgpu::RenderPipeline {
     let color_targets = [Some(wgpu::ColorTargetState {
         format: target_format,
         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
         write_mask: wgpu::ColorWrites::ALL,
     })];
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Medieval 3D tactical world pipeline"),
+        label: Some("Medieval battlefield geometry pipeline"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some("vs_main"),
+            entry_point: Some(entry_points.0),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &vertex_buffers,
+            buffers: vertex_buffers,
         },
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: Some(wgpu::DepthStencilState {
@@ -839,7 +870,7 @@ fn create_world_pipeline(
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
             module: shader,
-            entry_point: Some("fs_main"),
+            entry_point: Some(entry_points.1),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             targets: &color_targets,
         }),
@@ -1040,7 +1071,7 @@ mod tests {
             BattleRenderSnapshot::capture(&battle, &RenderViewState::fit(battle.battlefield()));
         assert_eq!(
             gpu_instances(&snapshot).world.len(),
-            (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE + 2 * TERRAIN_GRID_SIZE) as usize
+            (2 * TERRAIN_GRID_SIZE) as usize
                 + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
                 + snapshot.river_cells.len()
         );
@@ -1074,8 +1105,7 @@ mod tests {
         .unwrap();
         let view = RenderViewState::fit(battlefield);
         let snapshot = BattleRenderSnapshot::capture(&battle, &view);
-        let base_world_count = (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE + 2 * TERRAIN_GRID_SIZE)
-            as usize
+        let base_world_count = (2 * TERRAIN_GRID_SIZE) as usize
             + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
             + snapshot.river_cells.len();
         let siege = snapshot.siege.expect("siege snapshot");
@@ -1245,18 +1275,6 @@ mod tests {
                 .center_material[3],
             7.0
         );
-    }
-
-    #[test]
-    fn terrain_instances_raise_center_cells_above_edge_cells() {
-        let battlefield = FlatBattlefield::new(100_000, 100_000);
-        let terrain = TacticalTerrain::battlefield_foundation();
-        let edge = GpuWorldInstance::terrain_cell(terrain, battlefield, 0, 0, 4_000.0).unwrap();
-        let center = GpuWorldInstance::terrain_cell(terrain, battlefield, 4, 4, 4_000.0).unwrap();
-        let edge_top = edge.center_material[1] + edge.half_extent_routed[1];
-        let center_top = center.center_material[1] + center.half_extent_routed[1];
-        assert!(center_top > edge_top);
-        assert!(center.visual[2] > edge.visual[2]);
     }
 
     #[test]
