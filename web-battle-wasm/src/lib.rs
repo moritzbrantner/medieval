@@ -2,8 +2,8 @@ use std::{cell::RefCell, cmp::Ordering, collections::BTreeSet};
 
 use medieval_core::{
     BattlePoint, BattleSide, BattlefieldLocation, DeploymentZone, FlatBattlefield, Formation,
-    TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalGroundCover, TacticalTerrainCell,
-    TacticalTerrainProfile, TacticalUnit, UnitKind,
+    TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalBattleState, TacticalGroundCover,
+    TacticalTerrainCell, TacticalTerrainProfile, TacticalUnit, UnitKind,
 };
 use medieval_renderer::{BattleRenderSnapshot, GpuBattleRenderer};
 use serde::{Deserialize, Serialize};
@@ -136,6 +136,7 @@ fn validate_army_selection(selection: SandboxArmySelection) -> Result<(), String
 #[serde(rename_all = "camelCase")]
 struct SandboxStatus {
     tick: u64,
+    battle_state: TacticalBattleState,
     paused: bool,
     outcome: Option<&'static str>,
     selected_units: Vec<String>,
@@ -441,17 +442,17 @@ impl BrowserSandbox {
     }
 
     fn outcome(&self) -> Option<&'static str> {
-        let attacker_live = self.battle.units().iter().any(|unit| {
-            unit.side() == BattleSide::Attacker && !unit.is_routed() && !unit.is_destroyed()
-        });
-        let defender_live = self.battle.units().iter().any(|unit| {
-            unit.side() == BattleSide::Defender && !unit.is_routed() && !unit.is_destroyed()
-        });
-        match (attacker_live, defender_live) {
-            (true, true) => None,
-            (true, false) => Some("playerVictory"),
-            (false, true) => Some("playerDefeat"),
-            (false, false) => Some("draw"),
+        match self.battle.state() {
+            TacticalBattleState::Running => None,
+            TacticalBattleState::Finished {
+                winner: Some(BattleSide::Attacker),
+                ..
+            } => Some("playerVictory"),
+            TacticalBattleState::Finished {
+                winner: Some(BattleSide::Defender),
+                ..
+            } => Some("playerDefeat"),
+            TacticalBattleState::Finished { winner: None, .. } => Some("draw"),
         }
     }
 
@@ -517,6 +518,7 @@ impl BrowserSandbox {
             .map(|siege| serde_json::to_value(siege).expect("core siege snapshot is serializable"));
         serde_json::to_string(&SandboxStatus {
             tick: self.battle.tick(),
+            battle_state: self.battle.state(),
             paused: self.paused,
             outcome: self.outcome(),
             selected_units: selected.into_iter().map(str::to_owned).collect(),
@@ -600,6 +602,7 @@ fn sample_battle(
             TacticalBattle::deploy_at_location(battlefield, units, location)
         }
     }
+    .map(TacticalBattle::start)
     .map_err(|error| error.to_string())
 }
 
@@ -756,6 +759,9 @@ fn unit(
 }
 
 fn drive_opponent(battle: &mut TacticalBattle) -> Result<(), String> {
+    if !matches!(battle.state(), TacticalBattleState::Running) {
+        return Ok(());
+    }
     let attackers = battle
         .units()
         .iter()
