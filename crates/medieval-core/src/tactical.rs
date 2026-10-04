@@ -1080,6 +1080,8 @@ impl TacticalBattle {
                 }
                 TacticalUnitState::Escaped { .. } | TacticalUnitState::Destroyed => {}
             }
+        }
+        for index in 0..self.units.len() {
             self.advance_charge(index, &snapshot);
         }
     }
@@ -1114,7 +1116,13 @@ impl TacticalBattle {
             return;
         };
         let next = self.units[index].position;
-        let intercepted = snapshot.iter().any(|other| {
+        let target_position = self
+            .units
+            .iter()
+            .find(|unit| unit.id == target.id)
+            .expect("movement preserves units")
+            .position;
+        let intercepted = self.units.iter().any(|other| {
             other.side != before.side
                 && other.id != target.id
                 && other.state == TacticalUnitState::Formed
@@ -1142,11 +1150,13 @@ impl TacticalBattle {
             .run_up_mm()
             .saturating_add(displacement)
             .min(crate::charge::CHARGE_RUN_UP_MM);
-        if points_within_distance(next, target.position, COMBAT_CONTACT_DISTANCE_MM) {
+        if points_within_distance(next, target_position, COMBAT_CONTACT_DISTANCE_MM) {
             self.units[index].charge = Some(Charge::Contact { run_up_mm });
             return;
         }
-        if next == before.position {
+        if next == before.position
+            && !points_within_distance(before.position, target.position, COMBAT_CONTACT_DISTANCE_MM)
+        {
             self.units[index].charge = Some(previous.interrupted());
             return;
         }

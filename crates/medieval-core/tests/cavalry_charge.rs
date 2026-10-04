@@ -277,7 +277,7 @@ fn moving_target_cannot_consume_impact_before_actual_melee_contact() {
         moving.units()[1].position().x_mm - moving.units()[0].position().x_mm,
         1_575
     );
-    assert_eq!(charge(&moving), Charge::Contact { run_up_mm: 4_000 });
+    assert_eq!(charge(&moving), Charge::Charging { run_up_mm: 4_000 });
     assert_eq!(survivors(&moving), 320);
     let checkpoint = serde_json::to_string(&moving).unwrap();
     let mut replay: TacticalBattle = serde_json::from_str(&checkpoint).unwrap();
@@ -299,6 +299,33 @@ fn moving_target_cannot_consume_impact_before_actual_melee_contact() {
     assert!(survivors(&moving) < survivors(&neutral));
     assert_eq!(
         charge(&moving),
+        Charge::Recovering {
+            ticks_remaining: 40
+        }
+    );
+}
+
+#[test]
+fn closing_target_receives_impact_on_the_first_actual_contact_pulse() {
+    let mut closing = battle(12_500, UnitKind::Levy, Facing::west(), false);
+    closing
+        .issue_move_order(MovementOrder {
+            unit_id: "d".into(),
+            destination: BattlePoint::new(8_000, 10_000),
+        })
+        .unwrap();
+    closing.advance_ticks(39);
+    assert_eq!(charge(&closing), Charge::Charging { run_up_mm: 4_000 });
+    let mut neutral = without_charge(&closing);
+    closing.advance_ticks(1);
+    neutral.advance_ticks(1);
+    assert_eq!(
+        closing.units()[1].position().x_mm - closing.units()[0].position().x_mm,
+        1_500
+    );
+    assert!(survivors(&closing) < survivors(&neutral));
+    assert_eq!(
+        charge(&closing),
         Charge::Recovering {
             ticks_remaining: 40
         }
