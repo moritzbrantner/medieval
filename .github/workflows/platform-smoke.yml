@@ -2,15 +2,6 @@ name: platform-smoke
 
 on:
   pull_request:
-    paths:
-      - ".github/workflows/platform-smoke.yml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
-      - "crates/**"
-      - "src-tauri/**"
-      - "web/**"
-      - "web-tests/**"
   workflow_dispatch:
 
 permissions:

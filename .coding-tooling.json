@@ -29,6 +29,15 @@
   },
   "merge": {
     "authority": "hosted",
-    "requiredChecks": ["validate"]
+    "requiredChecks": [
+      "rust",
+      "web",
+      "build",
+      "desktop input contract",
+      "desktop-shell (ubuntu-22.04)",
+      "desktop-shell (macos-latest)",
+      "desktop-shell (windows-latest)",
+      "asset-contract"
+    ]
   }
 }
