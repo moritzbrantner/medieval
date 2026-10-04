@@ -123,34 +123,7 @@ pub(crate) fn place_campaign_units(
         || standard_deployment_zones(battlefield),
         |siege| siege.layout.deployment_zones,
     );
-    let mut blocked = Vec::new();
-    for x in 0..TACTICAL_TERRAIN_GRID_SIZE {
-        for y in 0..TACTICAL_TERRAIN_GRID_SIZE {
-            if terrain.cell_is_passable(x, y) {
-                continue;
-            }
-            let (x0, x1, y0, y1) = terrain
-                .cell_bounds_mm(battlefield, x, y)
-                .expect("terrain grid cell is valid");
-            if x0 == x1 || y0 == y1 {
-                continue;
-            }
-            blocked.push(FormationFootprint {
-                min_x_mm: i64::from(x0),
-                max_x_mm: i64::from(if x + 1 == TACTICAL_TERRAIN_GRID_SIZE {
-                    x1
-                } else {
-                    x1 - 1
-                }),
-                min_y_mm: i64::from(y0),
-                max_y_mm: i64::from(if y + 1 == TACTICAL_TERRAIN_GRID_SIZE {
-                    y1
-                } else {
-                    y1 - 1
-                }),
-            });
-        }
-    }
+    let mut blocked = terrain_formation_obstacles(battlefield, terrain);
     if let Some(siege) = siege {
         for area in siege
             .layout
@@ -222,4 +195,39 @@ pub(crate) fn place_campaign_units(
         placed.push(bounds);
     }
     Ok(())
+}
+
+pub(crate) fn terrain_formation_obstacles(
+    battlefield: FlatBattlefield,
+    terrain: TacticalTerrain,
+) -> Vec<FormationFootprint> {
+    let mut blocked = Vec::new();
+    for x in 0..TACTICAL_TERRAIN_GRID_SIZE {
+        for y in 0..TACTICAL_TERRAIN_GRID_SIZE {
+            if terrain.cell_is_passable(x, y) {
+                continue;
+            }
+            let (x0, x1, y0, y1) = terrain
+                .cell_bounds_mm(battlefield, x, y)
+                .expect("terrain grid cell is valid");
+            if x0 == x1 || y0 == y1 {
+                continue;
+            }
+            blocked.push(FormationFootprint {
+                min_x_mm: i64::from(x0),
+                max_x_mm: i64::from(if x + 1 == TACTICAL_TERRAIN_GRID_SIZE {
+                    x1
+                } else {
+                    x1 - 1
+                }),
+                min_y_mm: i64::from(y0),
+                max_y_mm: i64::from(if y + 1 == TACTICAL_TERRAIN_GRID_SIZE {
+                    y1
+                } else {
+                    y1 - 1
+                }),
+            });
+        }
+    }
+    blocked
 }

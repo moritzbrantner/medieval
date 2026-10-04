@@ -9,6 +9,8 @@ mod campaign_reconciliation;
 mod charge;
 mod deployment;
 pub use charge::CavalryChargeState;
+mod formation_orders;
+pub use formation_orders::FormationOrder;
 mod facing;
 pub use facing::{CombatArc, Facing};
 mod save;
