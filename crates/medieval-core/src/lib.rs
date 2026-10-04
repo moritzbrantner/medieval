@@ -11,6 +11,8 @@ mod deployment;
 pub use charge::CavalryChargeState;
 mod facing;
 pub use facing::{CombatArc, Facing};
+mod group_orders;
+pub use group_orders::{GroupMovementOrder, MAX_QUEUED_WAYPOINTS, MovementMode, MovementWaypoint};
 mod save;
 mod tactical;
 mod tactical_result;

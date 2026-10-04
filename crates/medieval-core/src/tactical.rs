@@ -191,6 +191,14 @@ pub struct TacticalUnit {
     )]
     attack_range_mm: u32,
     destination: Option<BattlePoint>,
+    #[serde(default, skip_serializing_if = "crate::MovementMode::is_march")]
+    movement_mode: crate::MovementMode,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "crate::group_orders::deserialize_waypoints"
+    )]
+    queued_movements: Vec<crate::MovementWaypoint>,
     engagement_target: Option<String>,
     fatigue: u16,
     morale: u16,
@@ -252,6 +260,8 @@ impl TacticalUnit {
             campaign_provenance: None,
             attack_range_mm: COMBAT_CONTACT_DISTANCE_MM,
             destination: None,
+            movement_mode: crate::MovementMode::March,
+            queued_movements: Vec::new(),
             engagement_target: None,
             fatigue: 0,
             morale: MAX_TACTICAL_MORALE,
@@ -315,6 +325,16 @@ impl TacticalUnit {
     pub const fn with_facing(mut self, facing: crate::Facing) -> Self {
         self.facing = Some(facing);
         self
+    }
+
+    #[must_use]
+    pub const fn movement_mode(&self) -> crate::MovementMode {
+        self.movement_mode
+    }
+
+    #[must_use]
+    pub fn queued_movements(&self) -> &[crate::MovementWaypoint] {
+        &self.queued_movements
     }
 
     #[must_use]
