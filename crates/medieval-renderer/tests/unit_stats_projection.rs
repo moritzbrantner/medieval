@@ -21,5 +21,7 @@ fn stat_projection_copies_core_values_without_changing_simulation() {
     let snapshot = BattleRenderSnapshot::capture(&battle, &RenderViewState::fit(field));
     assert_eq!(snapshot.units[0].combat_stats, battle.units()[0].stats());
     assert_eq!(snapshot.units[0].unit_kind, Some(UnitKind::Archers));
+    assert_eq!(snapshot.units[0].ammunition, battle.units()[0].ammunition());
+    assert_eq!(snapshot.units[0].ammunition, Some(30));
     assert_eq!(battle, before);
 }

@@ -175,6 +175,7 @@ struct UnitStatus {
     soldiers: u16,
     unit_kind: Option<UnitKind>,
     combat_stats: Option<medieval_core::UnitStats>,
+    ammunition: Option<u16>,
     facing: Option<medieval_core::Facing>,
     charge: Option<medieval_core::CavalryChargeState>,
     engagement_arc: Option<medieval_core::CombatArc>,
@@ -504,6 +505,7 @@ impl BrowserSandbox {
                     soldiers: unit.soldiers(),
                     unit_kind: unit.unit_kind(),
                     combat_stats: unit.stats(),
+                    ammunition: unit.ammunition(),
                     facing: unit.facing(),
                     charge: unit.charge_state(),
                     engagement_arc: unit

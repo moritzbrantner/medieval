@@ -199,6 +199,34 @@ pub struct TacticalUnit {
     pursuit_casualties: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     charge: Option<crate::CavalryChargeState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ammunition: Option<MissileAmmunition>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u16", into = "u16")]
+struct MissileAmmunition(u16);
+
+impl TryFrom<u16> for MissileAmmunition {
+    type Error = &'static str;
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        let maximum = crate::UnitCombatProfile::v1(UnitKind::Archers)
+            .stats()
+            .missile
+            .expect("archers have missiles")
+            .ammunition;
+        if value <= maximum {
+            Ok(Self(value))
+        } else {
+            Err("ammunition exceeds the core volley budget")
+        }
+    }
+}
+
+impl From<MissileAmmunition> for u16 {
+    fn from(value: MissileAmmunition) -> Self {
+        value.0
+    }
 }
 
 impl TacticalUnit {
@@ -230,6 +258,7 @@ impl TacticalUnit {
             state: TacticalUnitState::Formed,
             pursuit_casualties: 0,
             charge: None,
+            ammunition: None,
         }
     }
 
@@ -251,12 +280,17 @@ impl TacticalUnit {
         self.unit_kind = Some(unit_kind);
         self.combat_profile = None;
         self.charge = None;
+        self.ammunition = None;
         self
     }
 
     #[must_use]
     pub const fn with_combat_stats(mut self, profile: crate::UnitCombatProfile) -> Self {
         let stats = profile.stats();
+        self.ammunition = match stats.missile {
+            Some(missile) => Some(MissileAmmunition(missile.ammunition)),
+            None => None,
+        };
         self.charge = if stats.charge_impact_milli > 0 {
             Some(crate::CavalryChargeState::Ready)
         } else {
@@ -385,7 +419,18 @@ impl TacticalUnit {
 
     #[must_use]
     pub const fn attack_range_mm(&self) -> u32 {
-        self.attack_range_mm
+        match self.ammunition {
+            Some(MissileAmmunition(0)) => COMBAT_CONTACT_DISTANCE_MM,
+            _ => self.attack_range_mm,
+        }
+    }
+
+    #[must_use]
+    pub const fn ammunition(&self) -> Option<u16> {
+        match self.ammunition {
+            Some(ammunition) => Some(ammunition.0),
+            None => None,
+        }
     }
 
     #[must_use]
@@ -1197,7 +1242,7 @@ impl TacticalBattle {
 
         let engagement_stop_distance = target
             .filter(|target| target.state == TacticalUnitState::Formed)
-            .map_or(COMBAT_CONTACT_DISTANCE_MM, |_| unit.attack_range_mm);
+            .map_or(COMBAT_CONTACT_DISTANCE_MM, |_| unit.attack_range_mm());
         if unit.engagement_target.is_some()
             && points_within_distance(unit.position, destination, engagement_stop_distance)
         {
@@ -1361,7 +1406,7 @@ impl TacticalBattle {
 
         for attacker in &snapshot {
             if attacker.state != TacticalUnitState::Formed
-                || attacker.attack_range_mm <= COMBAT_CONTACT_DISTANCE_MM
+                || attacker.attack_range_mm() <= COMBAT_CONTACT_DISTANCE_MM
                 || formed_contacts.contains_key(&attacker.id)
             {
                 continue;
@@ -1382,9 +1427,14 @@ impl TacticalBattle {
             ) || !points_within_distance(
                 attacker.position,
                 target.position,
-                attacker.attack_range_mm,
+                attacker.attack_range_mm(),
             ) {
                 continue;
+            }
+            if let Some(index) = self.unit_index(&attacker.id)
+                && let Some(ammunition) = &mut self.units[index].ammunition
+            {
+                ammunition.0 = ammunition.0.saturating_sub(1);
             }
             let losses = if attacker.stats().is_some() || target.stats().is_some() {
                 let damage = ranged_damage_milli(attacker, target, self.terrain, self.battlefield);
