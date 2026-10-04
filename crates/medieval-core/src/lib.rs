@@ -16,9 +16,17 @@ mod facing;
 pub use facing::{CombatArc, Facing};
 mod group_orders;
 pub use group_orders::{GroupMovementOrder, MAX_QUEUED_WAYPOINTS, MovementMode, MovementWaypoint};
+mod province_definitions;
+pub use province_definitions::{
+    BattlefieldDefinition, PROVINCE_DEFINITION_SCHEMA_VERSION, ProvinceDefinition,
+    ProvinceDefinitionDocument, ProvinceDefinitionError, ProvinceDefinitions,
+    ProvinceEconomyDefinition, SettlementDefinition, default_province_definitions,
+};
 mod save;
 mod tactical;
 mod tactical_opponent;
+mod tactical_work;
+pub use tactical_work::TacticalWorkCounters;
 mod tactical_result;
 mod terrain;
 mod unit_stats;
@@ -679,121 +687,64 @@ impl CampaignState {
 
 #[must_use]
 pub fn new_campaign() -> CampaignState {
-    CampaignState {
+    new_campaign_with_province_definitions(default_province_definitions())
+        .expect("packaged province definitions must match the starting campaign")
+}
+
+pub fn new_campaign_with_province_definitions(
+    definitions: &ProvinceDefinitions,
+) -> Result<CampaignState, ProvinceDefinitionError> {
+    let factions = vec![
+        Faction {
+            id: "england".into(),
+            name: "Kingdom of England".into(),
+            treasury: 1_200,
+            last_economy_turn: Some(1),
+        },
+        Faction {
+            id: "france".into(),
+            name: "Kingdom of France".into(),
+            treasury: 1_200,
+            last_economy_turn: None,
+        },
+    ];
+    let armies = vec![
+        Army {
+            id: "england-main".into(),
+            owner: "england".into(),
+            province: "normandy".into(),
+            levy: 120,
+            spearmen: 80,
+            archers: 40,
+            knights: 20,
+            moved_this_turn: false,
+        },
+        Army {
+            id: "france-main".into(),
+            owner: "france".into(),
+            province: "paris".into(),
+            levy: 120,
+            spearmen: 80,
+            archers: 40,
+            knights: 20,
+            moved_this_turn: false,
+        },
+    ];
+    let provinces = definitions.build_provinces(&factions, &armies)?;
+    Ok(CampaignState {
         year: 1087,
         turn: 1,
         active_faction: "england".into(),
-        factions: vec![
-            Faction {
-                id: "england".into(),
-                name: "Kingdom of England".into(),
-                treasury: 1_200,
-                last_economy_turn: Some(1),
-            },
-            Faction {
-                id: "france".into(),
-                name: "Kingdom of France".into(),
-                treasury: 1_200,
-                last_economy_turn: None,
-            },
-        ],
-        provinces: vec![
-            Province {
-                id: "wessex".into(),
-                name: "Wessex".into(),
-                owner: "england".into(),
-                wealth: 5,
-                neighbors: vec!["normandy".into()],
-                battlefield: ProvinceBattlefieldContext {
-                    location: BattlefieldLocation::MountainPass,
-                    fortified: false,
-                },
-            },
-            Province {
-                id: "normandy".into(),
-                name: "Normandy".into(),
-                owner: "england".into(),
-                wealth: 6,
-                neighbors: vec!["wessex".into(), "brittany".into(), "paris".into()],
-                battlefield: ProvinceBattlefieldContext {
-                    location: BattlefieldLocation::ForestClearing,
-                    fortified: false,
-                },
-            },
-            Province {
-                id: "brittany".into(),
-                name: "Brittany".into(),
-                owner: "france".into(),
-                wealth: 4,
-                neighbors: vec!["normandy".into(), "anjou".into()],
-                battlefield: ProvinceBattlefieldContext {
-                    location: BattlefieldLocation::ForestClearing,
-                    fortified: false,
-                },
-            },
-            Province {
-                id: "anjou".into(),
-                name: "Anjou".into(),
-                owner: "france".into(),
-                wealth: 4,
-                neighbors: vec!["brittany".into(), "paris".into()],
-                battlefield: ProvinceBattlefieldContext {
-                    location: BattlefieldLocation::RiverFord,
-                    fortified: false,
-                },
-            },
-            Province {
-                id: "paris".into(),
-                name: "Paris".into(),
-                owner: "france".into(),
-                wealth: 8,
-                neighbors: vec!["normandy".into(), "anjou".into(), "flanders".into()],
-                battlefield: ProvinceBattlefieldContext {
-                    location: BattlefieldLocation::MountainPass,
-                    fortified: true,
-                },
-            },
-            Province {
-                id: "flanders".into(),
-                name: "Flanders".into(),
-                owner: "france".into(),
-                wealth: 7,
-                neighbors: vec!["paris".into()],
-                battlefield: ProvinceBattlefieldContext {
-                    location: BattlefieldLocation::RiverFord,
-                    fortified: false,
-                },
-            },
-        ],
-        armies: vec![
-            Army {
-                id: "england-main".into(),
-                owner: "england".into(),
-                province: "normandy".into(),
-                levy: 120,
-                spearmen: 80,
-                archers: 40,
-                knights: 20,
-                moved_this_turn: false,
-            },
-            Army {
-                id: "france-main".into(),
-                owner: "france".into(),
-                province: "paris".into(),
-                levy: 120,
-                spearmen: 80,
-                archers: 40,
-                knights: 20,
-                moved_this_turn: false,
-            },
-        ],
+        factions,
+        provinces,
+        armies,
         pending_battle: None,
         pending_tactical_result: None,
         recruitment_queue: Vec::new(),
         battle_reports: Vec::new(),
         tactical_battle_reports: Vec::new(),
         log: vec!["The campaign begins in 1087.".into()],
-    }
+    })
 }
 
 #[cfg(test)]
