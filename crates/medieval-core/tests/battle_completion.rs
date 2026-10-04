@@ -152,3 +152,43 @@ fn legacy_sandbox_replays_remain_open_ended() {
         }
     ));
 }
+
+#[test]
+fn effective_rout_counts_only_formed_survivors() {
+    let battle = TacticalBattle::new(
+        FlatBattlefield::new(100_000, 100_000),
+        vec![
+            unit("a", BattleSide::Attacker, 40, 10_000, 10_000),
+            unit("d", BattleSide::Defender, 40, 90_000, 90_000),
+        ],
+    )
+    .unwrap();
+    let mut document = serde_json::to_value(&battle).unwrap();
+    document["units"][0]["state"] = serde_json::json!("routed");
+    let restored: TacticalBattle = serde_json::from_value(document).unwrap();
+    let started = restored.start();
+    assert_eq!(started.units()[0].soldiers(), 40);
+    assert_eq!(
+        started.state(),
+        TacticalBattleState::Finished {
+            winner: Some(BattleSide::Defender),
+            finishing_tick: 0,
+            reason: TacticalFinishReason::ForceDefeated
+        }
+    );
+}
+
+#[test]
+fn empty_started_battle_finishes_at_tick_zero() {
+    let battle = TacticalBattle::new(FlatBattlefield::new(100_000, 100_000), vec![])
+        .unwrap()
+        .start();
+    assert_eq!(
+        battle.state(),
+        TacticalBattleState::Finished {
+            winner: None,
+            finishing_tick: 0,
+            reason: TacticalFinishReason::MutualDefeat
+        }
+    );
+}
