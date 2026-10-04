@@ -270,10 +270,11 @@ impl CampaignSave {
             }
         }
 
-        if campaign
-            .pending_battle
-            .as_ref()
-            .is_some_and(|pending| !army_ids.contains(pending.attacker_army_id.as_str()))
+        if campaign.pending_tactical_result.is_none()
+            && campaign
+                .pending_battle
+                .as_ref()
+                .is_some_and(|pending| !army_ids.contains(pending.attacker_army_id.as_str()))
         {
             return invalid("pending battle attacker army does not exist");
         }
