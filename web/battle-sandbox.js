@@ -20,6 +20,7 @@ const stateText = document.querySelector("#battle-state");
 const selectionText = document.querySelector("#battle-selection");
 const unitList = document.querySelector("#unit-list");
 const errorBox = document.querySelector("#battle-error");
+const withdrawButton = document.querySelector("#withdraw-battle");
 const pauseButton = document.querySelector("#pause-battle");
 const stopButton = document.querySelector("#stop-units");
 const lineFormationButton = document.querySelector("#line-formation");
@@ -210,7 +211,11 @@ function readableRange(rangeMm) {
 
 function renderStatus(rawStatus) {
   currentStatus = typeof rawStatus === "string" ? JSON.parse(rawStatus) : rawStatus;
-  const outcomeText = {
+  const reason = currentStatus.battleState?.reason;
+  const withdrawalText = reason === "withdrawal"
+    ? { playerVictory: "Victory — the opposing force withdrew.", playerDefeat: "Your force withdrew from the battlefield." }[currentStatus.outcome]
+    : reason === "mutualWithdrawal" ? "Both forces withdrew from the battlefield." : null;
+  const outcomeText = withdrawalText ?? {
     playerVictory: "Victory — the opposing force can no longer fight.",
     playerDefeat: "Defeat — your force can no longer fight.",
     draw: "Battle ended with neither side able to continue.",
@@ -224,6 +229,7 @@ function renderStatus(rawStatus) {
   locationSelect.value = currentStatus.battlefieldLocation;
   pauseButton.textContent = currentStatus.paused && !currentStatus.outcome ? "Resume" : "Pause";
   pauseButton.disabled = Boolean(currentStatus.outcome);
+  withdrawButton.disabled = !currentStatus.canWithdraw;
   const selectionDisabled = currentStatus.selectedUnits.length === 0 || Boolean(currentStatus.outcome);
   stopButton.disabled = selectionDisabled;
   lineFormationButton.disabled = selectionDisabled;
@@ -375,6 +381,8 @@ const battleInputBindings = attachBattleInputBindings({
   togglePause,
 });
 window.addEventListener("pagehide", () => battleInputBindings.destroy(), { once: true });
+
+withdrawButton.addEventListener("click", () => runControl({ kind: "withdraw" }));
 
 pauseButton.addEventListener("click", togglePause);
 stopButton.addEventListener("click", () => runControl({ kind: "stopSelected" }));

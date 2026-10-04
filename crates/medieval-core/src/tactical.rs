@@ -648,6 +648,42 @@ impl TacticalBattle {
     /// Fortress defenders have no exit in the prototype layout. Attackers
     /// inside its wall need a traversable gate. Repeated intents are idempotent.
     pub fn withdraw(&mut self, side: BattleSide) -> Result<(), TacticalError> {
+        self.validate_withdrawal(side)?;
+        if self
+            .withdrawal
+            .is_some_and(|withdrawal| withdrawal.contains(side))
+        {
+            return Ok(());
+        }
+        let withdrawal = self.withdrawal.get_or_insert_with(WithdrawalSides::default);
+        match side {
+            BattleSide::Attacker => withdrawal.attacker = true,
+            BattleSide::Defender => withdrawal.defender = true,
+        }
+        for unit in self
+            .units
+            .iter_mut()
+            .filter(|unit| unit.side == side && !unit.is_destroyed() && !unit.is_escaped())
+        {
+            unit.state = TacticalUnitState::Withdrawing {
+                routed: unit.is_routed(),
+            };
+            unit.engagement_target = None;
+            unit.destination = None;
+        }
+        self.update_completion();
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn can_withdraw(&self, side: BattleSide) -> bool {
+        !self
+            .withdrawal
+            .is_some_and(|withdrawal| withdrawal.contains(side))
+            && self.validate_withdrawal(side).is_ok()
+    }
+
+    fn validate_withdrawal(&self, side: BattleSide) -> Result<(), TacticalError> {
         self.ensure_running()?;
         if self.completion_rules.is_none() {
             return Err(TacticalError::WithdrawalRequiresStartedBattle);
@@ -658,39 +694,21 @@ impl TacticalBattle {
         {
             return Ok(());
         }
-        let survivors: Vec<_> = self
-            .units
-            .iter()
-            .enumerate()
-            .filter(|(_, unit)| unit.side == side && !unit.is_destroyed() && !unit.is_escaped())
-            .map(|(index, _)| index)
-            .collect();
-        if survivors.is_empty() {
+        let survivors = || {
+            self.units
+                .iter()
+                .filter(|unit| unit.side == side && !unit.is_destroyed() && !unit.is_escaped())
+        };
+        if survivors().next().is_none() {
             return Err(TacticalError::WithdrawalNoSurvivors(side));
         }
         if let Some(siege) = self.siege
             && (side == BattleSide::Defender
                 || (!siege.gate_state.is_traversable()
-                    && survivors.iter().any(|&index| {
-                        self.units[index].position.x_mm >= siege.layout.gate.min_x_mm
-                    })))
+                    && survivors().any(|unit| unit.position.x_mm >= siege.layout.gate.min_x_mm)))
         {
             return Err(TacticalError::WithdrawalBlockedBySiege(side));
         }
-        let withdrawal = self.withdrawal.get_or_insert_with(WithdrawalSides::default);
-        match side {
-            BattleSide::Attacker => withdrawal.attacker = true,
-            BattleSide::Defender => withdrawal.defender = true,
-        }
-        for index in survivors {
-            let unit = &mut self.units[index];
-            unit.state = TacticalUnitState::Withdrawing {
-                routed: unit.is_routed(),
-            };
-            unit.engagement_target = None;
-            unit.destination = None;
-        }
-        self.update_completion();
         Ok(())
     }
 
