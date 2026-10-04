@@ -340,9 +340,21 @@ impl BrowserSandbox {
         shift: bool,
     ) -> Result<(), String> {
         validate_viewport(x_px, y_px, width_px, height_px)?;
-        let snapshot = self.snapshot();
-        let picked = pick_unit(&snapshot, x_px, y_px, width_px, height_px);
+        let mut snapshot = self.snapshot();
         let selected = snapshot.units.iter().any(|unit| unit.selected);
+        let pick_side = if button == 2 {
+            BattleSide::Defender
+        } else {
+            BattleSide::Attacker
+        };
+        snapshot.units.retain(|rendered| {
+            self.battle.units().iter().any(|unit| {
+                unit.id() == rendered.unit_id
+                    && unit.side() == pick_side
+                    && unit.can_receive_orders()
+            })
+        });
+        let picked = pick_unit(&snapshot, x_px, y_px, width_px, height_px);
         match button {
             0 => {
                 let selectable = picked.as_deref().and_then(|unit_id| {
@@ -372,7 +384,7 @@ impl BrowserSandbox {
                 self.apply_control(request)?;
             }
             2 if selected => {
-                let enemy = picked.as_deref().and_then(|unit_id| {
+                let enemy = picked.as_deref().filter(|_| !shift).and_then(|unit_id| {
                     self.battle.units().iter().find(|unit| {
                         unit.id() == unit_id
                             && unit.side() == BattleSide::Defender
@@ -389,7 +401,12 @@ impl BrowserSandbox {
                     battlefield_point(&snapshot, x_px, y_px, width_px, height_px)
                 {
                     TacticalControlRequest {
-                        kind: "moveSelected".to_owned(),
+                        kind: if shift {
+                            "moveAndFaceSelected"
+                        } else {
+                            "moveSelected"
+                        }
+                        .to_owned(),
                         x_mm: Some(point.x_mm),
                         y_mm: Some(point.y_mm),
                         ..TacticalControlRequest::default()

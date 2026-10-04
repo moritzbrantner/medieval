@@ -200,6 +200,8 @@ pub struct TacticalUnit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     charge: Option<crate::CavalryChargeState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    arrival_facing: Option<crate::Facing>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     ammunition: Option<MissileAmmunition>,
 }
 
@@ -258,6 +260,7 @@ impl TacticalUnit {
             state: TacticalUnitState::Formed,
             pursuit_casualties: 0,
             charge: None,
+            arrival_facing: None,
             ammunition: None,
         }
     }
@@ -855,6 +858,7 @@ impl TacticalBattle {
                 routed: unit.is_routed(),
             };
             unit.engagement_target = None;
+            unit.arrival_facing = None;
             unit.destination = None;
         }
         self.update_completion();
@@ -921,7 +925,24 @@ impl TacticalBattle {
         let unit = &mut self.units[unit_index];
         unit.interrupt_charge();
         unit.engagement_target = None;
+        unit.arrival_facing = None;
         unit.destination = (unit.position != order.destination).then_some(order.destination);
+        Ok(())
+    }
+
+    pub(crate) fn set_arrival_facing(
+        &mut self,
+        unit_id: &str,
+        facing: crate::Facing,
+    ) -> Result<(), TacticalError> {
+        let index = self
+            .unit_index(unit_id)
+            .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
+        if self.units[index].destination.is_some() {
+            self.units[index].arrival_facing = Some(facing);
+        } else {
+            self.units[index].facing = Some(facing);
+        }
         Ok(())
     }
 
@@ -974,6 +995,7 @@ impl TacticalBattle {
             unit.interrupt_charge();
         }
         unit.destination = None;
+        unit.arrival_facing = None;
         unit.engagement_target = Some(target_unit_id.to_owned());
         Ok(())
     }
@@ -1019,7 +1041,7 @@ impl TacticalBattle {
         }
     }
 
-    fn ensure_running(&self) -> Result<(), TacticalError> {
+    pub(crate) fn ensure_running(&self) -> Result<(), TacticalError> {
         match self.state {
             TacticalBattleState::Running => Ok(()),
             TacticalBattleState::Finished { .. } => Err(TacticalError::BattleFinished),
@@ -1271,6 +1293,9 @@ impl TacticalBattle {
         self.units[index].position = next;
         if self.units[index].destination == Some(destination) && next == destination {
             self.units[index].destination = None;
+            if let Some(facing) = self.units[index].arrival_facing.take() {
+                self.units[index].facing = Some(facing);
+            }
         }
         if next != unit.position {
             self.units[index].fatigue = self.units[index]
@@ -1574,6 +1599,7 @@ impl TacticalBattle {
                 self.units[index].morale = 0;
                 self.units[index].state = TacticalUnitState::Destroyed;
                 self.units[index].destination = None;
+                self.units[index].arrival_facing = None;
                 self.units[index].engagement_target = None;
                 continue;
             }
@@ -1588,6 +1614,7 @@ impl TacticalBattle {
                         TacticalUnitState::Routed
                     };
                     self.units[index].destination = None;
+                    self.units[index].arrival_facing = None;
                     self.units[index].engagement_target = None;
                 }
             }
@@ -1648,6 +1675,10 @@ pub enum TacticalError {
     DuplicateUnitId(String),
     ZeroSoldiers(String),
     InvalidFormation(String),
+    InvalidFormationPlacement {
+        unit_id: String,
+        position: BattlePoint,
+    },
     ZeroMovementSpeed(String),
     InvalidAttackRange {
         unit_id: String,
@@ -1731,6 +1762,11 @@ impl fmt::Display for TacticalError {
             Self::ZeroSoldiers(unit_id) => {
                 write!(formatter, "tactical unit {unit_id} must contain soldiers")
             }
+            Self::InvalidFormationPlacement { unit_id, position } => write!(
+                formatter,
+                "formation {unit_id} does not fit legal ground at {}, {}",
+                position.x_mm, position.y_mm
+            ),
             Self::InvalidFormation(unit_id) => {
                 write!(formatter, "tactical unit {unit_id} has an empty formation")
             }

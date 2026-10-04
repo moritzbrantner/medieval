@@ -376,6 +376,9 @@ const battleInputBindings = attachBattleInputBindings({
     runControl({ kind: "stopSelected" });
   },
   setFormation,
+  turnSelected(quarterTurns) {
+    runControl({ kind: "turnSelected", quarterTurns });
+  },
   fitCamera() {
     runControl({ kind: "fitCamera" });
   },
@@ -387,6 +390,11 @@ withdrawButton.addEventListener("click", () => runControl({ kind: "withdraw" }))
 
 pauseButton.addEventListener("click", togglePause);
 stopButton.addEventListener("click", () => runControl({ kind: "stopSelected" }));
+document.querySelector("#set-frontage").addEventListener("click", () => {
+  const input = document.querySelector("#frontage-metres");
+  if (!input.reportValidity()) return;
+  runControl({ kind: "frontageSelected", widthMm: Number(input.value) * 1000 });
+});
 lineFormationButton.addEventListener("click", () => setFormation("line"));
 columnFormationButton.addEventListener("click", () => setFormation("column"));
 fitButton.addEventListener("click", () => runControl({ kind: "fitCamera" }));
