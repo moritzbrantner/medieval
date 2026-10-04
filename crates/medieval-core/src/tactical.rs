@@ -276,6 +276,8 @@ pub struct TacticalBattle {
     #[serde(skip_serializing_if = "Option::is_none")]
     siege: Option<SiegeBattleState>,
     units: Vec<TacticalUnit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) campaign_seed: Option<crate::TacticalBattleSeed>,
 }
 
 #[derive(Deserialize)]
@@ -288,6 +290,8 @@ struct TacticalBattleWire {
     #[serde(default)]
     siege: Option<SiegeBattleState>,
     units: Vec<TacticalUnit>,
+    #[serde(default)]
+    campaign_seed: Option<crate::TacticalBattleSeed>,
 }
 
 impl From<TacticalBattleWire> for TacticalBattle {
@@ -298,6 +302,7 @@ impl From<TacticalBattleWire> for TacticalBattle {
             battlefield: wire.battlefield,
             terrain: wire.terrain,
             siege: wire.siege,
+            campaign_seed: wire.campaign_seed,
             units: wire.units,
         }
     }
@@ -373,6 +378,7 @@ impl TacticalBattle {
             battlefield,
             terrain,
             siege: None,
+            campaign_seed: None,
             units,
         })
     }
@@ -463,6 +469,11 @@ impl TacticalBattle {
     #[must_use]
     pub const fn battlefield(&self) -> FlatBattlefield {
         self.battlefield
+    }
+
+    #[must_use]
+    pub const fn campaign_seed(&self) -> Option<&crate::TacticalBattleSeed> {
+        self.campaign_seed.as_ref()
     }
 
     #[must_use]
@@ -950,6 +961,7 @@ pub enum TacticalError {
         width_mm: u32,
         depth_mm: u32,
     },
+    CampaignForceTooLarge(BattleSide),
     EmptyUnitId,
     DuplicateUnitId(String),
     ZeroSoldiers(String),
@@ -1002,6 +1014,10 @@ impl fmt::Display for TacticalError {
             Self::InvalidBattlefield { width_mm, depth_mm } => write!(
                 formatter,
                 "battlefield dimensions must be positive, got {width_mm}x{depth_mm} mm"
+            ),
+            Self::CampaignForceTooLarge(side) => write!(
+                formatter,
+                "{side:?} campaign force exceeds tactical construction capacity"
             ),
             Self::EmptyUnitId => write!(formatter, "tactical unit IDs must not be empty"),
             Self::DuplicateUnitId(unit_id) => {
