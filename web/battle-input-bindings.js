@@ -86,6 +86,15 @@ export const BATTLE_INPUT_REGISTRY = Object.freeze({
       provenance: { source: "medieval/battle-sandbox", version: "1" },
     },
     {
+      id: "battle.units.attackMove",
+      title: "Arm attack-move",
+      categoryPath: ["Battle", "Orders"],
+      repeatPolicy: "never",
+      allowedDevices: ["keyboard"],
+      defaults: [physical("battle.units.attackMove.default", "battle.units.attackMove", "KeyF")],
+      provenance: { source: "medieval/battle-sandbox", version: "1" },
+    },
+    {
       id: "battle.units.stop",
       title: "Stop selected units",
       categoryPath: ["Battle", "Orders"],
@@ -158,6 +167,7 @@ export function attachBattleInputBindings({
   pan,
   zoom,
   stopSelected,
+  armAttackMove,
   setFormation,
   turnSelected,
   fitCamera,
@@ -194,6 +204,9 @@ export function attachBattleInputBindings({
               break;
             case "battle.camera.zoomOut":
               zoom(0.87);
+              break;
+            case "battle.units.attackMove":
+              armAttackMove();
               break;
             case "battle.units.stop":
               stopSelected();

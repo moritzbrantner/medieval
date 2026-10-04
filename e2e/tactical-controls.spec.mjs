@@ -325,3 +325,66 @@ test("physical facing and frontage orders validate the complete formation", asyn
   await expect.poll(async () => (await status(page)).units.find(unit => unit.id === "attacker-spears").destination).toBeNull();
   expect((await status(page)).units.find(unit => unit.id === "attacker-spears").facing).toEqual({x:0,y:-1});
 });
+
+test("physical group movement, queued waypoints and attack-move reach the core", async ({ page }) => {
+  await page.goto("/battle.html?e2e-controls=1&location=forestClearing");
+  await page.getByRole("button", { name: "Enter battle" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  await clickUnit(page,"attacker-spears");
+  await clickUnit(page,"attacker-archers",{shift:true});
+  const initial=await status(page);
+  const a=initial.units.find(unit=>unit.id==="attacker-spears");
+  const b=initial.units.find(unit=>unit.id==="attacker-archers");
+  const firstPoint=await canvasPoint(page,"groundViewport",60_000,50_000);
+  await page.mouse.click(firstPoint.x,firstPoint.y,{button:"right"});
+  const moved=await status(page);
+  const movedA=moved.units.find(unit=>unit.id===a.id);
+  const movedB=moved.units.find(unit=>unit.id===b.id);
+  expect(movedA.destination.xMm-movedB.destination.xMm).toBe(a.xMm-b.xMm);
+  expect(movedA.destination.yMm-movedB.destination.yMm).toBe(a.yMm-b.yMm);
+  const secondPoint=await canvasPoint(page,"groundViewport",75_000,60_000);
+  await page.keyboard.down("Control");
+  await page.mouse.click(secondPoint.x,secondPoint.y,{button:"right"});
+  await page.keyboard.up("Control");
+  let current=await status(page);
+  for(const id of [a.id,b.id]) {
+    const unit=current.units.find(unit=>unit.id===id);
+    expect(unit.queuedMovements).toHaveLength(1);
+    expect(unit.destination).toEqual(moved.units.find(unit=>unit.id===id).destination);
+  }
+  await page.keyboard.press("KeyF");
+  await expect(page.locator("#attack-move")).toHaveAttribute("aria-pressed","true");
+  const attackPoint=await canvasPoint(page,"groundViewport",65_000,50_000);
+  await page.mouse.click(attackPoint.x,attackPoint.y,{button:"right"});
+  current=await status(page);
+  expect(current.attackMoveArmed).toBe(false);
+  for(const id of [a.id,b.id]) {
+    const unit=current.units.find(unit=>unit.id===id);
+    expect(unit.movementMode).toBe("attackMove");
+    expect(unit.queuedMovements).toEqual([]);
+  }
+  await page.keyboard.press("Space");
+  current=await status(page);
+  for(const id of [a.id,b.id]) {
+    const unit=current.units.find(unit=>unit.id===id);
+    expect(unit.destination).toBeNull();
+    expect(unit.movementMode).toBe("march");
+    expect(unit.queuedMovements).toEqual([]);
+  }
+  await expect(page.locator("#battle-error")).toBeHidden();
+});
+
+test("battlefield dropdown commits keyboard choices while simulation refreshes", async ({ page }) => {
+  await page.goto("/battle.html?e2e-controls=1");
+  await page.getByRole("button", { name: "Enter battle" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  const selector=page.locator("#battle-location");
+  const tick=(await status(page)).tick;
+  await selector.click();
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(async () => (await status(page)).tick).toBeGreaterThan(tick+6);
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await status(page)).battlefieldLocation).toBe("forestClearing");
+  await expect(page.locator("#battle-error")).toBeHidden();
+});

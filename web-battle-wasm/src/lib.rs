@@ -142,6 +142,7 @@ struct SandboxStatus {
     can_withdraw: bool,
     outcome: Option<&'static str>,
     selected_units: Vec<String>,
+    attack_move_armed: bool,
     deployment_zones: [DeploymentZone; 2],
     battlefield_location: BattlefieldLocation,
     terrain_profile: TacticalTerrainProfile,
@@ -193,12 +194,19 @@ struct UnitStatus {
     selected: bool,
     engagement_target: Option<String>,
     destination: Option<BattlePoint>,
+    movement_mode: medieval_core::MovementMode,
+    queued_movements: Vec<medieval_core::MovementWaypoint>,
     x_mm: u32,
     y_mm: u32,
     terrain_elevation_mm: u32,
     ground_cover: TacticalGroundCover,
     ranged_target_damage_factor_milli: u32,
     engagement_elevation_damage_factor_milli: Option<u32>,
+}
+
+struct PointerModifiers {
+    shift: bool,
+    control: bool,
 }
 
 struct BrowserSandbox {
@@ -338,8 +346,9 @@ impl BrowserSandbox {
         y_px: f64,
         width_px: f64,
         height_px: f64,
-        shift: bool,
+        modifiers: PointerModifiers,
     ) -> Result<(), String> {
+        let PointerModifiers { shift, control } = modifiers;
         validate_viewport(x_px, y_px, width_px, height_px)?;
         let mut snapshot = self.snapshot();
         let selected = snapshot.units.iter().any(|unit| unit.selected);
@@ -385,13 +394,16 @@ impl BrowserSandbox {
                 self.apply_control(request)?;
             }
             2 if selected => {
-                let enemy = picked.as_deref().filter(|_| !shift).and_then(|unit_id| {
-                    self.battle.units().iter().find(|unit| {
-                        unit.id() == unit_id
-                            && unit.side() == BattleSide::Defender
-                            && unit.can_receive_orders()
-                    })
-                });
+                let enemy = picked
+                    .as_deref()
+                    .filter(|_| !shift && !control && !self.controls.attack_move_armed())
+                    .and_then(|unit_id| {
+                        self.battle.units().iter().find(|unit| {
+                            unit.id() == unit_id
+                                && unit.side() == BattleSide::Defender
+                                && unit.can_receive_orders()
+                        })
+                    });
                 let request = if let Some(unit) = enemy {
                     TacticalControlRequest {
                         kind: "engageSelected".to_owned(),
@@ -402,12 +414,15 @@ impl BrowserSandbox {
                     battlefield_point(&snapshot, x_px, y_px, width_px, height_px)
                 {
                     TacticalControlRequest {
-                        kind: if shift {
+                        kind: if self.controls.attack_move_armed() {
+                            "attackMoveSelected"
+                        } else if shift && !control {
                             "moveAndFaceSelected"
                         } else {
                             "moveSelected"
                         }
                         .to_owned(),
+                        queued: Some(control),
                         x_mm: Some(point.x_mm),
                         y_mm: Some(point.y_mm),
                         ..TacticalControlRequest::default()
@@ -543,6 +558,8 @@ impl BrowserSandbox {
                     selected: selected.contains(unit.id()),
                     engagement_target: unit.engagement_target().map(str::to_owned),
                     destination: unit.destination(),
+                    movement_mode: unit.movement_mode(),
+                    queued_movements: unit.queued_movements().to_vec(),
                     x_mm: position.x_mm,
                     y_mm: position.y_mm,
                     terrain_elevation_mm: terrain.height_mm(battlefield, position),
@@ -565,6 +582,7 @@ impl BrowserSandbox {
             can_withdraw: self.battle.can_withdraw(BattleSide::Attacker),
             outcome: self.outcome(),
             selected_units: selected.into_iter().map(str::to_owned).collect(),
+            attack_move_armed: self.controls.attack_move_armed(),
             deployment_zones: self.battle.deployment_zones(),
             battlefield_location: terrain.location(),
             terrain_profile: terrain.profile(),
@@ -1070,9 +1088,17 @@ pub fn battle_sandbox_pointer(
     width_px: f64,
     height_px: f64,
     shift: bool,
+    control: bool,
 ) -> Result<String, JsValue> {
     with_sandbox(|sandbox| {
-        sandbox.pointer(button, x_px, y_px, width_px, height_px, shift)?;
+        sandbox.pointer(
+            button,
+            x_px,
+            y_px,
+            width_px,
+            height_px,
+            PointerModifiers { shift, control },
+        )?;
         sandbox.status_json()
     })
 }
