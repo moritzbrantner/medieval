@@ -1,5 +1,6 @@
 import init, {
   battle_sandbox_control,
+  battle_sandbox_campaign_result,
   battle_sandbox_frame,
   battle_sandbox_ground_viewport,
   battle_sandbox_pan,
@@ -10,6 +11,7 @@ import init, {
   battle_sandbox_set_location,
   battle_sandbox_set_paused,
   battle_sandbox_start_at_location,
+  battle_sandbox_start_campaign,
   battle_sandbox_status,
   battle_sandbox_unit_viewport,
 } from "./pkg/medieval_web_battle.js";
@@ -44,6 +46,10 @@ if (battleLocations.has(requestedLocation)) locationSelect.value = requestedLoca
 let currentStatus;
 const controlsE2E = new URLSearchParams(window.location.search).has("e2e-controls");
 let animationActive = false;
+const campaignMode = new URLSearchParams(window.location.search).has("campaign");
+const returnCampaignButton = document.querySelector("#return-campaign");
+let campaignStarting = false;
+let campaignResultSent = false;
 let wasmReady = false;
 let battleStarted = false;
 let lastStatusRefresh = 0;
@@ -174,6 +180,45 @@ async function beginBattle() {
   }
 }
 
+async function beginCampaignBattle(seed) {
+  if (!wasmReady || battleStarted || campaignStarting) return;
+  campaignStarting = true;
+  clearError();
+  armySetup.hidden = true;
+  battleStage.hidden = false;
+  locationSelect.disabled = true;
+  document.querySelector("#reset-battle").disabled = true;
+  document.querySelector(".back-link").hidden = true;
+  returnCampaignButton.hidden = false;
+  document.querySelector("#battle-context").textContent = "Campaign tactical battle";
+  document.querySelector("#battle-title").textContent = "Campaign Battle";
+  syncCanvasSize();
+  try {
+    const status = await battle_sandbox_start_campaign(canvas.id, JSON.stringify(seed));
+    battleStarted = true;
+    renderStatus(status);
+    canvas.focus();
+    animationActive = true;
+    await battleInputBindings.ready;
+    document.documentElement.dataset.controlsE2eReady = "true";
+    requestAnimationFrame(animate);
+  } catch (error) {
+    reportError(error);
+    stateText.textContent = "Campaign battle could not start.";
+  } finally {
+    campaignStarting = false;
+  }
+}
+
+window.addEventListener("message", (event) => {
+  if (!campaignMode || event.origin !== window.location.origin || event.source !== window.parent
+    || event.data?.kind !== "medieval-campaign-battle-start") return;
+  beginCampaignBattle(event.data.seed);
+});
+returnCampaignButton.addEventListener("click", () => {
+  window.parent.postMessage({ kind: "medieval-campaign-battle-exit" }, window.location.origin);
+});
+
 function syncCanvasSize() {
   const rect = canvas.getBoundingClientRect();
   const scale = Math.max(1, window.devicePixelRatio || 1);
@@ -211,6 +256,11 @@ function readableRange(rangeMm) {
 
 function renderStatus(rawStatus) {
   currentStatus = typeof rawStatus === "string" ? JSON.parse(rawStatus) : rawStatus;
+  if (campaignMode && currentStatus.outcome && !campaignResultSent) {
+    const document = battle_sandbox_campaign_result();
+    campaignResultSent = true;
+    window.parent.postMessage({ kind: "medieval-campaign-battle-finished", document }, window.location.origin);
+  }
   document.querySelector("#attack-move").setAttribute("aria-pressed", String(currentStatus.attackMoveArmed));
   const reason = currentStatus.battleState?.reason;
   const withdrawalText = reason === "withdrawal"
@@ -246,7 +296,7 @@ function renderStatus(rawStatus) {
     row.dataset.unitKind = unit.unitKind ?? "legacy";
 
     const name = document.createElement("strong");
-    name.textContent = readableUnitName(unit.id);
+    name.textContent = unit.sourceArmyId ?? readableUnitName(unit.id);
 
     const side = document.createElement("span");
     side.className = "unit-side";
@@ -432,7 +482,14 @@ async function start() {
   try {
     await init();
     wasmReady = true;
-    refreshArmyQuote();
+    if (campaignMode) {
+      armySetup.hidden = true;
+      returnCampaignButton.hidden = false;
+      stateText.textContent = "Preparing campaign army…";
+      window.parent.postMessage({ kind: "medieval-campaign-battle-ready" }, window.location.origin);
+    } else {
+      refreshArmyQuote();
+    }
   } catch (error) {
     animationActive = false;
     stateText.textContent = "Army muster could not load.";

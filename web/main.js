@@ -1,3 +1,5 @@
+import { openCampaignBattle } from "./native-battle.js";
+
 const invoke = window.__TAURI__?.core?.invoke;
 const views = {
   menu: document.querySelector("#menu-view"),
@@ -15,6 +17,10 @@ const battleReport = document.querySelector("#battle-report");
 const battleReportDetail = document.querySelector("#battle-report-detail");
 const battleSeedInput = document.querySelector("#battle-seed");
 const resolveBattleButton = document.querySelector("#resolve-battle");
+const fightBattleButton = document.querySelector("#fight-battle");
+const campaignBattleDialog = document.querySelector("#campaign-battle-dialog");
+const campaignBattleFrame = document.querySelector("#campaign-battle-frame");
+const exitCampaignBattleButton = document.querySelector("#exit-campaign-battle");
 const campaignOutcome = document.querySelector("#campaign-outcome");
 const campaignOutcomeDetail = document.querySelector("#campaign-outcome-detail");
 const playerFactionSelect = document.querySelector("#player-faction");
@@ -274,12 +280,60 @@ function renderPendingBattle() {
 
   const note = document.createElement("p");
   note.className = "battle-note";
-  note.textContent = "Choose an explicit seed. Rust will resolve casualties, retreat, and province control deterministically.";
+  note.textContent = campaign.pendingTacticalResult
+    ? "Your battle is complete. Apply its outcome to continue the campaign."
+    : "Lead your army into battle, or choose a seed for Auto-resolve. Unfinished battles return to this choice.";
+  fightBattleButton.textContent = campaign.pendingTacticalResult ? "Apply battle outcome" : "Fight";
 
   pendingBattleDetail.append(text, note);
+  const target = campaign.provinces.find((province) => province.id === battle.targetProvince);
+  if (!campaign.pendingTacticalResult && target?.battlefield?.fortified) {
+    const siege = document.createElement("p");
+    siege.className = "battle-note";
+    siege.dataset.siegeLimitation = "closed-gate";
+    siege.textContent = `${provinceName(battle.targetProvince)} is fortified and its gate stays closed: assaults cannot breach it yet, so a played siege can only be withdrawn. Auto-resolve decides the siege.`;
+    pendingBattleDetail.append(siege);
+  }
 }
 
 function renderBattleReport() {
+  const tactical = campaign.tacticalBattleReports?.at(-1);
+  if (tactical) {
+    battleReport.hidden = false;
+    battleReportDetail.replaceChildren();
+    const winner = tactical.result.winner;
+    const seed = tactical.result.seed;
+    const headline = document.createElement("strong");
+    headline.textContent = winner
+      ? `${factionName(seed[winner].factionId)} won at ${provinceName(seed.targetProvince)}.`
+      : `The battle at ${provinceName(seed.targetProvince)} ended in a draw.`;
+    battleReportDetail.append(headline);
+    const mode = document.createElement("p");
+    mode.textContent = tactical.result.autoResolveSeed == null
+      ? "Fought on the battlefield." : `Auto-resolve · seed ${tactical.result.autoResolveSeed}`;
+    battleReportDetail.append(mode);
+    const kinds = { levy: "Levy", spearmen: "Spearmen", archers: "Archers", knights: "Knights" };
+    for (const army of tactical.result.armies) {
+      const row = document.createElement("p");
+      row.textContent = `${army.sourceArmyId}: ${army.units.map((unit) => `${kinds[unit.kind]} ${unit.survivingSoldiers} remain, ${unit.casualties} lost`).join(" · ")}`;
+      battleReportDetail.append(row);
+    }
+    const consequence = document.createElement("p");
+    consequence.textContent = tactical.capturedProvince
+      ? `${provinceName(tactical.capturedProvince)} captured.` : "Province ownership unchanged.";
+    battleReportDetail.append(consequence);
+    for (const retreat of tactical.retreats) {
+      const row = document.createElement("p");
+      row.textContent = `${retreat.sourceArmyId} retreated to ${provinceName(retreat.toProvince)}.`;
+      battleReportDetail.append(row);
+    }
+    for (const surrender of tactical.surrenders) {
+      const row = document.createElement("p");
+      row.textContent = `${surrender.sourceArmyId} surrendered; no friendly retreat was available.`;
+      battleReportDetail.append(row);
+    }
+    return;
+  }
   const report = campaign.battleReports?.at(-1);
   battleReport.hidden = !report;
   battleReportDetail.replaceChildren();
@@ -322,8 +376,9 @@ function syncCampaignActions() {
     || Boolean(campaign?.pendingBattle)
     || Boolean(campaignWinner)
     || campaign?.activeFaction !== playerFaction;
-  resolveBattleButton.disabled = campaignBusy || !campaign?.pendingBattle || Boolean(campaignWinner);
-  battleSeedInput.disabled = campaignBusy || !campaign?.pendingBattle || Boolean(campaignWinner);
+  fightBattleButton.disabled = campaignBusy || !campaign?.pendingBattle || Boolean(campaignWinner);
+  resolveBattleButton.disabled = campaignBusy || !campaign?.pendingBattle || Boolean(campaignWinner) || Boolean(campaign?.pendingTacticalResult);
+  battleSeedInput.disabled = campaignBusy || !campaign?.pendingBattle || Boolean(campaignWinner) || Boolean(campaign?.pendingTacticalResult);
   newCampaignButton.disabled = campaignBusy;
   playerFactionSelect.disabled = campaignBusy;
   saveCampaignButton.disabled = campaignBusy || !campaign || !invoke;
@@ -463,6 +518,71 @@ async function queueRecruitment(provinceId, unit) {
   }
 }
 
+function openBrowserCampaignBattle(seed) {
+  return new Promise((resolve) => {
+    let finished = false;
+    function finish(document) {
+      if (finished) return;
+      finished = true;
+      window.removeEventListener("message", receive);
+      exitCampaignBattleButton.removeEventListener("click", exit);
+      campaignBattleDialog.removeEventListener("cancel", exit);
+      campaignBattleDialog.close();
+      campaignBattleFrame.removeAttribute("src");
+      resolve(document);
+    }
+    function exit(event) {
+      event?.preventDefault();
+      finish(null);
+    }
+    function receive(event) {
+      if (event.origin !== window.location.origin || event.source !== campaignBattleFrame.contentWindow) return;
+      if (event.data?.kind === "medieval-campaign-battle-ready") {
+        campaignBattleFrame.contentWindow.postMessage({ kind: "medieval-campaign-battle-start", seed }, window.location.origin);
+      } else if (event.data?.kind === "medieval-campaign-battle-finished" && typeof event.data.document === "string") {
+        finish(event.data.document);
+      } else if (event.data?.kind === "medieval-campaign-battle-exit") {
+        finish(null);
+      }
+    }
+    window.addEventListener("message", receive);
+    exitCampaignBattleButton.addEventListener("click", exit);
+    campaignBattleDialog.addEventListener("cancel", exit);
+    const url = new URL("battle.html", window.location.href);
+    url.searchParams.set("campaign", "1");
+    campaignBattleFrame.src = url.href;
+    campaignBattleDialog.showModal();
+  });
+}
+
+async function fightPendingBattle() {
+  if (!invoke || !campaign?.pendingBattle || campaignWinner || campaignBusy) return;
+  setCampaignBusy(true);
+  errorBox.hidden = true;
+  try {
+    if (campaign.pendingTacticalResult) {
+      campaign = await invoke("finish_reconciled_tactical_battle");
+    } else {
+      const seed = await invoke("pending_tactical_battle_seed");
+      const document = window.__MEDIEVAL_RUNTIME__ === "wasm"
+        ? await openBrowserCampaignBattle(seed)
+        : await openCampaignBattle(seed);
+      if (document === null) return;
+      campaign = await invoke("apply_tactical_battle_result", { document });
+    }
+    await refreshCampaignWinner();
+    const report = campaign.tacticalBattleReports?.at(-1);
+    if (report) selectedProvinceId = report.result.seed.targetProvince;
+    clearMovementSelection();
+    await refreshRecruitmentOptions();
+    renderCampaign();
+  } catch (error) {
+    reportError(error);
+  } finally {
+    setCampaignBusy(false);
+  }
+}
+
 async function resolvePendingBattle() {
   if (!invoke || !campaign?.pendingBattle || campaignWinner || campaignBusy) return;
 
@@ -593,6 +713,7 @@ for (const button of document.querySelectorAll("[data-back-to-menu]")) {
   button.addEventListener("click", () => showView("menu"));
 }
 
+fightBattleButton.addEventListener("click", fightPendingBattle);
 resolveBattleButton.addEventListener("click", resolvePendingBattle);
 saveCampaignButton.addEventListener("click", saveCampaign);
 loadCampaignButton.addEventListener("click", loadCampaign);

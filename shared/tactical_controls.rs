@@ -437,7 +437,7 @@ impl TacticalControls {
         Ok(())
     }
 
-    fn sync_with_battle(&mut self, battle: &TacticalBattle) {
+    pub fn sync_with_battle(&mut self, battle: &TacticalBattle) {
         let player_side = self.player_side;
         self.selected_units
             .retain(|unit_id| Self::is_controllable(battle, player_side, unit_id));

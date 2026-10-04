@@ -33,6 +33,16 @@ pub struct TacticalCampaignSurrender {
 }
 
 impl CampaignState {
+    pub fn finish_reconciled_tactical_battle(
+        &mut self,
+    ) -> Result<TacticalCampaignReport, CampaignError> {
+        let result = self
+            .pending_tactical_result
+            .clone()
+            .ok_or(CampaignError::NoPendingBattle)?;
+        self.apply_tactical_battle_result(&result)
+    }
+
     /// Atomically applies casualties and the strategic outcome. Replaying an
     /// already recorded result returns its report without changing the campaign.
     pub fn apply_tactical_battle_result(

@@ -116,6 +116,12 @@ export async function createWasmInvoke() {
         return callWithString("medieval_recruitment_options", args.provinceId);
       case "queue_recruitment":
         return callWithTwoStrings("medieval_queue_recruitment", args.provinceId, args.unit);
+      case "finish_reconciled_tactical_battle":
+        return call("medieval_finish_reconciled_tactical_battle");
+      case "pending_tactical_battle_seed":
+        return call("medieval_pending_tactical_battle_seed");
+      case "apply_tactical_battle_result":
+        return callWithString("medieval_apply_tactical_battle_result", args.document);
       case "resolve_pending_battle":
         return callWithSeed("medieval_resolve_pending_battle", args.seed);
       case "save_campaign": {

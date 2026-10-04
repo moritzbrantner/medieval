@@ -84,7 +84,8 @@
                   Deterministic seed
                   <input id="battle-seed" type="number" min="0" step="1" value="42" />
                 </label>
-                <button id="resolve-battle" type="button">Auto-resolve in Rust</button>
+                <button id="fight-battle" type="button">Fight</button>
+                <button id="resolve-battle" type="button">Auto-resolve</button>
               </div>
             </section>
 
@@ -225,9 +226,16 @@
     </div>
 
     <div id="error" class="error" hidden></div>
+    <dialog id="campaign-battle-dialog" class="campaign-battle-dialog" aria-label="Campaign tactical battle">
+      <div class="campaign-battle-toolbar">
+        <strong>Campaign Battle</strong>
+        <button id="exit-campaign-battle" type="button" class="secondary">Return to campaign</button>
+      </div>
+      <iframe id="campaign-battle-frame" title="Campaign tactical battlefield"></iframe>
+    </dialog>
     <script src="wasm-bootstrap.js"></script>
-    <script src="main.js"></script>
-    <script src="native-battle.js"></script>
+    <script type="module" src="main.js"></script>
+    <script type="module" src="native-battle.js"></script>
     <script type="module" src="online-battle.js"></script>
   </body>
 </html>

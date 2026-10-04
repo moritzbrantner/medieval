@@ -37,7 +37,7 @@ test("online battle exposes real lobby controls and a separate module", () => {
 
 test("native renderer preview remains available beside multiplayer setup", () => {
   assert.match(index, /id="open-native-battle"/);
-  assert.match(index, /<script src="native-battle\.js"><\/script>/);
+  assert.match(index, /<script type="module" src="native-battle\.js"><\/script>/);
   assert.match(nativeBattleScript, /invoke\("open_native_battle_renderer", \{ location \}\)/);
   assert.match(nativeBattleScript, /medieval:tactical-input/);
   assert.match(nativeBattleScript, /"keydown"/);

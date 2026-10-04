@@ -257,6 +257,10 @@ impl DesktopInputState {
                 kind: "fitCamera".to_owned(),
                 ..TacticalControlRequest::default()
             }),
+            "KeyR" => Some(TacticalControlRequest {
+                kind: "withdraw".to_owned(),
+                ..TacticalControlRequest::default()
+            }),
             "KeyF" => Some(TacticalControlRequest {
                 kind: "armAttackMove".to_owned(),
                 ..TacticalControlRequest::default()
@@ -645,6 +649,7 @@ pub fn install_browser_input_listener(
                 controls,
                 player_side,
                 input,
+                ..
             } = &mut *session;
             input.apply_browser(battle, controls, *player_side, envelope)
         })();
@@ -703,6 +708,8 @@ pub fn install_linux_input(
             Some("ArrowDown")
         } else if key == constants::space {
             Some("Space")
+        } else if key == constants::r || key == constants::R {
+            Some("KeyR")
         } else if key == constants::Escape {
             Some("Escape")
         } else if key == constants::f || key == constants::F {
@@ -856,6 +863,7 @@ fn apply_shared_input(
         controls,
         player_side,
         input: state,
+        ..
     } = &mut *session;
     state.apply(battle, controls, *player_side, input)
 }
@@ -917,6 +925,8 @@ mod tests {
             battle,
             player_side: BattleSide::Attacker,
             input: DesktopInputState::default(),
+            last_tick_at: None,
+            tick_remainder: std::time::Duration::ZERO,
         }
     }
 
@@ -1418,6 +1428,7 @@ mod tests {
             controls,
             player_side,
             input,
+            ..
         } = &mut session;
         input
             .apply_browser(battle, controls, *player_side, first)

@@ -36,7 +36,7 @@ thread_local! {
     static SANDBOX: RefCell<Option<BrowserSandbox>> = const { RefCell::new(None) };
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SandboxArmySelection {
     levy: u16,
@@ -176,6 +176,7 @@ struct UnitStatus {
     side: &'static str,
     soldiers: u16,
     unit_kind: Option<UnitKind>,
+    source_army_id: Option<String>,
     combat_stats: Option<medieval_core::UnitStats>,
     ammunition: Option<u16>,
     facing: Option<medieval_core::Facing>,
@@ -223,6 +224,7 @@ struct BrowserSandbox {
     last_opponent_plan_tick: u64,
     paused: bool,
     initial_army: SandboxArmySelection,
+    initial_campaign_seed: Option<medieval_core::TacticalBattleSeed>,
 }
 
 impl BrowserSandbox {
@@ -230,6 +232,7 @@ impl BrowserSandbox {
         canvas: HtmlCanvasElement,
         initial_army: SandboxArmySelection,
         location: BattlefieldLocation,
+        campaign_seed: Option<medieval_core::TacticalBattleSeed>,
     ) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let surface: wgpu::Surface<'static> = instance
@@ -259,7 +262,14 @@ impl BrowserSandbox {
             })?;
         surface.configure(&device, &config);
 
-        let mut battle = sample_battle(initial_army, location)?;
+        let mut battle = match &campaign_seed {
+            Some(seed) => TacticalBattle::from_campaign_seed(
+                FlatBattlefield::new(120_000, 80_000),
+                seed.clone(),
+            )
+            .map_err(|error| error.to_string())?,
+            None => sample_battle(initial_army, location)?,
+        };
         drive_opponent(&mut battle)?;
         let controls = TacticalControls::new(&battle, BattleSide::Attacker);
         let snapshot = BattleRenderSnapshot::capture(&battle, &controls.render_view(&battle));
@@ -279,6 +289,7 @@ impl BrowserSandbox {
             last_opponent_plan_tick: 0,
             paused: false,
             initial_army,
+            initial_campaign_seed: campaign_seed,
         };
         sandbox.render()?;
         Ok(sandbox)
@@ -289,6 +300,9 @@ impl BrowserSandbox {
     }
 
     fn reset_at_location(&mut self, location: BattlefieldLocation) -> Result<(), String> {
+        if self.initial_campaign_seed.is_some() {
+            return Err("campaign battles cannot reset or change their battlefield".to_owned());
+        }
         let mut battle = sample_battle(self.initial_army, location)?;
         drive_opponent(&mut battle)?;
         self.controls = TacticalControls::new(&battle, BattleSide::Attacker);
@@ -537,6 +551,9 @@ impl BrowserSandbox {
                     side: side_name(unit.side()),
                     soldiers: unit.soldiers(),
                     unit_kind: unit.unit_kind(),
+                    source_army_id: unit
+                        .campaign_provenance()
+                        .map(|provenance| provenance.source_army_id.clone()),
                     combat_stats: unit.stats(),
                     ammunition: unit.ammunition(),
                     facing: unit.facing(),
@@ -824,60 +841,9 @@ fn unit(
 }
 
 fn drive_opponent(battle: &mut TacticalBattle) -> Result<(), String> {
-    if !matches!(battle.state(), TacticalBattleState::Running) {
-        return Ok(());
-    }
-    let attackers = battle
-        .units()
-        .iter()
-        .filter(|unit| {
-            unit.side() == BattleSide::Attacker
-                && (unit.can_receive_orders() || unit.is_withdrawing())
-        })
-        .map(|unit| (unit.id().to_owned(), unit.position()))
-        .collect::<Vec<_>>();
-    if attackers.is_empty() {
-        return Ok(());
-    }
-    let defenders = battle
-        .units()
-        .iter()
-        .filter(|unit| unit.side() == BattleSide::Defender && unit.can_receive_orders())
-        .map(|unit| {
-            (
-                unit.id().to_owned(),
-                unit.position(),
-                unit.engagement_target().map(str::to_owned),
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut assignments = Vec::with_capacity(defenders.len());
-    for (defender_id, defender_position, current_target) in defenders {
-        let target = attackers
-            .iter()
-            .min_by(|left, right| {
-                distance_squared(defender_position, left.1)
-                    .cmp(&distance_squared(defender_position, right.1))
-                    .then_with(|| left.0.cmp(&right.0))
-            })
-            .map(|candidate| candidate.0.clone())
-            .expect("non-empty attacker set has a nearest unit");
-        if current_target.as_deref() != Some(target.as_str()) {
-            assignments.push((defender_id, target));
-        }
-    }
-    for (defender_id, target_id) in assignments {
-        battle
-            .issue_engagement_order(&defender_id, &target_id)
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-fn distance_squared(left: BattlePoint, right: BattlePoint) -> u64 {
-    let dx = i64::from(left.x_mm) - i64::from(right.x_mm);
-    let dy = i64::from(left.y_mm) - i64::from(right.y_mm);
-    u64::try_from(dx * dx + dy * dy).expect("battlefield distance is non-negative")
+    battle
+        .plan_opponent_orders(BattleSide::Defender)
+        .map_err(|error| error.to_string())
 }
 
 fn validate_viewport(x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
@@ -1039,6 +1005,7 @@ async fn start_sandbox(
     canvas_id: String,
     selection_json: String,
     location: BattlefieldLocation,
+    campaign_seed: Option<medieval_core::TacticalBattleSeed>,
 ) -> Result<String, JsValue> {
     let window = web_sys::window().ok_or_else(|| js_error("browser window is unavailable"))?;
     let document = window
@@ -1050,7 +1017,7 @@ async fn start_sandbox(
         .dyn_into::<HtmlCanvasElement>()
         .map_err(|_| js_error(format!("element #{canvas_id} is not a canvas")))?;
     let selection = parse_army_selection(&selection_json)?;
-    let sandbox = BrowserSandbox::new(canvas, selection, location)
+    let sandbox = BrowserSandbox::new(canvas, selection, location, campaign_seed)
         .await
         .map_err(js_error)?;
     let status = sandbox.status_json().map_err(js_error)?;
@@ -1063,7 +1030,13 @@ pub async fn battle_sandbox_start(
     canvas_id: String,
     selection_json: String,
 ) -> Result<String, JsValue> {
-    start_sandbox(canvas_id, selection_json, BattlefieldLocation::MountainPass).await
+    start_sandbox(
+        canvas_id,
+        selection_json,
+        BattlefieldLocation::MountainPass,
+        None,
+    )
+    .await
 }
 
 #[wasm_bindgen]
@@ -1072,7 +1045,43 @@ pub async fn battle_sandbox_start_at_location(
     selection_json: String,
     location: String,
 ) -> Result<String, JsValue> {
-    start_sandbox(canvas_id, selection_json, parse_location(&location)?).await
+    start_sandbox(canvas_id, selection_json, parse_location(&location)?, None).await
+}
+
+#[wasm_bindgen]
+pub async fn battle_sandbox_start_campaign(
+    canvas_id: String,
+    seed_json: String,
+) -> Result<String, JsValue> {
+    let seed: medieval_core::TacticalBattleSeed =
+        serde_json::from_str(&seed_json).map_err(js_error)?;
+    // The sandbox muster is bypassed: campaign composition and profile come
+    // exclusively from the retained seed and the core deployment constructor.
+    start_sandbox(
+        canvas_id,
+        serde_json::to_string(&SandboxArmySelection {
+            levy: 0,
+            spearmen: 0,
+            archers: 0,
+            knights: 0,
+        })
+        .map_err(js_error)?,
+        BattlefieldLocation::MountainPass,
+        Some(seed),
+    )
+    .await
+}
+
+#[wasm_bindgen]
+pub fn battle_sandbox_campaign_result() -> Result<String, JsValue> {
+    with_sandbox(|sandbox| {
+        sandbox
+            .battle
+            .campaign_result()
+            .map_err(|error| error.to_string())?
+            .to_json()
+            .map_err(|error| error.to_string())
+    })
 }
 
 #[wasm_bindgen]

@@ -59,3 +59,17 @@
 .battle-report p:last-child {
   margin-bottom: 0;
 }
+
+.campaign-battle-dialog {
+  width: min(1400px, 96vw);
+  height: 92vh;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 1px solid var(--border, #66583a);
+  background: #15130f;
+  color: #f1e6cb;
+}
+.campaign-battle-dialog::backdrop { background: rgb(0 0 0 / 75%); }
+.campaign-battle-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; }
+.campaign-battle-dialog iframe { width: 100%; height: calc(100% - 74px); border: 0; }

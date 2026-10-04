@@ -24,6 +24,7 @@ pub use province_definitions::{
 };
 mod save;
 mod tactical;
+mod tactical_opponent;
 mod tactical_work;
 pub use tactical_work::TacticalWorkCounters;
 mod tactical_result;

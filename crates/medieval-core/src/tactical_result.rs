@@ -16,6 +16,8 @@ pub const TACTICAL_BATTLE_RESULT_SCHEMA_VERSION: u32 = 1;
 pub struct TacticalBattleResult {
     pub schema_version: u32,
     pub seed: TacticalBattleSeed,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_resolve_seed: Option<u64>,
     pub winner: Option<BattleSide>,
     pub reason: TacticalFinishReason,
     pub finishing_tick: u64,
@@ -212,6 +214,7 @@ impl TacticalBattle {
         let result = TacticalBattleResult {
             schema_version: TACTICAL_BATTLE_RESULT_SCHEMA_VERSION,
             seed,
+            auto_resolve_seed: None,
             winner,
             reason,
             finishing_tick,

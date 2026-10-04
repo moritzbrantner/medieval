@@ -4,7 +4,8 @@ use std::{
 };
 
 use medieval_core::{
-    CampaignSave, CampaignState, RecruitmentOption, UnitKind, new_campaign as fresh_campaign,
+    CampaignSave, CampaignState, RecruitmentOption, TacticalBattleResult, TacticalBattleSeed,
+    UnitKind, new_campaign as fresh_campaign,
 };
 use serde::Serialize;
 
@@ -162,6 +163,39 @@ fn resolve_pending_battle(seed: u64) -> Result<CampaignState, String> {
     })
 }
 
+fn pending_tactical_battle_seed() -> Result<TacticalBattleSeed, String> {
+    SESSION.with(|session| {
+        session
+            .borrow()
+            .campaign
+            .pending_tactical_battle_seed()
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn finish_reconciled_tactical_battle() -> Result<CampaignState, String> {
+    SESSION.with(|session| {
+        let mut session = session.borrow_mut();
+        session
+            .campaign
+            .finish_reconciled_tactical_battle()
+            .map_err(|error| error.to_string())?;
+        Ok(session.campaign.clone())
+    })
+}
+
+fn apply_tactical_battle_result(document: &str) -> Result<CampaignState, String> {
+    let result = TacticalBattleResult::from_json(document).map_err(|error| error.to_string())?;
+    SESSION.with(|session| {
+        let mut session = session.borrow_mut();
+        session
+            .campaign
+            .apply_tactical_battle_result(&result)
+            .map_err(|error| error.to_string())?;
+        Ok(session.campaign.clone())
+    })
+}
+
 fn end_player_turn(seed: u64) -> Result<CampaignState, String> {
     SESSION.with(|session| {
         let mut session = session.borrow_mut();
@@ -309,6 +343,22 @@ pub unsafe extern "C" fn medieval_queue_recruitment(
 #[unsafe(no_mangle)]
 pub extern "C" fn medieval_resolve_pending_battle(seed: f64) {
     respond(decode_seed(seed).and_then(resolve_pending_battle));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn medieval_finish_reconciled_tactical_battle() {
+    respond(finish_reconciled_tactical_battle());
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn medieval_pending_tactical_battle_seed() {
+    respond(pending_tactical_battle_seed());
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medieval_apply_tactical_battle_result(pointer: *const u8, length: usize) {
+    let document = unsafe { read_input(pointer, length) };
+    respond(document.and_then(|document| apply_tactical_battle_result(&document)));
 }
 
 #[unsafe(no_mangle)]
