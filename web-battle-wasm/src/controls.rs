@@ -33,6 +33,10 @@ impl TacticalControls {
         self.0.get_mut().apply_request(battle, request)
     }
 
+    pub fn attack_move_armed(&self) -> bool {
+        self.0.borrow().attack_move_armed()
+    }
+
     pub fn render_view(&self, battle: &TacticalBattle) -> RenderViewState {
         let mut controls = self.0.borrow_mut();
         controls.reconcile_with_battle(battle);
