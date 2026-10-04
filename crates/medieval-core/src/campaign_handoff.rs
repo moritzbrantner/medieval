@@ -23,6 +23,15 @@ pub struct TacticalBattleSeed {
 pub struct TacticalForceSeed {
     pub faction_id: String,
     pub source_army_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_armies: Option<Vec<TacticalArmySeed>>,
+    pub units: Vec<TacticalUnitSeed>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TacticalArmySeed {
+    pub army_id: String,
     pub units: Vec<TacticalUnitSeed>,
 }
 
@@ -62,47 +71,22 @@ impl TacticalBattle {
             (BattleSide::Defender, &mut seed.defender),
         ] {
             canonicalize_force(force, side)?;
-            let count: u64 = force
-                .units
-                .iter()
-                .map(|unit| unit.soldiers.div_ceil(u64::from(u16::MAX)))
-                .sum();
-            let capacity =
-                usize::try_from(count).map_err(|_| TacticalError::CampaignForceTooLarge(side))?;
-            units
-                .try_reserve(capacity)
-                .map_err(|_| TacticalError::CampaignForceTooLarge(side))?;
-            for entry in &force.units {
-                let kind_id = match entry.kind {
-                    UnitKind::Levy => "levy",
-                    UnitKind::Spearmen => "spearmen",
-                    UnitKind::Archers => "archers",
-                    UnitKind::Knights => "knights",
-                };
-                let side_id = match side {
-                    BattleSide::Attacker => "attacker",
-                    BattleSide::Defender => "defender",
-                };
-                let mut remaining = entry.soldiers;
-                let mut chunk = 0_u64;
-                while remaining > 0 {
-                    let soldiers = remaining.min(u64::from(u16::MAX)) as u16;
-                    units.push(
-                        TacticalUnit::new(
-                            format!("campaign-{side_id}-{kind_id}-{chunk:020}"),
-                            side,
-                            soldiers,
-                            BattlePoint::new(0, 0),
-                            Formation::Line {
-                                files: soldiers.min(10),
-                            },
-                            100,
-                        )
-                        .with_unit_kind(entry.kind),
-                    );
-                    remaining -= u64::from(soldiers);
-                    chunk += 1;
+            if let Some(armies) = &force.source_armies {
+                for (army_index, army) in armies.iter().enumerate() {
+                    append_units(
+                        &mut units,
+                        side,
+                        &army.units,
+                        Some(&army.army_id),
+                        Some(army_index),
+                    )?;
                 }
+            } else {
+                // Old seeds remain playable. A single source can still be attributed
+                // exactly; aggregated legacy sources cannot yield an army result.
+                let source =
+                    (force.source_army_ids.len() == 1).then(|| force.source_army_ids[0].as_str());
+                append_units(&mut units, side, &force.units, source, None)?;
             }
         }
         crate::campaign_deployment::place_campaign_units(battlefield, profile, &mut units)?;
@@ -119,14 +103,70 @@ impl TacticalBattle {
     }
 }
 
-fn canonicalize_force(
-    force: &mut TacticalForceSeed,
+fn append_units(
+    units: &mut Vec<TacticalUnit>,
     side: BattleSide,
+    roster: &[TacticalUnitSeed],
+    source_army_id: Option<&str>,
+    army_index: Option<usize>,
 ) -> Result<(), TacticalError> {
+    let count: u64 = roster
+        .iter()
+        .map(|unit| unit.soldiers.div_ceil(u64::from(u16::MAX)))
+        .sum();
+    let capacity =
+        usize::try_from(count).map_err(|_| TacticalError::CampaignForceTooLarge(side))?;
+    units
+        .try_reserve(capacity)
+        .map_err(|_| TacticalError::CampaignForceTooLarge(side))?;
+    let side_id = match side {
+        BattleSide::Attacker => "attacker",
+        BattleSide::Defender => "defender",
+    };
+    for entry in roster {
+        let kind_id = match entry.kind {
+            UnitKind::Levy => "levy",
+            UnitKind::Spearmen => "spearmen",
+            UnitKind::Archers => "archers",
+            UnitKind::Knights => "knights",
+        };
+        let mut remaining = entry.soldiers;
+        let mut chunk = 0_u64;
+        while remaining > 0 {
+            let soldiers = remaining.min(u64::from(u16::MAX)) as u16;
+            let id = match army_index {
+                Some(index) => format!("campaign-{side_id}-{kind_id}-{index:020}-{chunk:020}"),
+                None => format!("campaign-{side_id}-{kind_id}-{chunk:020}"),
+            };
+            let mut unit = TacticalUnit::new(
+                id,
+                side,
+                soldiers,
+                BattlePoint::new(0, 0),
+                Formation::Line {
+                    files: soldiers.min(10),
+                },
+                100,
+            )
+            .with_unit_kind(entry.kind);
+            if let Some(army_id) = source_army_id {
+                unit = unit.with_campaign_provenance(army_id, soldiers);
+            }
+            units.push(unit);
+            remaining -= u64::from(soldiers);
+            chunk += 1;
+        }
+    }
+    Ok(())
+}
+
+fn canonical_units(
+    input: &[TacticalUnitSeed],
+    side: BattleSide,
+) -> Result<Vec<TacticalUnitSeed>, TacticalError> {
     let mut units = Vec::new();
     for kind in UNIT_KINDS {
-        let soldiers = force
-            .units
+        let soldiers = input
             .iter()
             .filter(|unit| unit.kind == kind)
             .try_fold(0_u64, |count, unit| count.checked_add(unit.soldiers))
@@ -135,8 +175,38 @@ fn canonicalize_force(
             units.push(TacticalUnitSeed { kind, soldiers });
         }
     }
-    force.units = units;
+    Ok(units)
+}
+
+pub(crate) fn canonicalize_force(
+    force: &mut TacticalForceSeed,
+    side: BattleSide,
+) -> Result<(), TacticalError> {
+    force.units = canonical_units(&force.units, side)?;
     force.source_army_ids.sort();
+    if force.source_army_ids.iter().any(String::is_empty)
+        || force.source_army_ids.windows(2).any(|ids| ids[0] == ids[1])
+    {
+        return Err(TacticalError::InvalidCampaignProvenance(side));
+    }
+    if let Some(armies) = &mut force.source_armies {
+        armies.sort_by(|left, right| left.army_id.cmp(&right.army_id));
+        if armies
+            .iter()
+            .map(|army| &army.army_id)
+            .ne(force.source_army_ids.iter())
+        {
+            return Err(TacticalError::InvalidCampaignProvenance(side));
+        }
+        let mut aggregate = Vec::new();
+        for army in armies {
+            army.units = canonical_units(&army.units, side)?;
+            aggregate.extend_from_slice(&army.units);
+        }
+        if canonical_units(&aggregate, side)? != force.units {
+            return Err(TacticalError::InvalidCampaignProvenance(side));
+        }
+    }
     Ok(())
 }
 
@@ -186,10 +256,28 @@ impl CampaignState {
 
 fn force_seed<'a>(faction_id: &str, armies: impl Iterator<Item = &'a Army>) -> TacticalForceSeed {
     let mut source_army_ids = Vec::new();
+    let mut source_armies = Vec::new();
     let mut counts = [0_u64; 4];
 
     for army in armies {
         source_army_ids.push(army.id.clone());
+        source_armies.push(TacticalArmySeed {
+            army_id: army.id.clone(),
+            units: [
+                (UnitKind::Levy, army.levy),
+                (UnitKind::Spearmen, army.spearmen),
+                (UnitKind::Archers, army.archers),
+                (UnitKind::Knights, army.knights),
+            ]
+            .into_iter()
+            .filter_map(|(kind, soldiers)| {
+                (soldiers > 0).then_some(TacticalUnitSeed {
+                    kind,
+                    soldiers: u64::from(soldiers),
+                })
+            })
+            .collect(),
+        });
         counts[0] = counts[0].saturating_add(u64::from(army.levy));
         counts[1] = counts[1].saturating_add(u64::from(army.spearmen));
         counts[2] = counts[2].saturating_add(u64::from(army.archers));
@@ -197,6 +285,7 @@ fn force_seed<'a>(faction_id: &str, armies: impl Iterator<Item = &'a Army>) -> T
     }
 
     source_army_ids.sort();
+    source_armies.sort_by(|left, right| left.army_id.cmp(&right.army_id));
     let units = [
         (UnitKind::Levy, counts[0]),
         (UnitKind::Spearmen, counts[1]),
@@ -210,6 +299,7 @@ fn force_seed<'a>(faction_id: &str, armies: impl Iterator<Item = &'a Army>) -> T
     TacticalForceSeed {
         faction_id: faction_id.to_owned(),
         source_army_ids,
+        source_armies: Some(source_armies),
         units,
     }
 }

@@ -126,3 +126,26 @@ A tactical rendering change is structurally acceptable only when:
 - depth and 3D geometry are first-class, not optional demo modes;
 - terrain generation/query semantics live in `medieval-core`; the renderer may own only projection/picking geometry and must not duplicate the deterministic terrain algorithm;
 - terrain/presentation concerns do not leak floating-point GPU types into deterministic core state.
+## Campaign battle results
+
+`TacticalBattle::campaign_result()` produces the versioned `TacticalBattleResult`
+only after a campaign-seeded battle finishes. New seeds retain canonical rosters
+for each source army. Tactical units retain that army ID and their initial
+strength, including every chunk of a large roster, so survivors and losses are
+attributed directly to the army that supplied them. Results retain the seed,
+terminal winner/reason/tick, per-army and per-kind counts, and a settlement capture
+when the siege objective ends the battle. Applying those results to campaign
+state remains a separate core operation.
+
+Every count conserves `initial = survivors + casualties`. Routed and escaped
+counts are subsets of survivors and can overlap; pursuit casualties are a subset
+of total casualties. `validate`, `from_json`, and `to_json` reject unsupported
+result versions, inconsistent source rosters, and nonconserving counts. Generation
+also checks that deployed initial strength matches every source roster.
+
+Older seeds and battle records remain loadable. Newly deploying an older seed
+with one source army can attach exact provenance. Aggregated older seeds with
+multiple sources, and older battle records without unit provenance, cannot
+produce a campaign result: the core returns `MissingArmyProvenance` rather than
+inventing a division of losses. These compatibility paths preserve old battles'
+composition and replay semantics.
