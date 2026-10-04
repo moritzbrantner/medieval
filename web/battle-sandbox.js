@@ -192,6 +192,8 @@ function readableUnitName(id) {
 
 function unitState(unit) {
   if (unit.destroyed) return "destroyed";
+  if (unit.escaped) return "escaped";
+  if (unit.withdrawing) return "withdrawing";
   if (unit.routed) return "routed";
   return "formed";
 }

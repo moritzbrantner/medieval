@@ -415,7 +415,7 @@ impl TacticalControls {
                 .iter()
                 .find(|unit| unit.id() == unit_id)
                 .ok_or_else(|| TacticalControlError::UnknownUnit(unit_id.to_owned()))?;
-            if unit.side() != self.player_side || unit.is_routed() || unit.is_destroyed() {
+            if unit.side() != self.player_side || !unit.can_receive_orders() {
                 return Err(TacticalControlError::UncontrollableUnit(unit_id.to_owned()));
             }
             requested.insert(unit_id.to_owned());
@@ -443,8 +443,7 @@ impl TacticalControls {
         battle.units().iter().any(|unit| {
             unit.id() == unit_id
                 && unit.side() == player_side
-                && !unit.is_routed()
-                && !unit.is_destroyed()
+                && unit.can_receive_orders()
         })
     }
 }
