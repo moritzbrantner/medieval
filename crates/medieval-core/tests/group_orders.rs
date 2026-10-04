@@ -483,3 +483,32 @@ fn appending_between_arrival_and_queue_promotion_keeps_pending_waypoints() {
     assert_eq!(unit(&battle, "a").destination(), None);
     assert!(unit(&battle, "a").queued_movements().is_empty());
 }
+
+#[test]
+fn formation_changes_validate_the_active_destination_without_a_pending_queue() {
+    for (location, x) in [
+        (BattlefieldLocation::ForestClearing, 6_000),
+        (BattlefieldLocation::RiverFord, 72_000),
+    ] {
+        let mut battle = TacticalBattle::new_at_location(
+            FlatBattlefield::new(200_000, 100_000),
+            battle().units().to_vec(),
+            location,
+        )
+        .unwrap();
+        battle
+            .issue_formation_order("a", Formation::Column { files: 10 })
+            .unwrap();
+        battle
+            .issue_group_movement(group(&["a"], x, 20_000, false, MovementMode::March))
+            .unwrap();
+        assert!(unit(&battle, "a").queued_movements().is_empty());
+        let before = battle.clone();
+        assert!(
+            battle
+                .issue_formation_order("a", Formation::Line { files: 20 })
+                .is_err()
+        );
+        assert_eq!(battle, before);
+    }
+}

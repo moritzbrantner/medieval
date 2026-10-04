@@ -1069,9 +1069,14 @@ impl TacticalBattle {
         if formation.files() == 0 {
             return Err(TacticalError::InvalidFormation(unit_id.to_owned()));
         }
-        if !self.units[unit_index].queued_movements.is_empty() {
+        if self.units[unit_index].destination.is_some()
+            || !self.units[unit_index].queued_movements.is_empty()
+        {
             let mut candidate = self.clone();
             candidate.units[unit_index].formation = formation;
+            if let Some(destination) = self.units[unit_index].destination {
+                candidate.validate_formation_placement(unit_id, destination)?;
+            }
             for waypoint in &self.units[unit_index].queued_movements {
                 candidate.validate_formation_placement(unit_id, waypoint.destination)?;
             }
