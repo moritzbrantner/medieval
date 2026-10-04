@@ -148,7 +148,7 @@ fn append_units(
                 },
                 100,
             )
-            .with_unit_kind(entry.kind);
+            .with_combat_stats(crate::UnitCombatProfile::v1(entry.kind));
             if let Some(army_id) = source_army_id {
                 unit = unit.with_campaign_provenance(army_id, soldiers);
             }

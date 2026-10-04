@@ -171,3 +171,32 @@ version 1 only for unreconciled historical state and upgrades it before the next
 write. A version-1 document claiming reconciled casualties is rejected. Older
 readers therefore reject a version-2 save instead of ignoring the recorded result
 and autoresolving an already-reduced army again.
+
+## Versioned troop stats
+
+`UnitCombatProfile` records a `UnitStatsVersion` and authoritative troop kind.
+`unitStatsV1` defines integer attack, defense, armor and formation-resistance
+factors with a 1,000 base, initial morale, movement in millimeters per tick,
+charge impact, and optional missile damage/range/ammunition. Levy, spearmen,
+archers and knights each have an explicit core-owned entry. Missile ammunition
+counts volleys; charge impact, ammunition and formation resistance reserve the
+vocabulary for their later stateful mechanics rather than adding passive charges
+or ammunition depletion in this foundation.
+
+New campaign deployment selects V1. Initialization applies its morale, movement
+and attack range. Simultaneous casualty resolution composes existing frontage,
+fatigue, morale and terrain with attack divided by defense plus armor; ranged
+resistance uses base defense 1,000 plus armor. All scaling uses deterministic
+integer arithmetic and the existing minimum casualty rule.
+
+Tactical units serialize their profile. Historical records missing it retain
+legacy behavior, including their explicit movement/range and optional kind
+metadata. Unknown profile versions fail deserialization. The profile owns the
+kind when present. Browser status and render snapshots project core stat values
+without maintaining another stat table or computing combat in presentation code.
+
+V1 ranged damage retains thousandths through the casualty divisor, then carries
+fractional damage per attacker/target pair across combat pulses. This makes armor
+observable in the default ten-file formations without rounding every shot up to
+one casualty. The carry is bounded below 1,000 and serialized for replay. Historical
+combat without stat profiles keeps its existing minimum-one-casualty behavior.
