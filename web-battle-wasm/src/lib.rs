@@ -136,6 +136,7 @@ fn validate_army_selection(selection: SandboxArmySelection) -> Result<(), String
 #[serde(rename_all = "camelCase")]
 struct SandboxStatus {
     tick: u64,
+    terrain_vertices: u32,
     battle_state: TacticalBattleState,
     paused: bool,
     can_withdraw: bool,
@@ -575,6 +576,7 @@ impl BrowserSandbox {
             .map(|siege| serde_json::to_value(siege).expect("core siege snapshot is serializable"));
         serde_json::to_string(&SandboxStatus {
             tick: self.battle.tick(),
+            terrain_vertices: self.renderer.terrain_vertex_count(),
             battle_state: self.battle.state(),
             paused: self.paused,
             can_withdraw: self.battle.can_withdraw(BattleSide::Attacker),

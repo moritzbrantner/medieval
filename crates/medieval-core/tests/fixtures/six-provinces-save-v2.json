@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 2,
+  "playerFaction": "england",
+  "campaign": {
+    "year": 1087,
+    "turn": 1,
+    "activeFaction": "england",
+    "factions": [
+      {
+        "id": "england",
+        "name": "Kingdom of England",
+        "treasury": 1200,
+        "lastEconomyTurn": 1
+      },
+      {
+        "id": "france",
+        "name": "Kingdom of France",
+        "treasury": 1200,
+        "lastEconomyTurn": null
+      }
+    ],
+    "provinces": [
+      {
+        "id": "wessex",
+        "name": "Wessex",
+        "owner": "england",
+        "wealth": 5,
+        "neighbors": [
+          "normandy"
+        ],
+        "battlefield": {
+          "location": "mountainPass",
+          "fortified": false
+        }
+      },
+      {
+        "id": "normandy",
+        "name": "Normandy",
+        "owner": "england",
+        "wealth": 6,
+        "neighbors": [
+          "wessex",
+          "brittany",
+          "paris"
+        ],
+        "battlefield": {
+          "location": "forestClearing",
+          "fortified": false
+        }
+      },
+      {
+        "id": "brittany",
+        "name": "Brittany",
+        "owner": "france",
+        "wealth": 4,
+        "neighbors": [
+          "normandy",
+          "anjou"
+        ],
+        "battlefield": {
+          "location": "forestClearing",
+          "fortified": false
+        }
+      },
+      {
+        "id": "anjou",
+        "name": "Anjou",
+        "owner": "france",
+        "wealth": 4,
+        "neighbors": [
+          "brittany",
+          "paris"
+        ],
+        "battlefield": {
+          "location": "riverFord",
+          "fortified": false
+        }
+      },
+      {
+        "id": "paris",
+        "name": "Paris",
+        "owner": "france",
+        "wealth": 8,
+        "neighbors": [
+          "normandy",
+          "anjou",
+          "flanders"
+        ],
+        "battlefield": {
+          "location": "mountainPass",
+          "fortified": true
+        }
+      },
+      {
+        "id": "flanders",
+        "name": "Flanders",
+        "owner": "france",
+        "wealth": 7,
+        "neighbors": [
+          "paris"
+        ],
+        "battlefield": {
+          "location": "riverFord",
+          "fortified": false
+        }
+      }
+    ],
+    "armies": [
+      {
+        "id": "england-main",
+        "owner": "england",
+        "province": "normandy",
+        "levy": 120,
+        "spearmen": 80,
+        "archers": 40,
+        "knights": 20,
+        "movedThisTurn": false
+      },
+      {
+        "id": "france-main",
+        "owner": "france",
+        "province": "paris",
+        "levy": 120,
+        "spearmen": 80,
+        "archers": 40,
+        "knights": 20,
+        "movedThisTurn": false
+      }
+    ],
+    "pendingBattle": null,
+    "recruitmentQueue": [],
+    "battleReports": [],
+    "log": [
+      "The campaign begins in 1087."
+    ]
+  }
+}
