@@ -12,6 +12,8 @@ pub struct TacticalBattleSeed {
     pub attacker_army_id: String,
     pub from_province: String,
     pub target_province: String,
+    #[serde(default)]
+    pub battlefield_profile: crate::TacticalBattlefieldProfile,
     pub attacker: TacticalForceSeed,
     pub defender: TacticalForceSeed,
 }
@@ -41,13 +43,8 @@ impl TacticalBattle {
         battlefield: FlatBattlefield,
         seed: TacticalBattleSeed,
     ) -> Result<Self, TacticalError> {
-        Self::from_campaign_seed_with_profile(
-            battlefield,
-            seed,
-            crate::TacticalBattlefieldProfile::Field {
-                location: crate::BattlefieldLocation::MountainPass,
-            },
-        )
+        let profile = seed.battlefield_profile;
+        Self::from_campaign_seed_with_profile(battlefield, seed, profile)
     }
 
     pub fn from_campaign_seed_with_profile(
@@ -55,6 +52,8 @@ impl TacticalBattle {
         mut seed: TacticalBattleSeed,
         profile: crate::TacticalBattlefieldProfile,
     ) -> Result<Self, TacticalError> {
+        // Explicit fixture overrides remain recorded in the retained provenance.
+        seed.battlefield_profile = profile;
         // Validate dimensions before allocating the force composition.
         Self::new(battlefield, Vec::new())?;
         let mut units = Vec::new();
@@ -160,6 +159,11 @@ impl CampaignState {
             .find(|army| army.id == pending.attacker_army_id)
             .ok_or_else(|| CampaignError::ArmyNotFound(pending.attacker_army_id.clone()))?;
 
+        let province = self
+            .provinces
+            .iter()
+            .find(|province| province.id == pending.target_province)
+            .ok_or_else(|| CampaignError::ProvinceNotFound(pending.target_province.clone()))?;
         let attacker = force_seed(&pending.attacker_faction, std::iter::once(attacker_army));
         let defender = force_seed(
             &pending.defender_faction,
@@ -173,6 +177,7 @@ impl CampaignState {
             attacker_army_id: pending.attacker_army_id.clone(),
             from_province: pending.from_province.clone(),
             target_province: pending.target_province.clone(),
+            battlefield_profile: province.battlefield.profile(),
             attacker,
             defender,
         })
