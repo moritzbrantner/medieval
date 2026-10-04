@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::CampaignState;
 
-pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 1;
+pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,12 +67,18 @@ impl CampaignSave {
     pub fn from_json(json: &str) -> Result<Self, SaveError> {
         let header: SaveHeader = serde_json::from_str(json)
             .map_err(|error| SaveError::InvalidJson(error.to_string()))?;
-        if header.schema_version != CAMPAIGN_SAVE_SCHEMA_VERSION {
+        if header.schema_version != 1 && header.schema_version != CAMPAIGN_SAVE_SCHEMA_VERSION {
             return Err(SaveError::UnsupportedVersion(header.schema_version));
         }
 
-        let save: Self = serde_json::from_str(json)
+        let mut save: Self = serde_json::from_str(json)
             .map_err(|error| SaveError::InvalidJson(error.to_string()))?;
+        if header.schema_version == 1 {
+            if save.campaign.pending_tactical_result.is_some() {
+                return invalid("version 1 cannot contain reconciled tactical casualties");
+            }
+            save.schema_version = CAMPAIGN_SAVE_SCHEMA_VERSION;
+        }
         save.validate()?;
         Ok(save)
     }
@@ -180,6 +186,10 @@ impl CampaignSave {
             }
         }
 
+        campaign
+            .validate_reconciled_tactical_state()
+            .map_err(|error| SaveError::InvalidState(error.to_string()))?;
+
         if let Some(pending) = &campaign.pending_battle {
             if !faction_ids.contains(pending.attacker_faction.as_str())
                 || !faction_ids.contains(pending.defender_faction.as_str())
@@ -191,20 +201,22 @@ impl CampaignSave {
             {
                 return invalid("pending battle references an unknown province");
             }
-            let attacker = campaign
-                .armies
-                .iter()
-                .find(|army| army.id == pending.attacker_army_id)
-                .ok_or_else(|| {
-                    SaveError::InvalidState(format!(
-                        "pending battle references unknown attacker army {}",
-                        pending.attacker_army_id
-                    ))
-                })?;
-            if attacker.owner != pending.attacker_faction
-                || attacker.province != pending.from_province
-            {
-                return invalid("pending battle attacker does not match its army state");
+            if campaign.pending_tactical_result.is_none() {
+                let attacker = campaign
+                    .armies
+                    .iter()
+                    .find(|army| army.id == pending.attacker_army_id)
+                    .ok_or_else(|| {
+                        SaveError::InvalidState(format!(
+                            "pending battle references unknown attacker army {}",
+                            pending.attacker_army_id
+                        ))
+                    })?;
+                if attacker.owner != pending.attacker_faction
+                    || attacker.province != pending.from_province
+                {
+                    return invalid("pending battle attacker does not match its army state");
+                }
             }
             let target_owner = campaign
                 .provinces
@@ -264,10 +276,11 @@ impl CampaignSave {
             }
         }
 
-        if campaign
-            .pending_battle
-            .as_ref()
-            .is_some_and(|pending| !army_ids.contains(pending.attacker_army_id.as_str()))
+        if campaign.pending_tactical_result.is_none()
+            && campaign
+                .pending_battle
+                .as_ref()
+                .is_some_and(|pending| !army_ids.contains(pending.attacker_army_id.as_str()))
         {
             return invalid("pending battle attacker army does not exist");
         }

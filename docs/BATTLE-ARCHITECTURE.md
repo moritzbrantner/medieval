@@ -149,3 +149,25 @@ multiple sources, and older battle records without unit provenance, cannot
 produce a campaign result: the core returns `MissingArmyProvenance` rather than
 inventing a division of losses. These compatibility paths preserve old battles'
 composition and replay semantics.
+
+## Campaign casualty reconciliation
+
+`CampaignState::reconcile_tactical_casualties` checks the completed result against
+its pending battle, current turn, target battlefield profile, factions, army
+identities, and original per-kind rosters before committing any change. It applies
+exact survivor counts to each source army and removes only destroyed sources.
+The result is retained as `pending_tactical_result`; the matching pending battle
+stays blocked until the strategic capture/retreat operation finishes it.
+
+An identical retry validates the recorded projection and changes nothing.
+Conflicting results, source changes, or drift after reconciliation fail before
+mutation. Autoresolve and new tactical deployment reject an already reconciled
+pending battle, so another casualty calculation cannot replace its outcome.
+Campaign saves validate this intermediate phase, including a destroyed attacker,
+and historical saves without the optional result retain their existing behavior.
+
+Campaign saves containing these semantics use schema version 2. The reader accepts
+version 1 only for unreconciled historical state and upgrades it before the next
+write. A version-1 document claiming reconciled casualties is rejected. Older
+readers therefore reject a version-2 save instead of ignoring the recorded result
+and autoresolving an already-reduced army again.
