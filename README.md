@@ -29,6 +29,9 @@ A single-player tactical sandbox is also available on GitHub Pages and through t
 
 ## Development
 
+See [tactical workload evidence](docs/TACTICAL-PERFORMANCE.md) for the deterministic
+scenario matrix, subsystem work budgets, and advisory timing command.
+
 Prerequisites: rustup using the repository-pinned Rust toolchain in `rust-toolchain.toml`, plus the platform prerequisites for Tauri 2 on desktop.
 
 ```sh

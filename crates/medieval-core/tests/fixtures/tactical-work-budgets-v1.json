@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "fixtureRevision": 1,
+  "budgetPolicy": "baseline work plus 10 percent, rounded up; zero stays zero",
+  "scenarios": {
+    "small": {
+      "units": 2,
+      "requestedTicks": 600,
+      "maximumWork": {
+        "snapshotUnitCopies": 1083,
+        "targetCandidateVisits": 911,
+        "proximityQueries": 555,
+        "physicsContactQueries": 555,
+        "pathRequests": 0,
+        "terrainSpeedQueries": 0,
+        "engagementPairs": 14,
+        "rangedVolleys": 0,
+        "meleeContacts": 14,
+        "pursuitContacts": 0
+      }
+    },
+    "medium": {
+      "units": 12,
+      "requestedTicks": 600,
+      "maximumWork": {
+        "snapshotUnitCopies": 16236,
+        "targetCandidateVisits": 59202,
+        "proximityQueries": 8316,
+        "physicsContactQueries": 3864,
+        "pathRequests": 4251,
+        "terrainSpeedQueries": 4251,
+        "engagementPairs": 198,
+        "rangedVolleys": 0,
+        "meleeContacts": 97,
+        "pursuitContacts": 0
+      }
+    },
+    "large": {
+      "units": 64,
+      "requestedTicks": 600,
+      "maximumWork": {
+        "snapshotUnitCopies": 86592,
+        "targetCandidateVisits": 1578720,
+        "proximityQueries": 44352,
+        "physicsContactQueries": 20606,
+        "pathRequests": 22663,
+        "terrainSpeedQueries": 22663,
+        "engagementPairs": 1056,
+        "rangedVolleys": 0,
+        "meleeContacts": 514,
+        "pursuitContacts": 0
+      }
+    },
+    "dense-melee": {
+      "units": 32,
+      "requestedTicks": 120,
+      "maximumWork": {
+        "snapshotUnitCopies": 8660,
+        "targetCandidateVisits": 80151,
+        "proximityQueries": 4436,
+        "physicsContactQueries": 4436,
+        "pathRequests": 0,
+        "terrainSpeedQueries": 0,
+        "engagementPairs": 106,
+        "rangedVolleys": 0,
+        "meleeContacts": 106,
+        "pursuitContacts": 0
+      }
+    },
+    "ranged-heavy": {
+      "units": 24,
+      "requestedTicks": 120,
+      "maximumWork": {
+        "snapshotUnitCopies": 6495,
+        "targetCandidateVisits": 47520,
+        "proximityQueries": 3644,
+        "physicsContactQueries": 3327,
+        "pathRequests": 0,
+        "terrainSpeedQueries": 0,
+        "engagementPairs": 80,
+        "rangedVolleys": 159,
+        "meleeContacts": 0,
+        "pursuitContacts": 0
+      }
+    },
+    "terrain-heavy": {
+      "units": 16,
+      "requestedTicks": 600,
+      "maximumWork": {
+        "snapshotUnitCopies": 21648,
+        "targetCandidateVisits": 229944,
+        "proximityQueries": 38808,
+        "physicsContactQueries": 1710,
+        "pathRequests": 10290,
+        "terrainSpeedQueries": 8935,
+        "engagementPairs": 264,
+        "rangedVolleys": 0,
+        "meleeContacts": 42,
+        "pursuitContacts": 0
+      }
+    },
+    "siege": {
+      "units": 8,
+      "requestedTicks": 600,
+      "maximumWork": {
+        "snapshotUnitCopies": 10824,
+        "targetCandidateVisits": 27324,
+        "proximityQueries": 5544,
+        "physicsContactQueries": 907,
+        "pathRequests": 4429,
+        "terrainSpeedQueries": 4429,
+        "engagementPairs": 132,
+        "rangedVolleys": 0,
+        "meleeContacts": 25,
+        "pursuitContacts": 0
+      }
+    },
+    "idle": {
+      "units": 32,
+      "requestedTicks": 40,
+      "maximumWork": {
+        "snapshotUnitCopies": 2887,
+        "targetCandidateVisits": 0,
+        "proximityQueries": 0,
+        "physicsContactQueries": 0,
+        "pathRequests": 0,
+        "terrainSpeedQueries": 0,
+        "engagementPairs": 0,
+        "rangedVolleys": 0,
+        "meleeContacts": 0,
+        "pursuitContacts": 0
+      }
+    }
+  },
+  "baselineCoreRevision": "703389ff005f54ac087e424ba1ecfe43f8c3e6b7"
+}
