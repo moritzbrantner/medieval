@@ -261,6 +261,10 @@ impl DesktopInputState {
                 kind: "withdraw".to_owned(),
                 ..TacticalControlRequest::default()
             }),
+            "KeyF" => Some(TacticalControlRequest {
+                kind: "armAttackMove".to_owned(),
+                ..TacticalControlRequest::default()
+            }),
             "KeyQ" | "KeyE" => Some(TacticalControlRequest {
                 kind: "turnSelected".to_owned(),
                 quarter_turns: Some(if code == "KeyQ" { -1 } else { 1 }),
@@ -359,7 +363,7 @@ impl DesktopInputState {
                     controls,
                     player_side,
                     sample,
-                    effective_modifiers.shift,
+                    effective_modifiers,
                 )?;
             }
         }
@@ -419,15 +423,16 @@ impl DesktopInputState {
         controls: &mut TacticalControls,
         player_side: BattleSide,
         sample: PointerSample,
-        hold_facing: bool,
+        modifiers: InputModifiers,
     ) -> Result<(), String> {
-        if let Some(target_unit_id) = (!hold_facing)
-            .then(|| {
-                nearest_unit_at_pointer(battle, controls, sample, |unit| {
-                    unit.side() != player_side && !unit.is_destroyed() && !unit.is_escaped()
+        if let Some(target_unit_id) =
+            (!modifiers.shift && !modifiers.control && !controls.attack_move_armed())
+                .then(|| {
+                    nearest_unit_at_pointer(battle, controls, sample, |unit| {
+                        unit.side() != player_side && !unit.is_destroyed() && !unit.is_escaped()
+                    })
                 })
-            })
-            .flatten()
+                .flatten()
         {
             let result = apply_control(
                 battle,
@@ -448,12 +453,15 @@ impl DesktopInputState {
             battle,
             controls,
             TacticalControlRequest {
-                kind: if hold_facing {
+                kind: if controls.attack_move_armed() {
+                    "attackMoveSelected"
+                } else if modifiers.shift && !modifiers.control {
                     "moveAndFaceSelected"
                 } else {
                     "moveSelected"
                 }
                 .to_owned(),
+                queued: Some(modifiers.control),
                 x_mm: Some(destination.x_mm),
                 y_mm: Some(destination.y_mm),
                 ..TacticalControlRequest::default()
@@ -704,6 +712,8 @@ pub fn install_linux_input(
             Some("KeyR")
         } else if key == constants::Escape {
             Some("Escape")
+        } else if key == constants::f || key == constants::F {
+            Some("KeyF")
         } else if key == constants::q || key == constants::Q {
             Some("KeyQ")
         } else if key == constants::e || key == constants::E {
@@ -1079,6 +1089,94 @@ mod tests {
             .unwrap();
         assert_eq!(unit.destination(), None);
         assert_eq!(unit.facing(), Some(facing));
+    }
+
+    #[test]
+    fn native_attack_move_and_ctrl_waypoints_clear_on_stop() {
+        let mut session = session();
+        let mut input = DesktopInputState::default();
+        let sample = pointer_for_unit(&session, "attacker-a");
+        click(&mut input, &mut session, PointerButton::Primary, sample);
+        input
+            .apply(
+                &mut session.battle,
+                &mut session.controls,
+                session.player_side,
+                DesktopInput::KeyDown {
+                    code: "KeyF".into(),
+                    modifiers: InputModifiers::default(),
+                },
+            )
+            .unwrap();
+        assert!(session.controls.attack_move_armed());
+        let sample = pointer_for_ground(&session, BattlePoint::new(70_000, 50_000));
+        click(&mut input, &mut session, PointerButton::Secondary, sample);
+        assert!(!session.controls.attack_move_armed());
+        let sample = pointer_for_ground(&session, BattlePoint::new(80_000, 70_000));
+        for down in [true, false] {
+            let modifiers = InputModifiers {
+                control: true,
+                ..InputModifiers::default()
+            };
+            let event = if down {
+                DesktopInput::PointerDown {
+                    button: PointerButton::Secondary,
+                    x: sample.x,
+                    y: sample.y,
+                    width: sample.width,
+                    height: sample.height,
+                    modifiers,
+                }
+            } else {
+                DesktopInput::PointerUp {
+                    button: PointerButton::Secondary,
+                    x: sample.x,
+                    y: sample.y,
+                    width: sample.width,
+                    height: sample.height,
+                    modifiers,
+                }
+            };
+            input
+                .apply(
+                    &mut session.battle,
+                    &mut session.controls,
+                    session.player_side,
+                    event,
+                )
+                .unwrap();
+        }
+        let unit = session
+            .battle
+            .units()
+            .iter()
+            .find(|unit| unit.id() == "attacker-a")
+            .unwrap();
+        assert_eq!(
+            unit.movement_mode(),
+            medieval_core::MovementMode::AttackMove
+        );
+        assert_eq!(unit.queued_movements().len(), 1);
+        input
+            .apply(
+                &mut session.battle,
+                &mut session.controls,
+                session.player_side,
+                DesktopInput::KeyDown {
+                    code: "KeyS".into(),
+                    modifiers: InputModifiers::default(),
+                },
+            )
+            .unwrap();
+        let unit = session
+            .battle
+            .units()
+            .iter()
+            .find(|unit| unit.id() == "attacker-a")
+            .unwrap();
+        assert_eq!(unit.destination(), None);
+        assert!(unit.queued_movements().is_empty());
+        assert_eq!(unit.movement_mode(), medieval_core::MovementMode::March);
     }
 
     #[test]
