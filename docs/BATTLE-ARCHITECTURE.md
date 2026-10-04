@@ -236,3 +236,23 @@ flanks. Melee contact receives a bounded flank or rear advantage scaled by the
 defender's formation resistance, capped at a 75% bonus. Ranged damage is unchanged.
 Renderer gold markers project that core direction; browser status projects the
 core contact arc without calculating gameplay angles.
+
+## Directional troop matchups
+
+Explicit V1 profiles compose troop interactions with the existing integer melee
+pipeline, after morale, fatigue, terrain, frontage, armor and contact direction.
+Spearmen facing cavalry in their front arc deal 1,750/1,000 of their normal melee
+impact; cavalry attacking a spearman front deals 600/1,000. Knights attacking levy
+or archers from a flank or rear deal another 1,250/1,000, composed with the bounded
+contact bonus. Facing boundaries use the same core classifier as other contact.
+These are formation interactions, independent of faction, IDs and storage order;
+kind metadata without a combat profile cannot activate them. Historical missing
+facing receives neutral matchup factors. Missile damage continues to compose the
+core armor divisor with terrain cover, including fractional volley carry. Charge
+momentum remains a separate subsequent mechanic rather than a passive matchup.
+
+Profiled melee preserves thousandths through all factors and carries the remaining
+fraction per attacker/defender pair, bounded below 1,000 and serialized. Thus
+frontal spear resistance also matters at the default ten-file campaign frontage
+instead of every weak contact being rounded up to one casualty. Historical combat
+without profiles retains that minimum-casualty rule.
