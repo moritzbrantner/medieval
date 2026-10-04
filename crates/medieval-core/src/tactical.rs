@@ -466,26 +466,28 @@ pub struct TacticalBattle {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     withdrawal: Option<WithdrawalSides>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    ranged_damage_credit: BTreeMap<String, BTreeMap<String, RangedDamageCredit>>,
+    ranged_damage_credit: BTreeMap<String, BTreeMap<String, CombatDamageCredit>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    melee_damage_credit: BTreeMap<String, BTreeMap<String, CombatDamageCredit>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "u16", into = "u16")]
-struct RangedDamageCredit(u16);
+struct CombatDamageCredit(u16);
 
-impl TryFrom<u16> for RangedDamageCredit {
+impl TryFrom<u16> for CombatDamageCredit {
     type Error = &'static str;
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         if value < 1_000 {
             Ok(Self(value))
         } else {
-            Err("ranged damage credit must be below 1,000")
+            Err("combat damage credit must be below 1,000")
         }
     }
 }
 
-impl From<RangedDamageCredit> for u16 {
-    fn from(value: RangedDamageCredit) -> Self {
+impl From<CombatDamageCredit> for u16 {
+    fn from(value: CombatDamageCredit) -> Self {
         value.0
     }
 }
@@ -509,7 +511,9 @@ struct TacticalBattleWire {
     #[serde(default)]
     withdrawal: Option<WithdrawalSides>,
     #[serde(default)]
-    ranged_damage_credit: BTreeMap<String, BTreeMap<String, RangedDamageCredit>>,
+    ranged_damage_credit: BTreeMap<String, BTreeMap<String, CombatDamageCredit>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    melee_damage_credit: BTreeMap<String, BTreeMap<String, CombatDamageCredit>>,
 }
 
 impl From<TacticalBattleWire> for TacticalBattle {
@@ -525,6 +529,7 @@ impl From<TacticalBattleWire> for TacticalBattle {
             state: wire.state,
             withdrawal: wire.withdrawal,
             ranged_damage_credit: wire.ranged_damage_credit,
+            melee_damage_credit: wire.melee_damage_credit,
             units: wire.units,
         }
     }
@@ -623,6 +628,7 @@ impl TacticalBattle {
             state: TacticalBattleState::Running,
             withdrawal: None,
             ranged_damage_credit: BTreeMap::new(),
+            melee_damage_credit: BTreeMap::new(),
             units,
         })
     }
@@ -1313,19 +1319,21 @@ impl TacticalBattle {
                         formed_contacts[&right.id],
                         contacts_assigned.entry(right.id.clone()).or_default(),
                     );
-                    let left_losses = melee_casualties(
+                    let left_losses = melee_casualties_with_credit(
                         right,
                         left,
                         right_frontage,
                         self.terrain,
                         self.battlefield,
+                        &mut self.melee_damage_credit,
                     );
-                    let right_losses = melee_casualties(
+                    let right_losses = melee_casualties_with_credit(
                         left,
                         right,
                         left_frontage,
                         self.terrain,
                         self.battlefield,
+                        &mut self.melee_damage_credit,
                     );
                     *casualties.entry(left.id.clone()).or_default() += u32::from(left_losses);
                     *casualties.entry(right.id.clone()).or_default() += u32::from(right_losses);
@@ -1644,6 +1652,52 @@ fn terrain_adjusted_frontage(
         attacker.position,
         defender.position,
     )) / COMBAT_FACTOR_BASE_MILLI
+}
+
+fn melee_casualties_with_credit(
+    attacker: &TacticalUnit,
+    defender: &TacticalUnit,
+    frontage: u16,
+    terrain: TacticalTerrain,
+    battlefield: FlatBattlefield,
+    credits: &mut BTreeMap<String, BTreeMap<String, CombatDamageCredit>>,
+) -> u16 {
+    if attacker.stats().is_none() && defender.stats().is_none() {
+        return melee_casualties(attacker, defender, frontage, terrain, battlefield);
+    }
+    if attacker.state != TacticalUnitState::Formed || defender.soldiers == 0 || frontage == 0 {
+        return 0;
+    }
+    let fatigue = 1_000_u64.saturating_sub(u64::from(attacker.fatigue) / 2);
+    let morale = 750_u64 + u64::from(attacker.morale) / 4;
+    let damage = u64::from(frontage) * 1_000 * fatigue * morale / 1_000_000;
+    let damage = damage
+        * u64::from(terrain.elevation_damage_factor_milli(
+            battlefield,
+            attacker.position,
+            defender.position,
+        ))
+        / 1_000;
+    let attack = attacker
+        .stats()
+        .map_or(1_000, |stats| u64::from(stats.melee_attack_milli));
+    let resistance = defender.stats().map_or(1_000, |stats| {
+        u64::from(stats.defense_milli) + u64::from(stats.armor_milli)
+    });
+    let damage = damage * attack / resistance;
+    let damage = damage * u64::from(contact_factor_milli(attacker, defender)) / 1_000;
+    let damage = damage * u64::from(matchup_factor_milli(attacker, defender))
+        / 1_000
+        / u64::from(MELEE_CASUALTY_DIVISOR);
+    let credit = credits
+        .entry(attacker.id.clone())
+        .or_default()
+        .entry(defender.id.clone())
+        .or_default();
+    let total = damage + u64::from(credit.0);
+    credit.0 = u16::try_from(total % 1_000).expect("fractional damage fits u16");
+    u16::try_from((total / 1_000).min(u64::from(defender.soldiers)))
+        .expect("casualties are bounded by soldiers")
 }
 
 fn melee_casualties(
