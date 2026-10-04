@@ -87,7 +87,10 @@ impl TerrainMesh {
                 for (start, end, inward, (nx, nz)) in edges {
                     let bottom = match (nx, nz) {
                         (Some(nx), Some(nz))
-                            if nx < TERRAIN_GRID_SIZE && nz < TERRAIN_GRID_SIZE =>
+                            if nx < TERRAIN_GRID_SIZE
+                                && nz < TERRAIN_GRID_SIZE
+                                && terrain_cell_bounds_mm(field, nx, nz)
+                                    .is_some_and(|(x0, x1, z0, z1)| x1 > x0 && z1 > z0) =>
                         {
                             terrain.cell_height_mm(field, nx, nz) as f32
                         }

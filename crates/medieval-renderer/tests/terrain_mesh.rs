@@ -82,3 +82,21 @@ fn tiny_cells_do_not_generate_nonfinite_or_degenerate_top_triangles() {
         );
     }
 }
+
+#[test]
+fn collapsed_grid_neighbors_do_not_leave_tiny_field_perimeters_open() {
+    for field in [FlatBattlefield::new(1, 1), FlatBattlefield::new(7, 5)] {
+        let mesh = TerrainMesh::prepare(
+            TacticalTerrain::for_location(BattlefieldLocation::ForestClearing),
+            field,
+        );
+        for [x, z] in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0]] {
+            assert!(
+                mesh.vertices
+                    .iter()
+                    .any(|vertex| vertex.normal[0] * x + vertex.normal[2] * z > 0.5),
+                "field {field:?} is missing exposed perimeter direction ({x},{z})"
+            );
+        }
+    }
+}

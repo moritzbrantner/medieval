@@ -37,7 +37,15 @@ test("battlefield selector rebuilds the Rust-owned sandbox across all three loca
   expect((await status(page)).battlefieldLocation).toBe("mountainPass");
 
   await selector.selectOption("forestClearing");
-  await expect.poll(async () => (await status(page)).battlefieldLocation).toBe("forestClearing");
+  await expect.poll(async () => page.evaluate(async () => {
+    const { battle_sandbox_status } = await import("./pkg/medieval_web_battle.js");
+    return {
+      projected: window.__medievalControlsE2E.status().battlefieldLocation,
+      authoritative: JSON.parse(battle_sandbox_status()).battlefieldLocation,
+      selector: document.querySelector("#battle-location").value,
+      error: document.querySelector("#battle-error").textContent,
+    };
+  })).toEqual({ projected: "forestClearing", authoritative: "forestClearing", selector: "forestClearing", error: "" });
   let current = await status(page);
   expect(current.riverCells).toEqual([]);
   expect(current.riverCrossingCells).toEqual([]);
