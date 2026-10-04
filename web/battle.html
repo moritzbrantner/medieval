@@ -81,6 +81,9 @@
             </div>
             <div class="button-row">
               <button id="line-formation" type="button" class="secondary">Line formation</button>
+              <label for="frontage-metres">Frontage (metres)</label>
+              <input id="frontage-metres" type="number" min="1" max="4294967" step="1" value="10" required />
+              <button id="set-frontage" type="button" class="secondary">Set frontage</button>
               <button id="column-formation" type="button" class="secondary">Column formation</button>
             </div>
             <div class="button-row">
@@ -92,7 +95,7 @@
           <section class="instructions">
             <p class="eyebrow">Controls</p>
             <p><strong>Left click</strong> anywhere on a player formation to select it. Hold <strong>Shift</strong> to add or remove a unit.</p>
-            <p>Gold markers show formation facing.</p>
+            <p>Gold markers show formation facing. <strong>Q / E</strong> turn left or right. <strong>Shift + right click</strong> moves while keeping the current facing on arrival.</p>
             <p><strong>Right click</strong> the field to move selected units, or an opponent unit to engage it. Archers stop and fire once their target is in range.</p>
             <p><strong>L / C</strong> switch selected units to line or column formation. <strong>WASD / arrows</strong> pan. <strong>Mouse wheel / + / −</strong> zoom. <strong>Space</strong> stops selected units. <strong>0</strong> fits the camera. <strong>P</strong> pauses.</p>
           </section>
