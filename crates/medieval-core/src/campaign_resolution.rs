@@ -47,7 +47,7 @@ impl CampaignState {
             .iter()
             .find(|report| &report.result == result)
         {
-            report.validate()?;
+            report.validate_for_campaign(self)?;
             return Ok(report.clone());
         }
         let mut next = self.clone();
@@ -123,7 +123,7 @@ impl CampaignState {
             surrenders,
             campaign_winner: next.winner(),
         };
-        report.validate()?;
+        report.validate_for_campaign(&next)?;
         next.tactical_battle_reports.push(report.clone());
         next.log.push(format!(
             "Turn {}: tactical battle in {} ends with {:?}.",
@@ -169,6 +169,26 @@ impl CampaignState {
 }
 
 impl TacticalCampaignReport {
+    pub(crate) fn validate_for_campaign(
+        &self,
+        campaign: &CampaignState,
+    ) -> Result<(), CampaignError> {
+        self.validate()?;
+        let target = campaign
+            .provinces
+            .iter()
+            .find(|province| province.id == self.result.seed.target_province)
+            .ok_or(CampaignError::TacticalResultMismatch)?;
+        if self
+            .retreats
+            .iter()
+            .any(|retreat| !target.neighbors.contains(&retreat.to_province))
+        {
+            return Err(CampaignError::TacticalResultMismatch);
+        }
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), CampaignError> {
         self.result
             .validate()
