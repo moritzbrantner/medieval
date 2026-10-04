@@ -760,6 +760,28 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
         ));
     }
 
+    // Facing is supplied by the core. Floating point only places visible markers.
+    for unit in &snapshot.units {
+        if let Some(facing) = unit.facing {
+            let [x, y] = facing.direction();
+            let length = (x as f32).hypot(y as f32);
+            let direction = [x as f32 / length, y as f32 / length];
+            let anchor = unit.interaction_anchor_mm();
+            for (distance, radius) in [(1_800.0, 160.0), (2_400.0, 160.0), (3_000.0, 340.0)] {
+                world.push(GpuWorldInstance {
+                    center_material: [
+                        anchor[0] + direction[0] * distance,
+                        unit.terrain_elevation_mm + 120.0,
+                        anchor[2] + direction[1] * distance,
+                        15.0,
+                    ],
+                    half_extent_routed: [radius, 80.0, radius, 0.0],
+                    visual: [0.0; 4],
+                });
+            }
+        }
+    }
+
     let mut characters = [Vec::new(), Vec::new(), Vec::new()];
     for unit in &snapshot.units {
         let archetype = match unit.unit_kind {
@@ -926,6 +948,41 @@ mod tests {
     use super::*;
     use crate::{BattleRenderSnapshot, RenderViewState};
     use medieval_core::{BattlePoint, FlatBattlefield, Formation, TacticalBattle, TacticalUnit};
+
+    #[test]
+    fn facing_markers_project_core_direction() {
+        for facing in [medieval_core::Facing::east(), medieval_core::Facing::west()] {
+            let unit = TacticalUnit::new(
+                "a",
+                BattleSide::Attacker,
+                2,
+                BattlePoint::new(20_000, 20_000),
+                Formation::Line { files: 2 },
+                100,
+            )
+            .with_facing(facing);
+            let battle =
+                TacticalBattle::new(FlatBattlefield::new(100_000, 100_000), vec![unit]).unwrap();
+            let snapshot =
+                BattleRenderSnapshot::capture(&battle, &RenderViewState::fit(battle.battlefield()));
+            let anchor = snapshot.units[0].interaction_anchor_mm();
+            let batch = gpu_instances(&snapshot);
+            let markers: Vec<_> = batch
+                .world
+                .iter()
+                .filter(|marker| marker.center_material[3] == 15.0)
+                .collect();
+            assert_eq!(markers.len(), 3);
+            for (marker, distance) in markers.iter().zip([1_800.0, 2_400.0, 3_000.0]) {
+                assert_eq!(
+                    marker.center_material[0],
+                    anchor[0] + facing.direction()[0] as f32 * distance
+                );
+                assert_eq!(marker.center_material[2], anchor[2]);
+            }
+            assert_eq!(battle.units()[0].facing(), Some(facing));
+        }
+    }
 
     #[test]
     fn character_selection_projects_kind_instead_of_ids_or_combat_values() {
