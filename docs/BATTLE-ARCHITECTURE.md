@@ -291,6 +291,30 @@ candidate and committed atomically. Browser and native adapters submit these
 commands through shared tactical controls: Q/E turns, Shift + right-click moves
 with the current facing on arrival, and the frontage request supplies a width.
 
+### Battlefield surface geometry
+
+`TerrainMesh` prepares four-by-four top patches per authoritative terrain cell.
+Every patch retains the core cell's exact elevation and bounds. Only exposed
+cliffs are generated, with recessed middle strata underneath the logical tops;
+shared cliff corners remain sealed. Location/cover palettes and soil shading
+provide surface variation. Camera rays, orders, soldier elevation, cover, and
+passability continue to use `TacticalTerrain` rather than the presentation mesh.
+
+The GPU caches terrain vertices by battlefield dimensions and the complete
+terrain value. Terrain changes upload through the queue into an unmapped vertex
+buffer, reusing its capacity where possible. This avoids browser limits on
+mapped-at-creation buffers during location changes. Unit movement and selection
+updates do not prepare or upload terrain again.
+The fixed geometry budget is 16,384 vertices / 768 KiB per battlefield, independent
+of soldier count. Representative fixtures cover Mountain Pass, Forest Clearing,
+and River Ford, including non-divisible dimensions and logical top agreement.
+
+Run `cargo run -p medieval-renderer --example terrain_fixtures --release` to record
+vertex counts, bytes, and mean preparation time across 1,000 preparations per
+location. `npm run test:e2e:controls` includes screenshots, the geometry budget,
+and physical picking/order checks for all three locations alongside tactical
+control acceptance.
+
 ### Group movement and queued attack-move
 
 `GroupMovementOrder` uses the selected units' integer centroid as its destination
