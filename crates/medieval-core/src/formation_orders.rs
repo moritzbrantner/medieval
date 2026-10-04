@@ -93,9 +93,17 @@ impl TacticalBattle {
                         .expect("files are bounded by soldiers");
                 let position = unit.position();
                 let destination = unit.destination();
+                let queued = unit
+                    .queued_movements()
+                    .iter()
+                    .map(|waypoint| waypoint.destination)
+                    .collect::<Vec<_>>();
                 self.issue_formation_order(unit_id, Formation::Line { files })?;
                 self.validate_formation_placement(unit_id, position)?;
                 if let Some(destination) = destination {
+                    self.validate_formation_placement(unit_id, destination)?;
+                }
+                for destination in queued {
                     self.validate_formation_placement(unit_id, destination)?;
                 }
                 Ok(())

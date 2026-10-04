@@ -78,7 +78,7 @@ impl crate::TacticalBattle {
         if units.iter().any(|unit| unit.side() != side) {
             return Err(TacticalError::InvalidMovementGroup);
         }
-        let anchors = units
+        let mut anchors = units
             .iter()
             .map(|unit| {
                 if order.queued {
@@ -92,6 +92,51 @@ impl crate::TacticalBattle {
                 }
             })
             .collect::<Vec<_>>();
+        if anchors
+            .iter()
+            .map(|point| (point.x_mm, point.y_mm))
+            .collect::<BTreeSet<_>>()
+            .len()
+            != anchors.len()
+        {
+            // Legacy or intentionally coincident positions need distinct slots.
+            let width = units
+                .iter()
+                .map(|unit| {
+                    unit.formation_footprint().max_x_mm - unit.formation_footprint().min_x_mm
+                })
+                .max()
+                .expect("nonempty group") as u64
+                + 1_000;
+            let depth = units
+                .iter()
+                .map(|unit| {
+                    unit.formation_footprint().max_y_mm - unit.formation_footprint().min_y_mm
+                })
+                .max()
+                .expect("nonempty group") as u64
+                + 1_000;
+            let mut columns = 1_usize;
+            while columns < anchors.len().div_ceil(columns) {
+                columns += 1;
+            }
+            anchors = units
+                .iter()
+                .enumerate()
+                .map(|(index, unit)| {
+                    let x = u64::try_from(index % columns).expect("slot fits u64") * width;
+                    let y = u64::try_from(index / columns).expect("slot fits u64") * depth;
+                    Ok(BattlePoint::new(
+                        u32::try_from(x).map_err(|_| {
+                            TacticalError::GroupDestinationOutOfBounds(unit.id().to_owned())
+                        })?,
+                        u32::try_from(y).map_err(|_| {
+                            TacticalError::GroupDestinationOutOfBounds(unit.id().to_owned())
+                        })?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, TacticalError>>()?;
+        }
         let count = anchors.len() as u128;
         let x = anchors
             .iter()

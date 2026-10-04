@@ -290,3 +290,30 @@ uses the existing file/rank axes. Every multi-unit command is validated on a cor
 candidate and committed atomically. Browser and native adapters submit these
 commands through shared tactical controls: Q/E turns, Shift + right-click moves
 with the current facing on arrival, and the frontage request supplies a width.
+
+### Group movement and queued attack-move
+
+`GroupMovementOrder` uses the selected units' integer centroid as its destination
+anchor. Stable unit-ID ordering and relative offsets preserve mixed formations'
+layout. Queued orders use the last planned destination for each unit, preserving
+that layout even while units are moving at different speeds. Coincident legacy
+positions get deterministic grid slots with one-metre spacing around the widest
+and deepest selected footprint. Full-footprint validation applies to every
+resolved destination; one rejection leaves the entire group unchanged.
+
+Each unit carries at most 16 pending `MovementWaypoint`s, excluding its current
+order. Pending waypoints and movement mode survive serialization. Normal orders,
+engagement, Stop, rotation, withdrawal, routing, and destruction clear the queue
+as appropriate. Formation changes also validate pending destinations. Ctrl +
+right-click appends a waypoint. F or the Attack-move button arms the next ground
+order; Ctrl can append that attack-move waypoint too. A successfully issued
+movement order consumes the arming state, and Stop or losing selection clears it.
+
+Attack-move acquires only formed enemy units within the greater of five metres
+and the unit's effective attack range. It chooses the nearest by squared integer
+distance, breaking ties by unit ID, and keeps that target while it remains formed
+and inside that radius. The original destination remains authoritative while
+combat interrupts travel. When the target is defeated, routed, or leaves the
+radius, acquisition runs again and travel resumes. Reaching the destination ends
+attack-move and allows the next waypoint to start. Explicit engagement retains
+its existing pursuit semantics.
