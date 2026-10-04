@@ -100,6 +100,8 @@ pub enum TacticalFinishReason {
     ForceDefeated,
     MutualDefeat,
     SiegeCapture,
+    Withdrawal,
+    MutualWithdrawal,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +149,8 @@ impl Formation {
 enum TacticalUnitState {
     Formed,
     Routed,
+    Withdrawing { routed: bool },
+    Escaped { routed: bool },
     Destroyed,
 }
 
@@ -187,6 +191,8 @@ pub struct TacticalUnit {
     fatigue: u16,
     morale: u16,
     state: TacticalUnitState,
+    #[serde(default)]
+    pursuit_casualties: u16,
 }
 
 impl TacticalUnit {
@@ -214,6 +220,7 @@ impl TacticalUnit {
             fatigue: 0,
             morale: MAX_TACTICAL_MORALE,
             state: TacticalUnitState::Formed,
+            pursuit_casualties: 0,
         }
     }
 
@@ -327,12 +334,60 @@ impl TacticalUnit {
 
     #[must_use]
     pub const fn is_routed(&self) -> bool {
-        matches!(self.state, TacticalUnitState::Routed)
+        matches!(
+            self.state,
+            TacticalUnitState::Routed
+                | TacticalUnitState::Withdrawing { routed: true }
+                | TacticalUnitState::Escaped { routed: true }
+        )
+    }
+
+    #[must_use]
+    pub const fn is_withdrawing(&self) -> bool {
+        matches!(self.state, TacticalUnitState::Withdrawing { .. })
+    }
+
+    #[must_use]
+    pub const fn is_escaped(&self) -> bool {
+        matches!(self.state, TacticalUnitState::Escaped { .. })
+    }
+
+    #[must_use]
+    pub const fn can_receive_orders(&self) -> bool {
+        matches!(self.state, TacticalUnitState::Formed)
+    }
+
+    #[must_use]
+    pub const fn pursuit_casualties(&self) -> u16 {
+        self.pursuit_casualties
+    }
+
+    const fn is_pursuit_target(&self) -> bool {
+        matches!(
+            self.state,
+            TacticalUnitState::Routed | TacticalUnitState::Withdrawing { .. }
+        )
     }
 
     #[must_use]
     pub const fn is_destroyed(&self) -> bool {
         matches!(self.state, TacticalUnitState::Destroyed)
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WithdrawalSides {
+    attacker: bool,
+    defender: bool,
+}
+
+impl WithdrawalSides {
+    const fn contains(self, side: BattleSide) -> bool {
+        match side {
+            BattleSide::Attacker => self.attacker,
+            BattleSide::Defender => self.defender,
+        }
     }
 }
 
@@ -350,6 +405,8 @@ pub struct TacticalBattle {
     #[serde(skip_serializing_if = "Option::is_none")]
     completion_rules: Option<TacticalCompletionRules>,
     state: TacticalBattleState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    withdrawal: Option<WithdrawalSides>,
 }
 
 #[derive(Deserialize)]
@@ -368,6 +425,8 @@ struct TacticalBattleWire {
     completion_rules: Option<TacticalCompletionRules>,
     #[serde(default)]
     state: TacticalBattleState,
+    #[serde(default)]
+    withdrawal: Option<WithdrawalSides>,
 }
 
 impl From<TacticalBattleWire> for TacticalBattle {
@@ -381,6 +440,7 @@ impl From<TacticalBattleWire> for TacticalBattle {
             campaign_seed: wire.campaign_seed,
             completion_rules: wire.completion_rules,
             state: wire.state,
+            withdrawal: wire.withdrawal,
             units: wire.units,
         }
     }
@@ -477,6 +537,7 @@ impl TacticalBattle {
             campaign_seed: None,
             completion_rules: None,
             state: TacticalBattleState::Running,
+            withdrawal: None,
             units,
         })
     }
@@ -601,7 +662,85 @@ impl TacticalBattle {
         let Some(siege) = &mut self.siege else {
             return Err(TacticalError::NotSiegeBattle);
         };
+        if gate_state == SiegeGateState::Closed
+            && self.units.iter().any(|unit| {
+                unit.side == BattleSide::Attacker
+                    && unit.is_withdrawing()
+                    && unit.position.x_mm >= siege.layout.gate.min_x_mm
+            })
+        {
+            return Err(TacticalError::SiegeExitInUse);
+        }
         siege.gate_state = gate_state;
+        Ok(())
+    }
+
+    /// Commits a side to retreat toward its entry edge. Arrival marks a whole
+    /// unit escaped; until then existing pursuit rules can inflict casualties.
+    /// Fortress defenders have no exit in the prototype layout. Attackers
+    /// inside its wall need a traversable gate. Repeated intents are idempotent.
+    pub fn withdraw(&mut self, side: BattleSide) -> Result<(), TacticalError> {
+        self.validate_withdrawal(side)?;
+        if self
+            .withdrawal
+            .is_some_and(|withdrawal| withdrawal.contains(side))
+        {
+            return Ok(());
+        }
+        let withdrawal = self.withdrawal.get_or_insert_with(WithdrawalSides::default);
+        match side {
+            BattleSide::Attacker => withdrawal.attacker = true,
+            BattleSide::Defender => withdrawal.defender = true,
+        }
+        for unit in self
+            .units
+            .iter_mut()
+            .filter(|unit| unit.side == side && !unit.is_destroyed() && !unit.is_escaped())
+        {
+            unit.state = TacticalUnitState::Withdrawing {
+                routed: unit.is_routed(),
+            };
+            unit.engagement_target = None;
+            unit.destination = None;
+        }
+        self.update_completion();
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn can_withdraw(&self, side: BattleSide) -> bool {
+        !self
+            .withdrawal
+            .is_some_and(|withdrawal| withdrawal.contains(side))
+            && self.validate_withdrawal(side).is_ok()
+    }
+
+    fn validate_withdrawal(&self, side: BattleSide) -> Result<(), TacticalError> {
+        self.ensure_running()?;
+        if self.completion_rules.is_none() {
+            return Err(TacticalError::WithdrawalRequiresStartedBattle);
+        }
+        if self
+            .withdrawal
+            .is_some_and(|withdrawal| withdrawal.contains(side))
+        {
+            return Ok(());
+        }
+        let survivors = || {
+            self.units
+                .iter()
+                .filter(|unit| unit.side == side && !unit.is_destroyed() && !unit.is_escaped())
+        };
+        if survivors().next().is_none() {
+            return Err(TacticalError::WithdrawalNoSurvivors(side));
+        }
+        if let Some(siege) = self.siege
+            && (side == BattleSide::Defender
+                || (!siege.gate_state.is_traversable()
+                    && survivors().any(|unit| unit.position.x_mm >= siege.layout.gate.min_x_mm)))
+        {
+            return Err(TacticalError::WithdrawalBlockedBySiege(side));
+        }
         Ok(())
     }
 
@@ -650,6 +789,9 @@ impl TacticalBattle {
                 unit_id: unit_id.to_owned(),
                 target_unit_id: target_unit_id.to_owned(),
             });
+        }
+        if self.units[target_index].is_escaped() {
+            return Err(TacticalError::TargetEscaped(target_unit_id.to_owned()));
         }
         if self.units[target_index].state == TacticalUnitState::Destroyed {
             return Err(TacticalError::TargetDestroyed(target_unit_id.to_owned()));
@@ -713,6 +855,26 @@ impl TacticalBattle {
         let captured_by = self.siege.and_then(|siege| siege.capture.captured_by);
         let result = if let Some(winner) = captured_by {
             Some((Some(winner), TacticalFinishReason::SiegeCapture))
+        } else if let Some(withdrawal) = self.withdrawal {
+            let pending = |side| {
+                self.units
+                    .iter()
+                    .any(|unit| unit.side == side && unit.is_withdrawing())
+            };
+            match (withdrawal.attacker, withdrawal.defender) {
+                (true, true)
+                    if !pending(BattleSide::Attacker) && !pending(BattleSide::Defender) =>
+                {
+                    Some((None, TacticalFinishReason::MutualWithdrawal))
+                }
+                (true, false) if !pending(BattleSide::Attacker) => {
+                    Some((Some(BattleSide::Defender), TacticalFinishReason::Withdrawal))
+                }
+                (false, true) if !pending(BattleSide::Defender) => {
+                    Some((Some(BattleSide::Attacker), TacticalFinishReason::Withdrawal))
+                }
+                _ => None,
+            }
         } else {
             let active = |side| {
                 self.units.iter().any(|unit| {
@@ -780,7 +942,10 @@ impl TacticalBattle {
             match snapshot[index].state {
                 TacticalUnitState::Formed => self.advance_formed_unit(index, &snapshot),
                 TacticalUnitState::Routed => self.advance_routed_unit(index, &snapshot),
-                TacticalUnitState::Destroyed => {}
+                TacticalUnitState::Withdrawing { routed } => {
+                    self.advance_withdrawing_unit(index, &snapshot, routed)
+                }
+                TacticalUnitState::Escaped { .. } | TacticalUnitState::Destroyed => {}
             }
         }
     }
@@ -791,9 +956,9 @@ impl TacticalBattle {
             .engagement_target
             .as_deref()
             .and_then(|target_id| snapshot.iter().find(|target| target.id == target_id))
-            .filter(|target| target.state != TacticalUnitState::Destroyed);
+            .filter(|target| !target.is_destroyed() && !target.is_escaped());
         if let Some(target) = target
-            && target.state == TacticalUnitState::Routed
+            && target.is_pursuit_target()
             && !points_within_distance(unit.position, target.position, PURSUIT_DISTANCE_MM)
         {
             self.units[index].engagement_target = None;
@@ -825,12 +990,11 @@ impl TacticalBattle {
             return;
         }
 
-        let base_movement_speed =
-            if target.is_some_and(|target| target.state == TacticalUnitState::Routed) {
-                unit.speed_mm_per_tick.saturating_mul(2)
-            } else {
-                unit.speed_mm_per_tick
-            };
+        let base_movement_speed = if target.is_some_and(|target| target.is_pursuit_target()) {
+            unit.speed_mm_per_tick.saturating_mul(2)
+        } else {
+            unit.speed_mm_per_tick
+        };
         let movement_speed = self.terrain().movement_speed_mm_per_tick(
             self.battlefield,
             unit.position,
@@ -847,6 +1011,40 @@ impl TacticalBattle {
             self.units[index].fatigue = self.units[index]
                 .fatigue
                 .saturating_add(MOVEMENT_FATIGUE_PER_TICK)
+                .min(MAX_TACTICAL_FATIGUE);
+        }
+    }
+
+    fn advance_withdrawing_unit(&mut self, index: usize, snapshot: &[TacticalUnit], routed: bool) {
+        let unit = &snapshot[index];
+        let edge = match unit.side {
+            BattleSide::Attacker => 0,
+            BattleSide::Defender => self.battlefield.width_mm,
+        };
+        let destination = BattlePoint::new(edge, unit.position.y_mm);
+        let base_speed = if routed {
+            unit.speed_mm_per_tick.saturating_mul(2)
+        } else {
+            unit.speed_mm_per_tick
+        };
+        let speed =
+            self.terrain
+                .movement_speed_mm_per_tick(self.battlefield, unit.position, base_speed);
+        let waypoint = self.movement_waypoint(unit.position, destination);
+        let next = move_point_toward(unit.position, waypoint, speed);
+        debug_assert!(self.is_passable_at(next));
+        let unit = &mut self.units[index];
+        unit.position = next;
+        if next.x_mm == edge {
+            unit.state = TacticalUnitState::Escaped { routed };
+        } else if next != snapshot[index].position {
+            unit.fatigue = unit
+                .fatigue
+                .saturating_add(if routed {
+                    ROUT_FATIGUE_PER_TICK
+                } else {
+                    MOVEMENT_FATIGUE_PER_TICK
+                })
                 .min(MAX_TACTICAL_FATIGUE);
         }
     }
@@ -904,7 +1102,7 @@ impl TacticalBattle {
             let Some(target) = snapshot.iter().find(|target| target.id == target_id) else {
                 continue;
             };
-            if target.state == TacticalUnitState::Destroyed || target.side == unit.side {
+            if target.is_destroyed() || target.is_escaped() || target.side == unit.side {
                 continue;
             }
             let pair = if unit.id < target.id {
@@ -1015,26 +1213,30 @@ impl TacticalBattle {
                     engaged_units.insert(left.id.clone());
                     engaged_units.insert(right.id.clone());
                 }
-                (TacticalUnitState::Formed, TacticalUnitState::Routed)
-                    if left.engagement_target.as_deref() == Some(right.id.as_str())
-                        && points_within_distance(
-                            left.position,
-                            right.position,
-                            PURSUIT_DISTANCE_MM,
-                        ) =>
+                (
+                    TacticalUnitState::Formed,
+                    TacticalUnitState::Routed | TacticalUnitState::Withdrawing { .. },
+                ) if left.engagement_target.as_deref() == Some(right.id.as_str())
+                    && points_within_distance(
+                        left.position,
+                        right.position,
+                        PURSUIT_DISTANCE_MM,
+                    ) =>
                 {
                     *casualties.entry(right.id.clone()).or_default() += u32::from(
                         pursuit_casualties(left, right, self.terrain, self.battlefield),
                     );
                     engaged_units.insert(left.id.clone());
                 }
-                (TacticalUnitState::Routed, TacticalUnitState::Formed)
-                    if right.engagement_target.as_deref() == Some(left.id.as_str())
-                        && points_within_distance(
-                            left.position,
-                            right.position,
-                            PURSUIT_DISTANCE_MM,
-                        ) =>
+                (
+                    TacticalUnitState::Routed | TacticalUnitState::Withdrawing { .. },
+                    TacticalUnitState::Formed,
+                ) if right.engagement_target.as_deref() == Some(left.id.as_str())
+                    && points_within_distance(
+                        left.position,
+                        right.position,
+                        PURSUIT_DISTANCE_MM,
+                    ) =>
                 {
                     *casualties.entry(left.id.clone()).or_default() += u32::from(
                         pursuit_casualties(right, left, self.terrain, self.battlefield),
@@ -1063,6 +1265,10 @@ impl TacticalBattle {
                 continue;
             }
             let applied = u16::try_from(requested_losses.min(u32::from(before))).unwrap();
+            if self.units[index].is_pursuit_target() {
+                self.units[index].pursuit_casualties =
+                    self.units[index].pursuit_casualties.saturating_add(applied);
+            }
             self.units[index].soldiers -= applied;
             if self.units[index].soldiers == 0 {
                 self.units[index].morale = 0;
@@ -1072,11 +1278,15 @@ impl TacticalBattle {
                 continue;
             }
 
-            if self.units[index].state == TacticalUnitState::Formed {
+            if self.units[index].can_receive_orders() || self.units[index].is_withdrawing() {
                 let shock = casualty_morale_shock(before, applied);
                 self.units[index].morale = self.units[index].morale.saturating_sub(shock);
                 if self.units[index].morale <= ROUT_MORALE_THRESHOLD {
-                    self.units[index].state = TacticalUnitState::Routed;
+                    self.units[index].state = if self.units[index].is_withdrawing() {
+                        TacticalUnitState::Withdrawing { routed: true }
+                    } else {
+                        TacticalUnitState::Routed
+                    };
                     self.units[index].destination = None;
                     self.units[index].engagement_target = None;
                 }
@@ -1098,7 +1308,10 @@ impl TacticalBattle {
             let Some(target_id) = unit.engagement_target.as_deref() else {
                 continue;
             };
-            if states.get(target_id) == Some(&TacticalUnitState::Destroyed) {
+            if matches!(
+                states.get(target_id),
+                Some(TacticalUnitState::Destroyed | TacticalUnitState::Escaped { .. })
+            ) {
                 unit.engagement_target = None;
             }
         }
@@ -1118,6 +1331,10 @@ pub enum TacticalError {
         side: BattleSide,
     },
     BattleFinished,
+    WithdrawalRequiresStartedBattle,
+    WithdrawalNoSurvivors(BattleSide),
+    WithdrawalBlockedBySiege(BattleSide),
+    TargetEscaped(String),
     EmptyUnitId,
     DuplicateUnitId(String),
     ZeroSoldiers(String),
@@ -1162,6 +1379,7 @@ pub enum TacticalError {
     },
     TargetDestroyed(String),
     NotSiegeBattle,
+    SiegeExitInUse,
 }
 
 impl fmt::Display for TacticalError {
@@ -1183,6 +1401,19 @@ impl fmt::Display for TacticalError {
                 formatter,
                 "{side:?} deployment has no legal space for formation {unit_id}"
             ),
+            Self::WithdrawalRequiresStartedBattle => {
+                write!(formatter, "withdrawal requires a started tactical match")
+            }
+            Self::WithdrawalNoSurvivors(side) => {
+                write!(formatter, "{side:?} has no surviving units to withdraw")
+            }
+            Self::WithdrawalBlockedBySiege(side) => write!(
+                formatter,
+                "{side:?} has no legal exit from the current siege"
+            ),
+            Self::TargetEscaped(unit_id) => {
+                write!(formatter, "tactical unit {unit_id} has escaped")
+            }
             Self::BattleFinished => write!(formatter, "the tactical battle has finished"),
             Self::EmptyUnitId => write!(formatter, "tactical unit IDs must not be empty"),
             Self::DuplicateUnitId(unit_id) => {
@@ -1260,6 +1491,9 @@ impl fmt::Display for TacticalError {
             ),
             Self::TargetDestroyed(unit_id) => {
                 write!(formatter, "tactical unit {unit_id} is already destroyed")
+            }
+            Self::SiegeExitInUse => {
+                write!(formatter, "withdrawing units still need the siege exit")
             }
             Self::NotSiegeBattle => write!(formatter, "battle has no siege state"),
         }

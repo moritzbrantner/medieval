@@ -148,7 +148,7 @@ impl BattleRenderSnapshot {
         let units = battle
             .units()
             .iter()
-            .filter(|unit| !unit.is_destroyed())
+            .filter(|unit| !unit.is_destroyed() && !unit.is_escaped())
             .map(|unit| {
                 let terrain_elevation_mm =
                     terrain_height_mm(terrain, battlefield, unit.position()) as f32;

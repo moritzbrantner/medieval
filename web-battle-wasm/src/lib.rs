@@ -138,6 +138,7 @@ struct SandboxStatus {
     tick: u64,
     battle_state: TacticalBattleState,
     paused: bool,
+    can_withdraw: bool,
     outcome: Option<&'static str>,
     selected_units: Vec<String>,
     deployment_zones: [DeploymentZone; 2],
@@ -180,6 +181,9 @@ struct UnitStatus {
     attack_range_mm: u32,
     routed: bool,
     destroyed: bool,
+    withdrawing: bool,
+    escaped: bool,
+    pursuit_casualties: u16,
     selected: bool,
     engagement_target: Option<String>,
     destination: Option<BattlePoint>,
@@ -338,8 +342,7 @@ impl BrowserSandbox {
                     self.battle.units().iter().find(|unit| {
                         unit.id() == unit_id
                             && unit.side() == BattleSide::Attacker
-                            && !unit.is_routed()
-                            && !unit.is_destroyed()
+                            && unit.can_receive_orders()
                     })
                 });
                 let request = if let Some(unit) = selectable {
@@ -361,8 +364,7 @@ impl BrowserSandbox {
                     self.battle.units().iter().find(|unit| {
                         unit.id() == unit_id
                             && unit.side() == BattleSide::Defender
-                            && !unit.is_routed()
-                            && !unit.is_destroyed()
+                            && unit.can_receive_orders()
                     })
                 });
                 let request = if let Some(unit) = enemy {
@@ -501,6 +503,9 @@ impl BrowserSandbox {
                     attack_range_mm: unit.attack_range_mm(),
                     routed: unit.is_routed(),
                     destroyed: unit.is_destroyed(),
+                    withdrawing: unit.is_withdrawing(),
+                    escaped: unit.is_escaped(),
+                    pursuit_casualties: unit.pursuit_casualties(),
                     selected: selected.contains(unit.id()),
                     engagement_target: unit.engagement_target().map(str::to_owned),
                     destination: unit.destination(),
@@ -522,6 +527,7 @@ impl BrowserSandbox {
             tick: self.battle.tick(),
             battle_state: self.battle.state(),
             paused: self.paused,
+            can_withdraw: self.battle.can_withdraw(BattleSide::Attacker),
             outcome: self.outcome(),
             selected_units: selected.into_iter().map(str::to_owned).collect(),
             deployment_zones: self.battle.deployment_zones(),
@@ -768,7 +774,7 @@ fn drive_opponent(battle: &mut TacticalBattle) -> Result<(), String> {
         .units()
         .iter()
         .filter(|unit| {
-            unit.side() == BattleSide::Attacker && !unit.is_routed() && !unit.is_destroyed()
+            unit.side() == BattleSide::Attacker && (unit.can_receive_orders() || unit.is_withdrawing())
         })
         .map(|unit| (unit.id().to_owned(), unit.position()))
         .collect::<Vec<_>>();
@@ -779,7 +785,7 @@ fn drive_opponent(battle: &mut TacticalBattle) -> Result<(), String> {
         .units()
         .iter()
         .filter(|unit| {
-            unit.side() == BattleSide::Defender && !unit.is_routed() && !unit.is_destroyed()
+            unit.side() == BattleSide::Defender && unit.can_receive_orders()
         })
         .map(|unit| {
             (
@@ -854,7 +860,6 @@ fn pick_unit(
     snapshot
         .units
         .iter()
-        .filter(|unit| !unit.routed)
         .filter_map(|unit| {
             let (anchor_x, anchor_y) = projected_pixel(
                 snapshot,

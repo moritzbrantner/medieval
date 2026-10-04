@@ -256,3 +256,28 @@ test("unit kinds reach status and visible rows directly from core", async ({ pag
   }
   await page.screenshot({ path: test.info().outputPath("unit-kinds.png") });
 });
+
+test("withdrawal preserves escaped soldiers and projects the core terminal result", async ({ page }) => {
+  await page.goto("/battle.html?e2e-controls=1");
+  await page.getByRole("button", { name: "Enter battle" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  const before = await status(page);
+  await page.getByRole("button", { name: "Withdraw", exact: true }).click();
+  expect((await status(page)).canWithdraw).toBe(false);
+  await page.getByRole("button", { name: "Resume", exact: true }).click();
+  await expect.poll(async () => (await status(page)).outcome).toBe("playerDefeat");
+  const after = await status(page);
+  expect(after.battleState.phase).toBe("finished");
+  expect(after.battleState.reason).toBe("withdrawal");
+  const escapedPlayers = after.units.filter((unit) => unit.side === "player");
+  expect(escapedPlayers).toHaveLength(3);
+  for (const unit of escapedPlayers) {
+    expect(unit.escaped).toBe(true);
+    expect(unit.soldiers).toBe(before.units.find((original) => original.id === unit.id).soldiers);
+    expect(unit.pursuitCasualties).toBe(0);
+  }
+  await expect(page.locator("#battle-state")).toHaveText("Your force withdrew from the battlefield.");
+  await expect(page.getByRole("button", { name: "Withdraw", exact: true })).toBeDisabled();
+  await page.screenshot({ path: test.info().outputPath("withdrawal.png") });
+});

@@ -369,7 +369,7 @@ impl DesktopInputState {
             units_in_viewport_rect(battle, controls, player_side, start, end)
         } else {
             nearest_unit_at_pointer(battle, controls, end, |unit| {
-                unit.side() == player_side && !unit.is_routed() && !unit.is_destroyed()
+                unit.side() == player_side && unit.can_receive_orders()
             })
             .into_iter()
             .collect()
@@ -406,7 +406,7 @@ impl DesktopInputState {
         sample: PointerSample,
     ) -> Result<(), String> {
         if let Some(target_unit_id) = nearest_unit_at_pointer(battle, controls, sample, |unit| {
-            unit.side() != player_side && !unit.is_destroyed()
+            unit.side() != player_side && !unit.is_destroyed() && !unit.is_escaped()
         }) {
             let result = apply_control(
                 battle,
@@ -553,7 +553,7 @@ fn units_in_viewport_rect(
             else {
                 return false;
             };
-            if unit.side() != player_side || unit.is_routed() || unit.is_destroyed() {
+            if unit.side() != player_side || !unit.can_receive_orders() {
                 return false;
             }
             let Some([x, y]) = snapshot.camera.project_world_point_on_terrain(
