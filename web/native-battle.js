@@ -17,6 +17,8 @@ const tacticalKeys = new Set([
   "Space",
   "KeyS",
   "KeyR",
+  "KeyQ",
+  "KeyE",
   "Escape",
   "Digit0",
   "Digit1",
