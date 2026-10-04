@@ -13,6 +13,7 @@ const DEFAULT_DEFINITIONS: &str = include_str!("../data/provinces-v1.json");
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BattlefieldDefinition {
     pub id: String,
+    #[serde(deserialize_with = "deserialize_battlefield_context")]
     pub context: ProvinceBattlefieldContext,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +78,18 @@ impl std::error::Error for ProvinceDefinitionError {}
 
 impl ProvinceDefinitions {
     pub fn from_json(json: &str) -> Result<Self, ProvinceDefinitionError> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Header {
+            schema_version: u32,
+        }
+        let header: Header = serde_json::from_str(json)
+            .map_err(|error| ProvinceDefinitionError::InvalidJson(error.to_string()))?;
+        if header.schema_version != PROVINCE_DEFINITION_SCHEMA_VERSION {
+            return Err(ProvinceDefinitionError::UnsupportedVersion(
+                header.schema_version,
+            ));
+        }
         let document = serde_json::from_str(json)
             .map_err(|error| ProvinceDefinitionError::InvalidJson(error.to_string()))?;
         Self::validate(document)
@@ -253,4 +266,23 @@ fn validate_id(id: &str) -> Result<(), ProvinceDefinitionError> {
 }
 fn invalid<T>(message: impl Into<String>) -> Result<T, ProvinceDefinitionError> {
     Err(ProvinceDefinitionError::InvalidDefinition(message.into()))
+}
+
+fn deserialize_battlefield_context<'de, D>(
+    deserializer: D,
+) -> Result<ProvinceBattlefieldContext, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct Context {
+        location: crate::BattlefieldLocation,
+        fortified: bool,
+    }
+    let context = Context::deserialize(deserializer)?;
+    Ok(ProvinceBattlefieldContext {
+        location: context.location,
+        fortified: context.fortified,
+    })
 }
