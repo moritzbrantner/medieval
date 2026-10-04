@@ -130,7 +130,7 @@ impl TacticalBattle {
         self.issue_facing_order(unit_id, facing)
     }
 
-    fn validate_formation_placement(
+    pub(crate) fn validate_formation_placement(
         &self,
         unit_id: &str,
         position: BattlePoint,

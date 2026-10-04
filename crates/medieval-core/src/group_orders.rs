@@ -52,3 +52,84 @@ where
     }
     Ok(waypoints)
 }
+
+impl crate::TacticalBattle {
+    pub fn issue_group_movement(
+        &mut self,
+        order: GroupMovementOrder,
+    ) -> Result<(), crate::TacticalError> {
+        use crate::{BattlePoint, TacticalError};
+        use std::collections::BTreeSet;
+        self.ensure_running()?;
+        let ids = order.unit_ids.iter().collect::<BTreeSet<_>>();
+        if ids.is_empty() || ids.len() != order.unit_ids.len() {
+            return Err(TacticalError::InvalidMovementGroup);
+        }
+        let mut units = Vec::with_capacity(ids.len());
+        for id in ids {
+            let unit = self
+                .units()
+                .iter()
+                .find(|unit| unit.id() == id)
+                .ok_or_else(|| TacticalError::UnitNotFound(id.clone()))?;
+            units.push(unit);
+        }
+        let side = units[0].side();
+        if units.iter().any(|unit| unit.side() != side) {
+            return Err(TacticalError::InvalidMovementGroup);
+        }
+        let anchors = units
+            .iter()
+            .map(|unit| {
+                if order.queued {
+                    unit.queued_movements()
+                        .last()
+                        .map(|waypoint| waypoint.destination)
+                        .or(unit.destination())
+                        .unwrap_or(unit.position())
+                } else {
+                    unit.position()
+                }
+            })
+            .collect::<Vec<_>>();
+        let count = anchors.len() as u128;
+        let x = anchors
+            .iter()
+            .map(|point| u128::from(point.x_mm))
+            .sum::<u128>()
+            / count;
+        let y = anchors
+            .iter()
+            .map(|point| u128::from(point.y_mm))
+            .sum::<u128>()
+            / count;
+        let centre = BattlePoint::new(
+            u32::try_from(x).expect("centroid is bounded by positions"),
+            u32::try_from(y).expect("centroid is bounded by positions"),
+        );
+        let mut candidate = self.clone();
+        for (unit, anchor) in units.into_iter().zip(anchors) {
+            let x =
+                i64::from(order.destination.x_mm) + i64::from(anchor.x_mm) - i64::from(centre.x_mm);
+            let y =
+                i64::from(order.destination.y_mm) + i64::from(anchor.y_mm) - i64::from(centre.y_mm);
+            let (Ok(x), Ok(y)) = (u32::try_from(x), u32::try_from(y)) else {
+                return Err(TacticalError::GroupDestinationOutOfBounds(
+                    unit.id().to_owned(),
+                ));
+            };
+            let destination = BattlePoint::new(x, y);
+            candidate.validate_formation_placement(unit.id(), destination)?;
+            candidate.issue_unit_waypoint(
+                unit.id(),
+                MovementWaypoint {
+                    destination,
+                    mode: order.mode,
+                },
+                order.queued,
+            )?;
+        }
+        *self = candidate;
+        Ok(())
+    }
+}
