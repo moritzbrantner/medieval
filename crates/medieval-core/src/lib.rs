@@ -10,6 +10,7 @@ mod campaign_resolution;
 mod deployment;
 mod save;
 mod tactical;
+mod tactical_opponent;
 mod tactical_result;
 mod terrain;
 pub use battle::{ArmyRoster, BattleOutcome, BattleReport};
