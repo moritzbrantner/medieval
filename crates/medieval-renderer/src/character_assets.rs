@@ -74,9 +74,9 @@ impl CharacterAssetPack {
         let palette = CharacterPaletteUniform {
             colors: palette_colors(&manifest)?,
         };
-        let soldier = parse_obj("soldier", SOLDIER_OBJ, binding(&manifest, "soldier")?)?;
-        let archer = parse_obj("archer", ARCHER_OBJ, binding(&manifest, "archer")?)?;
-        let knight = parse_obj("knight", KNIGHT_OBJ, binding(&manifest, "knight")?)?;
+        let soldier = load_character_mesh("soldier", SOLDIER_OBJ, binding(&manifest, "soldier")?)?;
+        let archer = load_character_mesh("archer", ARCHER_OBJ, binding(&manifest, "archer")?)?;
+        let knight = load_character_mesh("knight", KNIGHT_OBJ, binding(&manifest, "knight")?)?;
         Ok(Self {
             soldier,
             archer,
@@ -122,91 +122,43 @@ fn palette_colors(manifest: &MaterialManifest) -> Result<[[f32; 4]; 14], String>
     Ok(colors)
 }
 
-fn parse_obj(
+fn load_character_mesh(
     archetype: &str,
     source: &str,
     bindings: &BTreeMap<String, String>,
 ) -> Result<CharacterMeshAsset, String> {
-    let mut positions = Vec::<[f32; 3]>::new();
-    let mut vertices = Vec::<CharacterVertex>::new();
-    let mut active_role = None::<usize>;
-
-    for (line_number, line) in source.lines().enumerate() {
-        if let Some(group) = line.strip_prefix("g ") {
-            let material = bindings.get(group).ok_or_else(|| {
-                format!(
-                    "{archetype} OBJ group {group} has no material binding at line {}",
-                    line_number + 1
-                )
-            })?;
-            active_role = Some(material_role(material)?);
-        } else if let Some(position) = line.strip_prefix("v ") {
-            let values = position
-                .split_ascii_whitespace()
-                .map(str::parse::<f32>)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| {
-                    format!(
-                        "invalid {archetype} OBJ vertex at line {}: {error}",
-                        line_number + 1
-                    )
+    let asset = three_d_formats::load_obj(source.as_bytes())
+        .map_err(|error| format!("invalid packaged {archetype} geometry: {error}"))?;
+    let mut vertices = Vec::new();
+    for asset_mesh in asset.meshes() {
+        let group = asset_mesh
+            .name()
+            .ok_or_else(|| format!("{archetype} mesh has no material-bound name"))?;
+        let material = bindings
+            .get(group)
+            .ok_or_else(|| format!("{archetype} mesh {group} has no material binding"))?;
+        let role = material_role(material)?;
+        for primitive in asset_mesh.primitives() {
+            let mesh = primitive.mesh();
+            for triangle_index in 0..mesh.triangle_count() {
+                let triangle = mesh
+                    .triangle(triangle_index)
+                    .expect("validated mesh triangle exists");
+                let normal = mesh.triangle_normal(triangle_index).ok_or_else(|| {
+                    format!("{archetype} mesh {group} contains a degenerate triangle")
                 })?;
-            let [x, y, z] = values.as_slice() else {
-                return Err(format!(
-                    "{archetype} OBJ vertex at line {} must have three coordinates",
-                    line_number + 1
-                ));
-            };
-            positions.push([*x, *y, *z]);
-        } else if let Some(face) = line.strip_prefix("f ") {
-            let role = active_role.ok_or_else(|| {
-                format!(
-                    "{archetype} OBJ face precedes a material-bound group at line {}",
-                    line_number + 1
-                )
-            })?;
-            let indices = face
-                .split_ascii_whitespace()
-                .map(|token| {
-                    token
-                        .split('/')
-                        .next()
-                        .ok_or_else(|| "missing OBJ vertex index".to_owned())?
-                        .parse::<usize>()
-                        .map_err(|error| format!("invalid OBJ vertex index: {error}"))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let [a, b, c] = indices.as_slice() else {
-                return Err(format!(
-                    "{archetype} OBJ face at line {} must be a triangle",
-                    line_number + 1
-                ));
-            };
-            let triangle = [*a, *b, *c].map(|index| {
-                positions.get(index.saturating_sub(1)).copied().ok_or_else(|| {
-                    format!(
-                        "{archetype} OBJ face at line {} references vertex {index} out of range",
-                        line_number + 1
-                    )
-                })
-            });
-            let [a, b, c] = [
-                triangle[0].clone()?,
-                triangle[1].clone()?,
-                triangle[2].clone()?,
-            ];
-            let normal = triangle_normal(a, b, c)?;
-            for position in [a, b, c] {
-                vertices.push(CharacterVertex {
-                    position_role: [position[0], position[1], position[2], role as f32],
-                    normal_padding: [normal[0], normal[1], normal[2], 0.0],
-                });
+                for index in triangle.0 {
+                    let point = mesh.vertices()[index as usize];
+                    vertices.push(CharacterVertex {
+                        position_role: [point.x, point.y, point.z, role as f32],
+                        normal_padding: [normal.x, normal.y, normal.z, 0.0],
+                    });
+                }
             }
         }
     }
-
     if vertices.is_empty() {
-        return Err(format!("{archetype} packaged OBJ contains no triangles"));
+        return Err(format!("{archetype} packaged asset contains no triangles"));
     }
     Ok(CharacterMeshAsset { vertices })
 }
@@ -216,21 +168,6 @@ fn material_role(material: &str) -> Result<usize, String> {
         .iter()
         .position(|candidate| *candidate == material)
         .ok_or_else(|| format!("unsupported character material role {material}"))
-}
-
-fn triangle_normal(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> Result<[f32; 3], String> {
-    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-    let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-    let normal = [
-        ab[1] * ac[2] - ab[2] * ac[1],
-        ab[2] * ac[0] - ab[0] * ac[2],
-        ab[0] * ac[1] - ab[1] * ac[0],
-    ];
-    let length = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
-    if !length.is_finite() || length <= f32::EPSILON {
-        return Err("packaged character OBJ contains a degenerate triangle".to_owned());
-    }
-    Ok([normal[0] / length, normal[1] / length, normal[2] / length])
 }
 
 #[cfg(test)]
