@@ -78,7 +78,16 @@ impl NativeBattleSession {
         let ticks = u32::try_from(self.tick_remainder.as_nanos() / u128::from(tick_nanos))
             .expect("a one-second frame interval fits in u32 ticks");
         self.tick_remainder -= Duration::from_nanos(u64::from(ticks) * tick_nanos);
+        let previous_tick = self.battle.tick();
         self.battle.advance_ticks(ticks);
+        let plan_interval = u64::from(TACTICAL_TICKS_PER_SECOND);
+        if self.battle.campaign_seed().is_some()
+            && previous_tick / plan_interval != self.battle.tick() / plan_interval
+        {
+            self.battle
+                .plan_opponent_orders(BattleSide::Defender)
+                .expect("core opponent planning uses only valid active units");
+        }
         self.controls.sync_with_battle(&self.battle);
     }
 
@@ -408,7 +417,11 @@ pub async fn open_native_campaign_battle(
     state: State<'_, NativeBattleState>,
     seed: TacticalBattleSeed,
 ) -> Result<NativeBattleOpenResult, String> {
-    let battle = TacticalBattle::from_campaign_seed(FlatBattlefield::new(120_000, 80_000), seed)
+    let mut battle =
+        TacticalBattle::from_campaign_seed(FlatBattlefield::new(120_000, 80_000), seed)
+            .map_err(|error| error.to_string())?;
+    battle
+        .plan_opponent_orders(BattleSide::Defender)
         .map_err(|error| error.to_string())?;
     let player_side = BattleSide::Attacker;
     let controls = TacticalControls::new(&battle, player_side);
@@ -797,6 +810,36 @@ mod tests {
         assert_ne!(before.camera, after.camera);
         assert!(before.units[0].selected);
         assert!(!after.units[0].selected);
+    }
+
+    #[test]
+    fn native_campaign_clock_assigns_defender_orders() {
+        let mut campaign = medieval_core::new_campaign();
+        campaign.move_army("england-main", "paris").unwrap();
+        let battle = TacticalBattle::from_campaign_seed(
+            FlatBattlefield::new(120_000, 80_000),
+            campaign.pending_tactical_battle_seed().unwrap(),
+        )
+        .unwrap();
+        let mut session = NativeBattleSession {
+            controls: TacticalControls::new(&battle, BattleSide::Attacker),
+            battle,
+            player_side: BattleSide::Attacker,
+            input: DesktopInputState::default(),
+            last_tick_at: None,
+            tick_remainder: Duration::ZERO,
+        };
+        let start = Instant::now();
+        session.advance_to(start);
+        session.advance_to(start + Duration::from_secs(1));
+        assert!(
+            session
+                .battle
+                .units()
+                .iter()
+                .filter(|unit| unit.side() == BattleSide::Defender)
+                .all(|unit| unit.engagement_target().is_some())
+        );
     }
 
     #[test]

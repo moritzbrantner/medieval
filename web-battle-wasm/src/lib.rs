@@ -787,60 +787,9 @@ fn unit(
 }
 
 fn drive_opponent(battle: &mut TacticalBattle) -> Result<(), String> {
-    if !matches!(battle.state(), TacticalBattleState::Running) {
-        return Ok(());
-    }
-    let attackers = battle
-        .units()
-        .iter()
-        .filter(|unit| {
-            unit.side() == BattleSide::Attacker
-                && (unit.can_receive_orders() || unit.is_withdrawing())
-        })
-        .map(|unit| (unit.id().to_owned(), unit.position()))
-        .collect::<Vec<_>>();
-    if attackers.is_empty() {
-        return Ok(());
-    }
-    let defenders = battle
-        .units()
-        .iter()
-        .filter(|unit| unit.side() == BattleSide::Defender && unit.can_receive_orders())
-        .map(|unit| {
-            (
-                unit.id().to_owned(),
-                unit.position(),
-                unit.engagement_target().map(str::to_owned),
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut assignments = Vec::with_capacity(defenders.len());
-    for (defender_id, defender_position, current_target) in defenders {
-        let target = attackers
-            .iter()
-            .min_by(|left, right| {
-                distance_squared(defender_position, left.1)
-                    .cmp(&distance_squared(defender_position, right.1))
-                    .then_with(|| left.0.cmp(&right.0))
-            })
-            .map(|candidate| candidate.0.clone())
-            .expect("non-empty attacker set has a nearest unit");
-        if current_target.as_deref() != Some(target.as_str()) {
-            assignments.push((defender_id, target));
-        }
-    }
-    for (defender_id, target_id) in assignments {
-        battle
-            .issue_engagement_order(&defender_id, &target_id)
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-fn distance_squared(left: BattlePoint, right: BattlePoint) -> u64 {
-    let dx = i64::from(left.x_mm) - i64::from(right.x_mm);
-    let dy = i64::from(left.y_mm) - i64::from(right.y_mm);
-    u64::try_from(dx * dx + dy * dy).expect("battlefield distance is non-negative")
+    battle
+        .plan_opponent_orders(BattleSide::Defender)
+        .map_err(|error| error.to_string())
 }
 
 fn validate_viewport(x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
