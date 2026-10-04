@@ -8,11 +8,14 @@ mod campaign_handoff;
 mod campaign_reconciliation;
 mod campaign_resolution;
 mod deployment;
+mod facing;
+pub use facing::{CombatArc, Facing};
 mod save;
 mod tactical;
 mod tactical_opponent;
 mod tactical_result;
 mod terrain;
+mod unit_stats;
 pub use battle::{ArmyRoster, BattleOutcome, BattleReport};
 pub use campaign_deployment::{
     FormationFootprint, ProvinceBattlefieldContext, TacticalBattlefieldProfile,
@@ -38,6 +41,7 @@ pub use terrain::{
     BattlefieldLocation, TACTICAL_FOREST_CELL_COUNT, TACTICAL_TERRAIN_GRID_SIZE,
     TacticalGroundCover, TacticalTerrain, TacticalTerrainCell, TacticalTerrainProfile,
 };
+pub use unit_stats::{MissileStats, UnitCombatProfile, UnitStats, UnitStatsVersion};
 
 const INCOME_PER_WEALTH: u32 = 50;
 const UNIT_KINDS: [UnitKind; 4] = [

@@ -210,3 +210,64 @@ boundary. Browser storage failures restore the previous Rust save; desktop write
 complete before committing the candidate session. Leaving an unfinished tactical
 session keeps the pre-battle save, so loading offers either choice again. This
 boundary intentionally does not serialize a running renderer or mid-battle state.
+
+## Versioned troop stats
+
+`UnitCombatProfile` records a `UnitStatsVersion` and authoritative troop kind.
+`unitStatsV1` defines integer attack, defense, armor and formation-resistance
+factors with a 1,000 base, initial morale, movement in millimeters per tick,
+charge impact, and optional missile damage/range/ammunition. Levy, spearmen,
+archers and knights each have an explicit core-owned entry. Missile ammunition
+counts volleys; charge impact, ammunition and formation resistance reserve the
+vocabulary for their later stateful mechanics rather than adding passive charges
+or ammunition depletion in this foundation.
+
+New campaign deployment selects V1. Initialization applies its morale, movement
+and attack range. Simultaneous casualty resolution composes existing frontage,
+fatigue, morale and terrain with attack divided by defense plus armor; ranged
+resistance uses base defense 1,000 plus armor. All scaling uses deterministic
+integer arithmetic and the existing minimum casualty rule.
+
+Tactical units serialize their profile. Historical records missing it retain
+legacy behavior, including their explicit movement/range and optional kind
+metadata. Unknown profile versions fail deserialization. The profile owns the
+kind when present. Browser status and render snapshots project core stat values
+without maintaining another stat table or computing combat in presentation code.
+
+V1 ranged damage retains thousandths through the casualty divisor, then carries
+fractional damage per attacker/target pair across combat pulses. This makes armor
+observable in the default ten-file formations without rounding every shot up to
+one casualty. The carry is bounded below 1,000 and serialized for replay. Historical
+combat without stat profiles keeps its existing minimum-one-casualty behavior.
+
+
+Formation facing is an optional canonical integer direction owned by the core.
+New campaign units and newly built sandbox formations face their opposing side;
+historical records without facing retain their previous contact behavior. Actual
+formed movement updates facing, and a typed rotation order changes it explicitly.
+The core classifies incoming contact using integer dot and cross products: the
+front and rear include their 45-degree boundaries; intervening directions are
+flanks. Melee contact receives a bounded flank or rear advantage scaled by the
+defender's formation resistance, capped at a 75% bonus. Ranged damage is unchanged.
+Renderer gold markers project that core direction; browser status projects the
+core contact arc without calculating gameplay angles.
+
+## Directional troop matchups
+
+Explicit V1 profiles compose troop interactions with the existing integer melee
+pipeline, after morale, fatigue, terrain, frontage, armor and contact direction.
+Spearmen facing cavalry in their front arc deal 1,750/1,000 of their normal melee
+impact; cavalry attacking a spearman front deals 600/1,000. Knights attacking levy
+or archers from a flank or rear deal another 1,250/1,000, composed with the bounded
+contact bonus. Facing boundaries use the same core classifier as other contact.
+These are formation interactions, independent of faction, IDs and storage order;
+kind metadata without a combat profile cannot activate them. Historical missing
+facing receives neutral matchup factors. Missile damage continues to compose the
+core armor divisor with terrain cover, including fractional volley carry. Charge
+momentum remains a separate subsequent mechanic rather than a passive matchup.
+
+Profiled melee preserves thousandths through all factors and carries the remaining
+fraction per attacker/defender pair, bounded below 1,000 and serialized. Thus
+frontal spear resistance also matters at the default ten-file campaign frontage
+instead of every weak contact being rounded up to one casualty. Historical combat
+without profiles retains that minimum-casualty rule.
