@@ -22,9 +22,15 @@ The core remains UI- and platform-independent. Tactical rendering is also singul
 
 The compact campaign already supports armies, movement, recruitment, economy, deterministic auto-resolved battles, AI turns, victory conditions, and save/load.
 
+New campaigns use the validated [province definitions](docs/PROVINCE-DEFINITIONS.md)
+packaged with the core. Province IDs remain stable when display names change.
+
 A single-player tactical sandbox is also available on GitHub Pages and through the desktop battle surface. Its battle simulation, semantic controls, and GPU rendering are Rust-owned. The tactical renderer is now being migrated from the original 2D formation projection to the final 3D architecture; see [`docs/BATTLE-ARCHITECTURE.md`](docs/BATTLE-ARCHITECTURE.md) for the exact migration contract.
 
 ## Development
+
+See [tactical workload evidence](docs/TACTICAL-PERFORMANCE.md) for the deterministic
+scenario matrix, subsystem work budgets, and advisory timing command.
 
 Prerequisites: rustup using the repository-pinned Rust toolchain in `rust-toolchain.toml`, plus the platform prerequisites for Tauri 2 on desktop.
 
