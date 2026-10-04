@@ -173,6 +173,7 @@ impl CampaignState {
                                 },
                                 escaped_soldiers: 0,
                                 pursuit_casualties: 0,
+                                ammunition: None,
                             }
                         })
                         .collect(),
