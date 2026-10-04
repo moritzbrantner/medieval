@@ -178,7 +178,7 @@ fn canonical_units(
     Ok(units)
 }
 
-fn canonicalize_force(
+pub(crate) fn canonicalize_force(
     force: &mut TacticalForceSeed,
     side: BattleSide,
 ) -> Result<(), TacticalError> {

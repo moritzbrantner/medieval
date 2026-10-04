@@ -8,6 +8,7 @@ mod campaign_handoff;
 mod deployment;
 mod save;
 mod tactical;
+mod tactical_result;
 mod terrain;
 pub use battle::{ArmyRoster, BattleOutcome, BattleReport};
 pub use campaign_deployment::{
@@ -22,6 +23,10 @@ pub use tactical::{
     BattlePoint, BattleSide, FlatBattlefield, Formation, MovementOrder, TACTICAL_TICKS_PER_SECOND,
     TacticalBattle, TacticalBattleState, TacticalError, TacticalFinishReason, TacticalUnit,
     TacticalUnitProvenance,
+};
+pub use tactical_result::{
+    TACTICAL_BATTLE_RESULT_SCHEMA_VERSION, TacticalArmyResult, TacticalBattleResult,
+    TacticalResultError, TacticalSettlementCapture, TacticalUnitResult,
 };
 pub use terrain::{
     BattlefieldLocation, TACTICAL_FOREST_CELL_COUNT, TACTICAL_TERRAIN_GRID_SIZE,
