@@ -53,7 +53,8 @@ fn large_force_counts_are_split_without_losing_soldiers() {
     let mut seed = seed();
     seed.attacker.units[0].soldiers = u64::from(u16::MAX) + 42;
     let battle =
-        TacticalBattle::from_campaign_seed(FlatBattlefield::new(120_000, 80_000), seed).unwrap();
+        TacticalBattle::from_campaign_seed(FlatBattlefield::new(1_000_000, 10_000_000), seed)
+            .unwrap();
     let levy: Vec<_> = battle
         .units()
         .iter()

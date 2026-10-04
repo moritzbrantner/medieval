@@ -35,11 +35,25 @@ impl TacticalBattle {
     /// Builds core-owned tactical composition and retains its campaign provenance.
     ///
     /// Counts are canonicalized by kind and split into `u16`-sized units without
-    /// truncation. Initial positions and movement use a deterministic baseline;
-    /// campaign battlefield profiles and editable deployment are separate concerns.
+    /// truncation. Core deployment packs complete formation footprints into legal
+    /// zones and rejects overflow. Editable deployment remains a separate concern.
     pub fn from_campaign_seed(
         battlefield: FlatBattlefield,
+        seed: TacticalBattleSeed,
+    ) -> Result<Self, TacticalError> {
+        Self::from_campaign_seed_with_profile(
+            battlefield,
+            seed,
+            crate::TacticalBattlefieldProfile::Field {
+                location: crate::BattlefieldLocation::MountainPass,
+            },
+        )
+    }
+
+    pub fn from_campaign_seed_with_profile(
+        battlefield: FlatBattlefield,
         mut seed: TacticalBattleSeed,
+        profile: crate::TacticalBattlefieldProfile,
     ) -> Result<Self, TacticalError> {
         // Validate dimensions before allocating the force composition.
         Self::new(battlefield, Vec::new())?;
@@ -59,11 +73,6 @@ impl TacticalBattle {
             units
                 .try_reserve(capacity)
                 .map_err(|_| TacticalError::CampaignForceTooLarge(side))?;
-            let x = match side {
-                BattleSide::Attacker => battlefield.width_mm / 6,
-                BattleSide::Defender => battlefield.width_mm - battlefield.width_mm / 6,
-            };
-            let mut row = 0_u64;
             for entry in &force.units {
                 let kind_id = match entry.kind {
                     UnitKind::Levy => "levy",
@@ -79,14 +88,12 @@ impl TacticalBattle {
                 let mut chunk = 0_u64;
                 while remaining > 0 {
                     let soldiers = remaining.min(u64::from(u16::MAX)) as u16;
-                    let y = (u128::from(battlefield.depth_mm) * u128::from(row + 1)
-                        / u128::from(count + 1)) as u32;
                     units.push(
                         TacticalUnit::new(
                             format!("campaign-{side_id}-{kind_id}-{chunk:020}"),
                             side,
                             soldiers,
-                            BattlePoint::new(x, y),
+                            BattlePoint::new(0, 0),
                             Formation::Line {
                                 files: soldiers.min(10),
                             },
@@ -95,12 +102,19 @@ impl TacticalBattle {
                         .with_unit_kind(entry.kind),
                     );
                     remaining -= u64::from(soldiers);
-                    row += 1;
                     chunk += 1;
                 }
             }
         }
-        let mut battle = Self::new(battlefield, units)?;
+        crate::campaign_deployment::place_campaign_units(battlefield, profile, &mut units)?;
+        let mut battle = match profile {
+            crate::TacticalBattlefieldProfile::Field { location } => {
+                Self::deploy_at_location(battlefield, units, location)
+            }
+            crate::TacticalBattlefieldProfile::Siege { location } => {
+                Self::deploy_siege_at_location(battlefield, units, location)
+            }
+        }?;
         battle.campaign_seed = Some(seed);
         Ok(battle.start())
     }
