@@ -271,3 +271,22 @@ profile budget and remaining <= initial. Result/save records without the optiona
 resource field remain readable. Campaign boundary saves preserve recorded tactical
 ammunition; recruitment and future battle deployment initialize a fresh tactical
 budget rather than treating arrows as a strategic campaign inventory.
+
+### Precise formation orders
+
+`FormationOrder` is a core-owned, serializable semantic command. Rotation halts
+travel and engagement; quarter turns use exact integer facing vectors. A
+move-and-face order turns along its actual travel direction, then applies the
+requested facing on arrival. Omitting that facing preserves the facing held when
+the order was issued. The queued arrival facing survives serialization and is
+cleared by a replacement movement, engagement, withdrawal, or routing order.
+
+Requested frontage resolves to a line with whole one-metre files, rounded down
+and capped at the surviving soldier count. Widths below one metre are rejected.
+The existing formation footprint must fit the battlefield and avoid impassable
+terrain, siege walls, and a closed gate at the current and requested positions.
+Facing determines combat arcs and the gold direction markers; footprint geometry
+uses the existing file/rank axes. Every multi-unit command is validated on a core
+candidate and committed atomically. Browser and native adapters submit these
+commands through shared tactical controls: Q/E turns, Shift + right-click moves
+with the current facing on arrival, and the frontage request supplies a width.

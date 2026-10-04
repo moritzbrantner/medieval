@@ -257,6 +257,11 @@ impl DesktopInputState {
                 kind: "fitCamera".to_owned(),
                 ..TacticalControlRequest::default()
             }),
+            "KeyQ" | "KeyE" => Some(TacticalControlRequest {
+                kind: "turnSelected".to_owned(),
+                quarter_turns: Some(if code == "KeyQ" { -1 } else { 1 }),
+                ..TacticalControlRequest::default()
+            }),
             "KeyS" => Some(TacticalControlRequest {
                 kind: "stopSelected".to_owned(),
                 ..TacticalControlRequest::default()
@@ -345,7 +350,13 @@ impl DesktopInputState {
                 effective_modifiers,
             )?,
             PointerButton::Secondary => {
-                self.finish_secondary_pointer(battle, controls, player_side, sample)?;
+                self.finish_secondary_pointer(
+                    battle,
+                    controls,
+                    player_side,
+                    sample,
+                    effective_modifiers.shift,
+                )?;
             }
         }
         Ok(InputOutcome::default())
@@ -404,10 +415,16 @@ impl DesktopInputState {
         controls: &mut TacticalControls,
         player_side: BattleSide,
         sample: PointerSample,
+        hold_facing: bool,
     ) -> Result<(), String> {
-        if let Some(target_unit_id) = nearest_unit_at_pointer(battle, controls, sample, |unit| {
-            unit.side() != player_side && !unit.is_destroyed() && !unit.is_escaped()
-        }) {
+        if let Some(target_unit_id) = (!hold_facing)
+            .then(|| {
+                nearest_unit_at_pointer(battle, controls, sample, |unit| {
+                    unit.side() != player_side && !unit.is_destroyed() && !unit.is_escaped()
+                })
+            })
+            .flatten()
+        {
             let result = apply_control(
                 battle,
                 controls,
@@ -427,7 +444,12 @@ impl DesktopInputState {
             battle,
             controls,
             TacticalControlRequest {
-                kind: "moveSelected".to_owned(),
+                kind: if hold_facing {
+                    "moveAndFaceSelected"
+                } else {
+                    "moveSelected"
+                }
+                .to_owned(),
                 x_mm: Some(destination.x_mm),
                 y_mm: Some(destination.y_mm),
                 ..TacticalControlRequest::default()
@@ -675,6 +697,10 @@ pub fn install_linux_input(
             Some("Space")
         } else if key == constants::Escape {
             Some("Escape")
+        } else if key == constants::q || key == constants::Q {
+            Some("KeyQ")
+        } else if key == constants::e || key == constants::E {
+            Some("KeyE")
         } else if key == constants::s || key == constants::S {
             Some("KeyS")
         } else if key == constants::plus || key == constants::equal || key == constants::KP_Add {
@@ -957,6 +983,92 @@ mod tests {
                 )
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn native_turn_and_shift_move_use_shared_core_formation_orders() {
+        let mut session = session();
+        let mut input = DesktopInputState::default();
+        let sample = pointer_for_unit(&session, "attacker-a");
+        click(&mut input, &mut session, PointerButton::Primary, sample);
+        input
+            .apply(
+                &mut session.battle,
+                &mut session.controls,
+                session.player_side,
+                DesktopInput::KeyDown {
+                    code: "KeyQ".into(),
+                    modifiers: InputModifiers::default(),
+                },
+            )
+            .unwrap();
+        let facing = medieval_core::Facing::new(0, -1).unwrap();
+        assert_eq!(
+            session
+                .battle
+                .units()
+                .iter()
+                .find(|unit| unit.id() == "attacker-a")
+                .unwrap()
+                .facing(),
+            Some(facing)
+        );
+        let sample = pointer_for_ground(&session, BattlePoint::new(22_000, 30_000));
+        for down in [true, false] {
+            let modifiers = InputModifiers {
+                shift: true,
+                ..InputModifiers::default()
+            };
+            let event = if down {
+                DesktopInput::PointerDown {
+                    button: PointerButton::Secondary,
+                    x: sample.x,
+                    y: sample.y,
+                    width: sample.width,
+                    height: sample.height,
+                    modifiers,
+                }
+            } else {
+                DesktopInput::PointerUp {
+                    button: PointerButton::Secondary,
+                    x: sample.x,
+                    y: sample.y,
+                    width: sample.width,
+                    height: sample.height,
+                    modifiers,
+                }
+            };
+            input
+                .apply(
+                    &mut session.battle,
+                    &mut session.controls,
+                    session.player_side,
+                    event,
+                )
+                .unwrap();
+        }
+        for _ in 0..100 {
+            if session
+                .battle
+                .units()
+                .iter()
+                .find(|unit| unit.id() == "attacker-a")
+                .unwrap()
+                .destination()
+                .is_none()
+            {
+                break;
+            }
+            session.battle.advance_ticks(1);
+        }
+        let unit = session
+            .battle
+            .units()
+            .iter()
+            .find(|unit| unit.id() == "attacker-a")
+            .unwrap();
+        assert_eq!(unit.destination(), None);
+        assert_eq!(unit.facing(), Some(facing));
     }
 
     #[test]

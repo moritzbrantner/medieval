@@ -95,6 +95,24 @@ export const BATTLE_INPUT_REGISTRY = Object.freeze({
       provenance: { source: "medieval/battle-sandbox", version: "1" },
     },
     {
+      id: "battle.formation.turnLeft",
+      title: "Turn formation left",
+      categoryPath: ["Battle", "Orders"],
+      repeatPolicy: "never",
+      allowedDevices: ["keyboard"],
+      defaults: [physical("battle.formation.turnLeft.default", "battle.formation.turnLeft", "KeyQ")],
+      provenance: { source: "medieval/battle-sandbox", version: "1" },
+    },
+    {
+      id: "battle.formation.turnRight",
+      title: "Turn formation right",
+      categoryPath: ["Battle", "Orders"],
+      repeatPolicy: "never",
+      allowedDevices: ["keyboard"],
+      defaults: [physical("battle.formation.turnRight.default", "battle.formation.turnRight", "KeyE")],
+      provenance: { source: "medieval/battle-sandbox", version: "1" },
+    },
+    {
       id: "battle.formation.line",
       title: "Line formation",
       categoryPath: ["Battle", "Orders"],
@@ -141,6 +159,7 @@ export function attachBattleInputBindings({
   zoom,
   stopSelected,
   setFormation,
+  turnSelected,
   fitCamera,
   togglePause,
 }) {
@@ -178,6 +197,12 @@ export function attachBattleInputBindings({
               break;
             case "battle.units.stop":
               stopSelected();
+              break;
+            case "battle.formation.turnLeft":
+              turnSelected(-1);
+              break;
+            case "battle.formation.turnRight":
+              turnSelected(1);
               break;
             case "battle.formation.line":
               setFormation("line");
