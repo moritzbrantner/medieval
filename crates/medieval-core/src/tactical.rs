@@ -197,6 +197,8 @@ pub struct TacticalUnit {
     state: TacticalUnitState,
     #[serde(default)]
     pursuit_casualties: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    charge: Option<crate::CavalryChargeState>,
 }
 
 impl TacticalUnit {
@@ -227,6 +229,7 @@ impl TacticalUnit {
             morale: MAX_TACTICAL_MORALE,
             state: TacticalUnitState::Formed,
             pursuit_casualties: 0,
+            charge: None,
         }
     }
 
@@ -247,12 +250,18 @@ impl TacticalUnit {
     pub const fn with_unit_kind(mut self, unit_kind: UnitKind) -> Self {
         self.unit_kind = Some(unit_kind);
         self.combat_profile = None;
+        self.charge = None;
         self
     }
 
     #[must_use]
     pub const fn with_combat_stats(mut self, profile: crate::UnitCombatProfile) -> Self {
         let stats = profile.stats();
+        self.charge = if stats.charge_impact_milli > 0 {
+            Some(crate::CavalryChargeState::Ready)
+        } else {
+            None
+        };
         self.unit_kind = Some(profile.kind);
         self.combat_profile = Some(profile);
         self.facing = Some(match self.side {
@@ -283,6 +292,15 @@ impl TacticalUnit {
     pub fn incoming_arc(&self, attacker_position: BattlePoint) -> Option<crate::CombatArc> {
         self.facing
             .map(|facing| facing.classify(self.position, attacker_position))
+    }
+
+    #[must_use]
+    pub const fn charge_state(&self) -> Option<crate::CavalryChargeState> {
+        self.charge
+    }
+
+    fn interrupt_charge(&mut self) {
+        self.charge = self.charge.map(crate::CavalryChargeState::interrupted);
     }
 
     #[must_use]
@@ -856,6 +874,7 @@ impl TacticalBattle {
         }
 
         let unit = &mut self.units[unit_index];
+        unit.interrupt_charge();
         unit.engagement_target = None;
         unit.destination = (unit.position != order.destination).then_some(order.destination);
         Ok(())
@@ -871,6 +890,9 @@ impl TacticalBattle {
             .unit_index(unit_id)
             .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
         self.ensure_can_receive_orders(index)?;
+        if self.units[index].facing != Some(facing) {
+            self.units[index].interrupt_charge();
+        }
         self.units[index].facing = Some(facing);
         Ok(())
     }
@@ -903,6 +925,9 @@ impl TacticalBattle {
         }
 
         let unit = &mut self.units[unit_index];
+        if unit.engagement_target.as_deref() != Some(target_unit_id) {
+            unit.interrupt_charge();
+        }
         unit.destination = None;
         unit.engagement_target = Some(target_unit_id.to_owned());
         Ok(())
@@ -920,6 +945,9 @@ impl TacticalBattle {
         self.ensure_can_receive_orders(unit_index)?;
         if formation.files() == 0 {
             return Err(TacticalError::InvalidFormation(unit_id.to_owned()));
+        }
+        if self.units[unit_index].formation != formation {
+            self.units[unit_index].interrupt_charge();
         }
         self.units[unit_index].formation = formation;
         Ok(())
@@ -1053,6 +1081,90 @@ impl TacticalBattle {
                 TacticalUnitState::Escaped { .. } | TacticalUnitState::Destroyed => {}
             }
         }
+        for index in 0..self.units.len() {
+            self.advance_charge(index, &snapshot);
+        }
+    }
+
+    fn advance_charge(&mut self, index: usize, snapshot: &[TacticalUnit]) {
+        use crate::CavalryChargeState as Charge;
+        let before = &snapshot[index];
+        let Some(previous) = before.charge else {
+            return;
+        };
+        if before.state != TacticalUnitState::Formed {
+            self.units[index].charge = Some(Charge::Ready);
+            return;
+        }
+        if let Charge::Recovering { ticks_remaining } = previous {
+            self.units[index].charge = Some(if ticks_remaining <= 1 {
+                Charge::Ready
+            } else {
+                Charge::Recovering {
+                    ticks_remaining: ticks_remaining - 1,
+                }
+            });
+            return;
+        }
+        let target = before.engagement_target.as_deref().and_then(|id| {
+            snapshot
+                .iter()
+                .find(|target| target.id == id && target.state == TacticalUnitState::Formed)
+        });
+        let Some(target) = target else {
+            self.units[index].charge = Some(previous.interrupted());
+            return;
+        };
+        let next = self.units[index].position;
+        let target_position = self
+            .units
+            .iter()
+            .find(|unit| unit.id == target.id)
+            .expect("movement preserves units")
+            .position;
+        let intercepted = self.units.iter().any(|other| {
+            other.side != before.side
+                && other.id != target.id
+                && other.state == TacticalUnitState::Formed
+                && points_within_distance(next, other.position, COMBAT_CONTACT_DISTANCE_MM)
+        });
+        let straight = before.facing.is_some_and(|facing| {
+            facing.classify(before.position, target.position) == crate::CombatArc::Front
+        }) && self.movement_waypoint(before.position, target.position)
+            == target.position
+            && self
+                .terrain
+                .ground_cover_at(self.battlefield, before.position)
+                == crate::TacticalGroundCover::Open
+            && self.terrain.ground_cover_at(self.battlefield, next)
+                == crate::TacticalGroundCover::Open;
+        if intercepted || !straight {
+            self.units[index].charge = Some(previous.interrupted());
+            return;
+        }
+        let displacement = next
+            .x_mm
+            .abs_diff(before.position.x_mm)
+            .max(next.y_mm.abs_diff(before.position.y_mm));
+        let run_up_mm = previous
+            .run_up_mm()
+            .saturating_add(displacement)
+            .min(crate::charge::CHARGE_RUN_UP_MM);
+        if points_within_distance(next, target_position, COMBAT_CONTACT_DISTANCE_MM) {
+            self.units[index].charge = Some(Charge::Contact { run_up_mm });
+            return;
+        }
+        if next == before.position
+            && !points_within_distance(before.position, target.position, COMBAT_CONTACT_DISTANCE_MM)
+        {
+            self.units[index].charge = Some(previous.interrupted());
+            return;
+        }
+        self.units[index].charge = Some(if run_up_mm >= crate::charge::CHARGE_RUN_UP_MM {
+            Charge::Charging { run_up_mm }
+        } else {
+            Charge::Approaching { run_up_mm }
+        });
     }
 
     fn advance_formed_unit(&mut self, index: usize, snapshot: &[TacticalUnit]) {
@@ -1245,6 +1357,7 @@ impl TacticalBattle {
 
         let mut casualties: BTreeMap<String, u32> = BTreeMap::new();
         let mut engaged_units = BTreeSet::new();
+        let mut consumed_charges = BTreeSet::new();
 
         for attacker in &snapshot {
             if attacker.state != TacticalUnitState::Formed
@@ -1337,6 +1450,16 @@ impl TacticalBattle {
                     );
                     *casualties.entry(left.id.clone()).or_default() += u32::from(left_losses);
                     *casualties.entry(right.id.clone()).or_default() += u32::from(right_losses);
+                    if left_frontage > 0
+                        && left.engagement_target.as_deref() == Some(right.id.as_str())
+                    {
+                        consumed_charges.insert(left.id.clone());
+                    }
+                    if right_frontage > 0
+                        && right.engagement_target.as_deref() == Some(left.id.as_str())
+                    {
+                        consumed_charges.insert(right.id.clone());
+                    }
                     engaged_units.insert(left.id.clone());
                     engaged_units.insert(right.id.clone());
                 }
@@ -1417,6 +1540,15 @@ impl TacticalBattle {
                     self.units[index].destination = None;
                     self.units[index].engagement_target = None;
                 }
+            }
+        }
+        for unit in &mut self.units {
+            if consumed_charges.contains(&unit.id)
+                && matches!(unit.charge, Some(crate::CavalryChargeState::Contact { .. }))
+            {
+                unit.charge = Some(crate::CavalryChargeState::Recovering {
+                    ticks_remaining: crate::charge::CHARGE_RECOVERY_TICKS,
+                });
             }
         }
     }
@@ -1686,6 +1818,7 @@ fn melee_casualties_with_credit(
     });
     let damage = damage * attack / resistance;
     let damage = damage * u64::from(contact_factor_milli(attacker, defender)) / 1_000;
+    let damage = damage * u64::from(charge_factor_milli(attacker, defender)) / 1_000;
     let damage = damage * u64::from(matchup_factor_milli(attacker, defender))
         / 1_000
         / u64::from(MELEE_CASUALTY_DIVISOR);
@@ -1753,6 +1886,22 @@ fn ranged_casualties(
     let effective_frontage = stat_adjusted_frontage(effective_frontage, attacker, defender, true);
     let losses = (effective_frontage / RANGED_CASUALTY_DIVISOR).max(1);
     u16::try_from(losses.min(u32::from(defender.soldiers))).unwrap()
+}
+
+fn charge_factor_milli(attacker: &TacticalUnit, defender: &TacticalUnit) -> u32 {
+    if !matches!(attacker.charge, Some(crate::CavalryChargeState::Contact { run_up_mm }) if run_up_mm >= crate::charge::CHARGE_RUN_UP_MM)
+        || attacker.engagement_target.as_deref() != Some(defender.id.as_str())
+        || (defender
+            .combat_profile()
+            .is_some_and(|profile| profile.kind == crate::UnitKind::Spearmen)
+            && defender.incoming_arc(attacker.position) == Some(crate::CombatArc::Front))
+    {
+        return 1_000;
+    }
+    1_000
+        + attacker
+            .stats()
+            .map_or(0, |stats| u32::from(stats.charge_impact_milli))
 }
 
 // Only explicit combat profiles participate; historical kind metadata is visual.
