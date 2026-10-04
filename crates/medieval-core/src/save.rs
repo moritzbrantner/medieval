@@ -270,6 +270,30 @@ impl CampaignSave {
             }
         }
 
+        for report in &campaign.tactical_battle_reports {
+            report
+                .validate()
+                .map_err(|error| SaveError::InvalidState(error.to_string()))?;
+            if !faction_ids.contains(report.result.seed.attacker.faction_id.as_str())
+                || !faction_ids.contains(report.result.seed.defender.faction_id.as_str())
+                || report
+                    .campaign_winner
+                    .as_ref()
+                    .is_some_and(|id| !faction_ids.contains(id.as_str()))
+            {
+                return invalid("tactical battle report references an unknown faction");
+            }
+            if !province_ids.contains(report.result.seed.from_province.as_str())
+                || !province_ids.contains(report.result.seed.target_province.as_str())
+                || report
+                    .retreats
+                    .iter()
+                    .any(|retreat| !province_ids.contains(retreat.to_province.as_str()))
+            {
+                return invalid("tactical battle report references an unknown province");
+            }
+        }
+
         if campaign.pending_tactical_result.is_none()
             && campaign
                 .pending_battle
