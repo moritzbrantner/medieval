@@ -36,6 +36,7 @@ fn campaign_composition_and_provenance_survive_battle_round_trip() {
 #[test]
 fn force_storage_order_does_not_change_battle_identity() {
     let mut first = seed();
+    first.defender.source_armies = None;
     first.defender.source_army_ids.push("france-reserve".into());
     let mut reordered = first.clone();
     reordered.attacker.units.reverse();
@@ -52,6 +53,7 @@ fn force_storage_order_does_not_change_battle_identity() {
 fn large_force_counts_are_split_without_losing_soldiers() {
     let mut seed = seed();
     seed.attacker.units[0].soldiers = u64::from(u16::MAX) + 42;
+    seed.attacker.source_armies.as_mut().unwrap()[0].units[0].soldiers = u64::from(u16::MAX) + 42;
     let battle =
         TacticalBattle::from_campaign_seed(FlatBattlefield::new(1_000_000, 10_000_000), seed)
             .unwrap();

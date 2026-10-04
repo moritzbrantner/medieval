@@ -159,6 +159,13 @@ pub struct MovementOrder {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TacticalUnitProvenance {
+    pub source_army_id: String,
+    pub initial_soldiers: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TacticalUnit {
     id: String,
     side: BattleSide,
@@ -168,6 +175,8 @@ pub struct TacticalUnit {
     speed_mm_per_tick: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     unit_kind: Option<UnitKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    campaign_provenance: Option<TacticalUnitProvenance>,
     #[serde(
         default = "default_attack_range_mm",
         deserialize_with = "deserialize_attack_range_mm"
@@ -198,6 +207,7 @@ impl TacticalUnit {
             formation,
             speed_mm_per_tick,
             unit_kind: None,
+            campaign_provenance: None,
             attack_range_mm: COMBAT_CONTACT_DISTANCE_MM,
             destination: None,
             engagement_target: None,
@@ -205,6 +215,19 @@ impl TacticalUnit {
             morale: MAX_TACTICAL_MORALE,
             state: TacticalUnitState::Formed,
         }
+    }
+
+    pub(crate) fn with_campaign_provenance(mut self, army_id: &str, initial_soldiers: u16) -> Self {
+        self.campaign_provenance = Some(TacticalUnitProvenance {
+            source_army_id: army_id.to_owned(),
+            initial_soldiers,
+        });
+        self
+    }
+
+    #[must_use]
+    pub const fn campaign_provenance(&self) -> Option<&TacticalUnitProvenance> {
+        self.campaign_provenance.as_ref()
     }
 
     #[must_use]
@@ -1089,6 +1112,7 @@ pub enum TacticalError {
         depth_mm: u32,
     },
     CampaignForceTooLarge(BattleSide),
+    InvalidCampaignProvenance(BattleSide),
     DeploymentFull {
         unit_id: String,
         side: BattleSide,
@@ -1150,6 +1174,10 @@ impl fmt::Display for TacticalError {
             Self::CampaignForceTooLarge(side) => write!(
                 formatter,
                 "{side:?} campaign force exceeds tactical construction capacity"
+            ),
+            Self::InvalidCampaignProvenance(side) => write!(
+                formatter,
+                "{side:?} source army rosters do not match campaign force provenance"
             ),
             Self::DeploymentFull { unit_id, side } => write!(
                 formatter,
