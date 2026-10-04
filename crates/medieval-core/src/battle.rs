@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Army, CampaignError, CampaignState, UnitKind};
+use crate::{
+    Army, BattleSide, CampaignError, CampaignState, TACTICAL_BATTLE_RESULT_SCHEMA_VERSION,
+    TacticalArmyResult, TacticalBattleResult, TacticalFinishReason, TacticalUnitResult, UnitKind,
+};
 
 const DEFENDER_MODIFIER_PERCENT: u32 = 8;
 const AI_ATTACK_SCORE: u64 = 1_000_000;
@@ -38,6 +41,7 @@ impl ArmyRoster {
 pub enum BattleOutcome {
     AttackerVictory,
     DefenderVictory,
+    Draw,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,12 +102,13 @@ impl CampaignState {
         let defender_score =
             defender_raw.saturating_mul(u64::from(100 + DEFENDER_MODIFIER_PERCENT)) / 100;
 
-        let outcome = if attacker_score > defender_score {
+        let outcome = if attacker_score == 0 && defender_score == 0 {
+            BattleOutcome::Draw
+        } else if attacker_score > defender_score {
             BattleOutcome::AttackerVictory
         } else {
             BattleOutcome::DefenderVictory
         };
-
         let (attacker_casualty_percent, defender_casualty_percent) = match outcome {
             BattleOutcome::AttackerVictory => (
                 casualty_percent(seed, 0xA11A, 20, 36),
@@ -113,83 +118,101 @@ impl CampaignState {
                 casualty_percent(seed, 0xA22A, 65, 86),
                 casualty_percent(seed, 0xD22D, 20, 36),
             ),
+            BattleOutcome::Draw => (0, 0),
         };
-
-        apply_casualties(&mut self.armies[attacker_index], attacker_casualty_percent);
+        let winner = match outcome {
+            BattleOutcome::AttackerVictory => Some(BattleSide::Attacker),
+            BattleOutcome::DefenderVictory => Some(BattleSide::Defender),
+            BattleOutcome::Draw => None,
+        };
+        let mut after = self.armies.clone();
+        apply_casualties(&mut after[attacker_index], attacker_casualty_percent);
         for index in &defender_indices {
-            apply_casualties(&mut self.armies[*index], defender_casualty_percent);
+            apply_casualties(&mut after[*index], defender_casualty_percent);
         }
-
-        let attacker_after = roster_from_army(&self.armies[attacker_index]);
-        let defender_after = roster_from_indices(&self.armies, &defender_indices);
-
-        let defender_retreat_province =
-            if outcome == BattleOutcome::AttackerVictory && defender_after.soldiers() > 0 {
-                self.provinces
+        let attacker_after = roster_from_army(&after[attacker_index]);
+        let defender_after = roster_from_indices(&after, &defender_indices);
+        let battle_seed = self.pending_tactical_battle_seed()?;
+        let mut armies = Vec::new();
+        for (side, force) in [
+            (BattleSide::Attacker, &battle_seed.attacker),
+            (BattleSide::Defender, &battle_seed.defender),
+        ] {
+            let sources = force
+                .source_armies
+                .as_ref()
+                .ok_or(CampaignError::TacticalResultMismatch)?;
+            for source in sources {
+                let survivors = after
                     .iter()
-                    .find(|province| province.id == pending.target_province)
-                    .and_then(|target| {
-                        target.neighbors.iter().find(|neighbor_id| {
-                            self.provinces.iter().any(|province| {
-                                province.id == **neighbor_id
-                                    && province.owner == pending.defender_faction
-                            })
+                    .find(|army| army.id == source.army_id)
+                    .ok_or(CampaignError::TacticalResultMismatch)?;
+                armies.push(TacticalArmyResult {
+                    source_army_id: source.army_id.clone(),
+                    faction_id: force.faction_id.clone(),
+                    side,
+                    units: source
+                        .units
+                        .iter()
+                        .map(|unit| {
+                            let surviving_soldiers = u64::from(match unit.kind {
+                                UnitKind::Levy => survivors.levy,
+                                UnitKind::Spearmen => survivors.spearmen,
+                                UnitKind::Archers => survivors.archers,
+                                UnitKind::Knights => survivors.knights,
+                            });
+                            TacticalUnitResult {
+                                kind: unit.kind,
+                                initial_soldiers: unit.soldiers,
+                                surviving_soldiers,
+                                casualties: unit.soldiers - surviving_soldiers,
+                                routed_soldiers: if winner == Some(side) {
+                                    0
+                                } else {
+                                    surviving_soldiers
+                                },
+                                escaped_soldiers: 0,
+                                pursuit_casualties: 0,
+                            }
                         })
-                    })
-                    .cloned()
+                        .collect(),
+                });
+            }
+        }
+        let result = TacticalBattleResult {
+            schema_version: TACTICAL_BATTLE_RESULT_SCHEMA_VERSION,
+            seed: battle_seed,
+            auto_resolve_seed: Some(seed),
+            winner,
+            reason: if winner.is_some() {
+                TacticalFinishReason::ForceDefeated
             } else {
-                None
-            };
-
-        let captured = outcome == BattleOutcome::AttackerVictory;
-        if captured {
-            self.armies[attacker_index].province = pending.target_province.clone();
-            if let Some(province) = self
-                .provinces
-                .iter_mut()
-                .find(|province| province.id == pending.target_province)
-            {
-                province.owner = pending.attacker_faction.clone();
-            }
-
-            let queued_before_capture = self.recruitment_queue.len();
-            self.recruitment_queue.retain(|order| {
-                !(order.faction_id == pending.defender_faction
-                    && order.province_id == pending.target_province)
-            });
-            let cancelled_orders =
-                queued_before_capture.saturating_sub(self.recruitment_queue.len());
-            if cancelled_orders > 0 {
-                self.log.push(format!(
-                    "Turn {}: {} queued recruitment order(s) in {} are cancelled after capture.",
-                    self.turn, cancelled_orders, pending.target_province
-                ));
-            }
-
-            if let Some(retreat) = &defender_retreat_province {
-                for index in &defender_indices {
-                    self.armies[*index].province = retreat.clone();
-                    self.armies[*index].moved_this_turn = true;
-                }
-            }
-        }
-
-        if captured && defender_retreat_province.is_none() {
-            self.armies.retain(|army| {
-                !(army.owner == pending.defender_faction
-                    && army.province == pending.target_province)
-            });
-        }
-        self.armies.retain(|army| army_soldiers(army) > 0);
-
+                TacticalFinishReason::MutualDefeat
+            },
+            finishing_tick: 0,
+            armies,
+            settlement_capture: None,
+        };
+        let tactical_report = self.apply_tactical_battle_result(&result)?;
+        let defender_retreat_province = tactical_report
+            .retreats
+            .iter()
+            .find(|retreat| {
+                result
+                    .seed
+                    .defender
+                    .source_army_ids
+                    .contains(&retreat.source_army_id)
+            })
+            .map(|retreat| retreat.to_province.clone());
         let report = BattleReport {
             seed,
             turn: self.turn,
-            attacker_army_id: pending.attacker_army_id.clone(),
-            attacker_faction: pending.attacker_faction.clone(),
-            defender_faction: pending.defender_faction.clone(),
-            from_province: pending.from_province.clone(),
-            target_province: pending.target_province.clone(),
+            attacker_army_id: pending.attacker_army_id,
+            attacker_faction: pending.attacker_faction,
+            defender_faction: pending.defender_faction,
+            from_province: pending.from_province,
+            target_province: pending.target_province,
             defender_modifier_percent: DEFENDER_MODIFIER_PERCENT,
             attacker_score,
             defender_score,
@@ -200,31 +223,10 @@ impl CampaignState {
             attacker_casualty_percent,
             defender_casualty_percent,
             outcome,
-            captured,
+            captured: tactical_report.captured_province.is_some(),
             defender_retreat_province,
         };
-
-        self.pending_battle = None;
         self.battle_reports.push(report.clone());
-        self.log.push(match report.outcome {
-            BattleOutcome::AttackerVictory => format!(
-                "Turn {}: {} captures {} after battle seed {}.",
-                self.turn, report.attacker_faction, report.target_province, seed
-            ),
-            BattleOutcome::DefenderVictory => format!(
-                "Turn {}: {} holds {} after battle seed {}.",
-                self.turn, report.defender_faction, report.target_province, seed
-            ),
-        });
-
-        if let Some(winner) = self.winner() {
-            self.log.push(format!(
-                "Turn {}: {} has won the campaign.",
-                self.turn,
-                self.faction_name(&winner)
-            ));
-        }
-
         Ok(report)
     }
 
@@ -440,13 +442,6 @@ fn apply_casualties(army: &mut Army, casualty_percent: u32) {
 fn survivors(count: u16, casualty_percent: u32) -> u16 {
     let casualties = u32::from(count).saturating_mul(casualty_percent.min(100)) / 100;
     count.saturating_sub(u16::try_from(casualties).unwrap_or(count))
-}
-
-fn army_soldiers(army: &Army) -> u32 {
-    u32::from(army.levy)
-        .saturating_add(u32::from(army.spearmen))
-        .saturating_add(u32::from(army.archers))
-        .saturating_add(u32::from(army.knights))
 }
 
 fn rolled_score(strength: u64, seed: u64, salt: u64) -> u64 {
