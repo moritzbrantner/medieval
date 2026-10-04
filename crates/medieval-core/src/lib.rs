@@ -31,8 +31,8 @@ pub use tactical::{
     TacticalUnitProvenance,
 };
 pub use tactical_result::{
-    TACTICAL_BATTLE_RESULT_SCHEMA_VERSION, TacticalArmyResult, TacticalBattleResult,
-    TacticalResultError, TacticalSettlementCapture, TacticalUnitResult,
+    TACTICAL_BATTLE_RESULT_SCHEMA_VERSION, TacticalAmmunitionResult, TacticalArmyResult,
+    TacticalBattleResult, TacticalResultError, TacticalSettlementCapture, TacticalUnitResult,
 };
 pub use terrain::{
     BattlefieldLocation, TACTICAL_FOREST_CELL_COUNT, TACTICAL_TERRAIN_GRID_SIZE,
