@@ -87,6 +87,34 @@ pub enum BattleSide {
     Defender,
 }
 
+/// Versioned completion policy. Its absence preserves historical sandbox replays.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum TacticalCompletionRules {
+    FieldAndSiegeV1,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TacticalFinishReason {
+    ForceDefeated,
+    MutualDefeat,
+    SiegeCapture,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "camelCase")]
+pub enum TacticalBattleState {
+    #[default]
+    Running,
+    Finished {
+        winner: Option<BattleSide>,
+        #[serde(rename = "finishingTick")]
+        finishing_tick: u64,
+        reason: TacticalFinishReason,
+    },
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Formation {
@@ -296,6 +324,9 @@ pub struct TacticalBattle {
     units: Vec<TacticalUnit>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) campaign_seed: Option<crate::TacticalBattleSeed>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completion_rules: Option<TacticalCompletionRules>,
+    state: TacticalBattleState,
 }
 
 #[derive(Deserialize)]
@@ -310,6 +341,10 @@ struct TacticalBattleWire {
     units: Vec<TacticalUnit>,
     #[serde(default)]
     campaign_seed: Option<crate::TacticalBattleSeed>,
+    #[serde(default)]
+    completion_rules: Option<TacticalCompletionRules>,
+    #[serde(default)]
+    state: TacticalBattleState,
 }
 
 impl From<TacticalBattleWire> for TacticalBattle {
@@ -321,12 +356,32 @@ impl From<TacticalBattleWire> for TacticalBattle {
             terrain: wire.terrain,
             siege: wire.siege,
             campaign_seed: wire.campaign_seed,
+            completion_rules: wire.completion_rules,
+            state: wire.state,
             units: wire.units,
         }
     }
 }
 
 impl TacticalBattle {
+    /// Starts an authoritative match with version-one completion rules.
+    ///
+    /// A side is defeated when it has no formed surviving units. Both sides
+    /// defeated on the same tick is a draw; siege capture takes precedence.
+    /// Sandbox constructors and historical documents remain open-ended until
+    /// explicitly started. Calling this again never resets a finished result.
+    #[must_use]
+    pub fn start(mut self) -> Self {
+        self.completion_rules = Some(TacticalCompletionRules::FieldAndSiegeV1);
+        self.update_completion();
+        self
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> TacticalBattleState {
+        self.state
+    }
+
     pub fn new(
         battlefield: FlatBattlefield,
         units: Vec<TacticalUnit>,
@@ -397,6 +452,8 @@ impl TacticalBattle {
             terrain,
             siege: None,
             campaign_seed: None,
+            completion_rules: None,
+            state: TacticalBattleState::Running,
             units,
         })
     }
@@ -517,6 +574,7 @@ impl TacticalBattle {
     }
 
     fn set_siege_gate_state(&mut self, gate_state: SiegeGateState) -> Result<(), TacticalError> {
+        self.ensure_running()?;
         let Some(siege) = &mut self.siege else {
             return Err(TacticalError::NotSiegeBattle);
         };
@@ -525,6 +583,7 @@ impl TacticalBattle {
     }
 
     pub fn issue_move_order(&mut self, order: MovementOrder) -> Result<(), TacticalError> {
+        self.ensure_running()?;
         let unit_index = self
             .unit_index(&order.unit_id)
             .ok_or_else(|| TacticalError::UnitNotFound(order.unit_id.clone()))?;
@@ -554,6 +613,7 @@ impl TacticalBattle {
         unit_id: &str,
         target_unit_id: &str,
     ) -> Result<(), TacticalError> {
+        self.ensure_running()?;
         let unit_index = self
             .unit_index(unit_id)
             .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
@@ -583,6 +643,7 @@ impl TacticalBattle {
         unit_id: &str,
         formation: Formation,
     ) -> Result<(), TacticalError> {
+        self.ensure_running()?;
         let unit_index = self
             .unit_index(unit_id)
             .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
@@ -596,6 +657,9 @@ impl TacticalBattle {
 
     pub fn advance_ticks(&mut self, ticks: u32) {
         for _ in 0..ticks {
+            if self.ensure_running().is_err() {
+                break;
+            }
             self.advance_movement_phase();
             self.tick = self.tick.saturating_add(1);
             if self
@@ -608,6 +672,51 @@ impl TacticalBattle {
                 }
             }
             self.clear_invalid_engagement_targets();
+            self.update_completion();
+        }
+    }
+
+    fn ensure_running(&self) -> Result<(), TacticalError> {
+        match self.state {
+            TacticalBattleState::Running => Ok(()),
+            TacticalBattleState::Finished { .. } => Err(TacticalError::BattleFinished),
+        }
+    }
+
+    fn update_completion(&mut self) {
+        if self.completion_rules.is_none() || self.ensure_running().is_err() {
+            return;
+        }
+        let captured_by = self.siege.and_then(|siege| siege.capture.captured_by);
+        let result = if let Some(winner) = captured_by {
+            Some((Some(winner), TacticalFinishReason::SiegeCapture))
+        } else {
+            let active = |side| {
+                self.units.iter().any(|unit| {
+                    unit.side == side
+                        && unit.soldiers > 0
+                        && unit.state == TacticalUnitState::Formed
+                })
+            };
+            match (active(BattleSide::Attacker), active(BattleSide::Defender)) {
+                (true, true) => None,
+                (true, false) => Some((
+                    Some(BattleSide::Attacker),
+                    TacticalFinishReason::ForceDefeated,
+                )),
+                (false, true) => Some((
+                    Some(BattleSide::Defender),
+                    TacticalFinishReason::ForceDefeated,
+                )),
+                (false, false) => Some((None, TacticalFinishReason::MutualDefeat)),
+            }
+        };
+        if let Some((winner, reason)) = result {
+            self.state = TacticalBattleState::Finished {
+                winner,
+                finishing_tick: self.tick,
+                reason,
+            };
         }
     }
 
@@ -984,6 +1093,7 @@ pub enum TacticalError {
         unit_id: String,
         side: BattleSide,
     },
+    BattleFinished,
     EmptyUnitId,
     DuplicateUnitId(String),
     ZeroSoldiers(String),
@@ -1045,6 +1155,7 @@ impl fmt::Display for TacticalError {
                 formatter,
                 "{side:?} deployment has no legal space for formation {unit_id}"
             ),
+            Self::BattleFinished => write!(formatter, "the tactical battle has finished"),
             Self::EmptyUnitId => write!(formatter, "tactical unit IDs must not be empty"),
             Self::DuplicateUnitId(unit_id) => {
                 write!(formatter, "tactical unit ID {unit_id} is duplicated")

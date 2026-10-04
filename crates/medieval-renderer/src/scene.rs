@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use medieval_core::{
     BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation, TacticalBattle,
-    TacticalTerrain, TacticalTerrainCell, UnitKind,
+    TacticalBattleState, TacticalTerrain, TacticalTerrainCell, UnitKind,
 };
 
 use crate::{Camera3d, terrain::terrain_height_mm};
@@ -126,6 +126,7 @@ impl RenderUnitInstance {
 #[derive(Clone, Debug, PartialEq)]
 pub struct BattleRenderSnapshot {
     pub tick: u64,
+    pub battle_state: TacticalBattleState,
     pub battlefield: FlatBattlefield,
     pub deployment_zones: [DeploymentZone; 2],
     pub terrain: TacticalTerrain,
@@ -203,6 +204,7 @@ impl BattleRenderSnapshot {
         });
         Self {
             tick: battle.tick(),
+            battle_state: battle.state(),
             battlefield,
             deployment_zones: battle.deployment_zones(),
             terrain,

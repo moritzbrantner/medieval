@@ -116,7 +116,7 @@ impl TacticalBattle {
             }
         }?;
         battle.campaign_seed = Some(seed);
-        Ok(battle)
+        Ok(battle.start())
     }
 }
 

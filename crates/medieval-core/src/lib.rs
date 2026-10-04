@@ -16,7 +16,7 @@ pub use deployment::{DeploymentZone, standard_deployment_zone, standard_deployme
 pub use save::{CAMPAIGN_SAVE_SCHEMA_VERSION, CampaignSave, SaveError};
 pub use tactical::{
     BattlePoint, BattleSide, FlatBattlefield, Formation, MovementOrder, TACTICAL_TICKS_PER_SECOND,
-    TacticalBattle, TacticalError, TacticalUnit,
+    TacticalBattle, TacticalBattleState, TacticalError, TacticalFinishReason, TacticalUnit,
 };
 pub use terrain::{
     BattlefieldLocation, TACTICAL_FOREST_CELL_COUNT, TACTICAL_TERRAIN_GRID_SIZE,
