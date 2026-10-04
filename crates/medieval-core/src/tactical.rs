@@ -180,6 +180,8 @@ pub struct TacticalUnit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     unit_kind: Option<UnitKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    combat_profile: Option<crate::UnitCombatProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     campaign_provenance: Option<TacticalUnitProvenance>,
     #[serde(
         default = "default_attack_range_mm",
@@ -213,6 +215,7 @@ impl TacticalUnit {
             formation,
             speed_mm_per_tick,
             unit_kind: None,
+            combat_profile: None,
             campaign_provenance: None,
             attack_range_mm: COMBAT_CONTACT_DISTANCE_MM,
             destination: None,
@@ -240,7 +243,35 @@ impl TacticalUnit {
     #[must_use]
     pub const fn with_unit_kind(mut self, unit_kind: UnitKind) -> Self {
         self.unit_kind = Some(unit_kind);
+        self.combat_profile = None;
         self
+    }
+
+    #[must_use]
+    pub const fn with_combat_stats(mut self, profile: crate::UnitCombatProfile) -> Self {
+        let stats = profile.stats();
+        self.unit_kind = Some(profile.kind);
+        self.combat_profile = Some(profile);
+        self.speed_mm_per_tick = stats.movement_mm_per_tick;
+        self.morale = stats.initial_morale;
+        self.attack_range_mm = match stats.missile {
+            Some(missile) => missile.range_mm,
+            None => COMBAT_CONTACT_DISTANCE_MM,
+        };
+        self
+    }
+
+    #[must_use]
+    pub const fn combat_profile(&self) -> Option<crate::UnitCombatProfile> {
+        self.combat_profile
+    }
+
+    #[must_use]
+    pub const fn stats(&self) -> Option<crate::UnitStats> {
+        match self.combat_profile {
+            Some(profile) => Some(profile.stats()),
+            None => None,
+        }
     }
 
     #[must_use]
@@ -304,7 +335,10 @@ impl TacticalUnit {
 
     #[must_use]
     pub const fn unit_kind(&self) -> Option<UnitKind> {
-        self.unit_kind
+        match self.combat_profile {
+            Some(profile) => Some(profile.kind),
+            None => self.unit_kind,
+        }
     }
 
     #[must_use]
@@ -1546,6 +1580,7 @@ fn melee_casualties(
         / 1_000_000;
     let effective_frontage =
         terrain_adjusted_frontage(effective_frontage, attacker, defender, terrain, battlefield);
+    let effective_frontage = stat_adjusted_frontage(effective_frontage, attacker, defender, false);
     let losses = (effective_frontage / MELEE_CASUALTY_DIVISOR).max(1);
     u16::try_from(losses.min(u32::from(defender.soldiers))).unwrap()
 }
@@ -1572,8 +1607,34 @@ fn ranged_casualties(
                 terrain.ranged_target_damage_factor_milli(battlefield, defender.position),
             )
             / COMBAT_FACTOR_BASE_MILLI;
+    let effective_frontage = stat_adjusted_frontage(effective_frontage, attacker, defender, true);
     let losses = (effective_frontage / RANGED_CASUALTY_DIVISOR).max(1);
     u16::try_from(losses.min(u32::from(defender.soldiers))).unwrap()
+}
+
+fn stat_adjusted_frontage(
+    frontage: u32,
+    attacker: &TacticalUnit,
+    defender: &TacticalUnit,
+    ranged: bool,
+) -> u32 {
+    let attack = attacker.stats().map_or(1_000, |stats| {
+        if ranged {
+            stats
+                .missile
+                .map_or(1_000, |missile| u32::from(missile.damage_milli))
+        } else {
+            u32::from(stats.melee_attack_milli)
+        }
+    });
+    let resistance = defender.stats().map_or(1_000, |stats| {
+        (if ranged {
+            1_000
+        } else {
+            u32::from(stats.defense_milli)
+        }) + u32::from(stats.armor_milli)
+    });
+    frontage.saturating_mul(attack) / resistance
 }
 
 fn pursuit_casualties(

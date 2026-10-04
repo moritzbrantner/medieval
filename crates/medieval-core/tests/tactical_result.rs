@@ -424,7 +424,11 @@ fn escaped_routed_soldiers_remain_overlapping_survivor_subsets() {
 #[test]
 fn result_validation_rejects_winners_that_contradict_the_terminal_reason() {
     let mut result = finish(combat_fixture(seed())).campaign_result().unwrap();
-    result.winner = None;
+    result.winner = if result.winner.is_some() {
+        None
+    } else {
+        Some(BattleSide::Attacker)
+    };
     assert!(matches!(
         result.validate(),
         Err(TacticalResultError::InvalidProvenance(_))
