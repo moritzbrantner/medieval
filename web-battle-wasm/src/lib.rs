@@ -398,7 +398,7 @@ impl BrowserSandbox {
                 self.apply_control(request)?;
             }
             2 if selected => {
-                let enemy = picked.as_deref().and_then(|unit_id| {
+                let enemy = picked.as_deref().filter(|_| !shift).and_then(|unit_id| {
                     self.battle.units().iter().find(|unit| {
                         unit.id() == unit_id
                             && unit.side() == BattleSide::Defender
@@ -415,7 +415,12 @@ impl BrowserSandbox {
                     battlefield_point(&snapshot, x_px, y_px, width_px, height_px)
                 {
                     TacticalControlRequest {
-                        kind: "moveSelected".to_owned(),
+                        kind: if shift {
+                            "moveAndFaceSelected"
+                        } else {
+                            "moveSelected"
+                        }
+                        .to_owned(),
                         x_mm: Some(point.x_mm),
                         y_mm: Some(point.y_mm),
                         ..TacticalControlRequest::default()

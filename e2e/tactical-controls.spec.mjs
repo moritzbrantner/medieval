@@ -298,3 +298,30 @@ test("formation facing follows physical movement and appears in the battlefield"
   await expect(page.locator("#battle-error")).toBeHidden();
   await page.screenshot({ path: test.info().outputPath("formation-facing.png") });
 });
+
+test("physical facing and frontage orders validate the complete formation", async ({ page }) => {
+  await page.goto("/battle.html?e2e-controls=1&location=forestClearing");
+  await page.getByRole("button", { name: "Enter battle" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  await page.getByRole("button", { name: "Pause" , exact: true }).click();
+  await clickUnit(page, "attacker-spears");
+  await page.keyboard.press("KeyQ");
+  expect((await status(page)).units.find(unit => unit.id === "attacker-spears").facing).toEqual({ x: 0, y: -1 });
+  await page.locator("#frontage-metres").fill("10");
+  await page.getByRole("button", { name: "Set frontage" }).click();
+  expect((await status(page)).units.find(unit => unit.id === "attacker-spears").formationFiles).toBe(10);
+  const before = (await status(page)).units;
+  await page.locator("#frontage-metres").fill("100");
+  await page.getByRole("button", { name: "Set frontage" }).click();
+  await expect(page.locator("#battle-error")).toBeVisible();
+  expect((await status(page)).units).toEqual(before);
+  const point = await canvasPoint(page,"groundViewport",22_000,30_000);
+  await page.keyboard.down("Shift");
+  await page.mouse.click(point.x,point.y,{button:"right"});
+  await page.keyboard.up("Shift");
+  await expect(page.locator("#battle-error")).toBeHidden();
+  expect((await status(page)).units.find(unit => unit.id === "attacker-spears").destination).not.toBeNull();
+  await page.getByRole("button", { name: "Resume", exact: true }).click();
+  await expect.poll(async () => (await status(page)).units.find(unit => unit.id === "attacker-spears").destination).toBeNull();
+  expect((await status(page)).units.find(unit => unit.id === "attacker-spears").facing).toEqual({x:0,y:-1});
+});

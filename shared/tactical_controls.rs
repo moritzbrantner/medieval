@@ -3,7 +3,7 @@ use std::{
     fmt,
 };
 
-use medieval_core::{BattlePoint, BattleSide, MovementOrder, TacticalBattle};
+use medieval_core::{BattlePoint, BattleSide, Facing, FormationOrder, MovementOrder, TacticalBattle};
 use medieval_renderer::{Camera3d, RenderViewState};
 use serde::Deserialize;
 
@@ -30,6 +30,9 @@ pub struct TacticalControlRequest {
     pub x_mm: Option<u32>,
     pub y_mm: Option<u32>,
     pub target_unit_id: Option<String>,
+    pub facing: Option<Facing>,
+    pub quarter_turns: Option<i8>,
+    pub width_mm: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -44,6 +47,10 @@ enum TacticalControlIntent {
     SetOrderPreview { active: bool },
     MoveSelected { destination: BattlePoint },
     EngageSelected { target_unit_id: String },
+    RotateSelected { facing: Facing },
+    TurnSelected { quarter_turns: i8 },
+    MoveAndFaceSelected { destination: BattlePoint, facing: Option<Facing> },
+    FrontageSelected { width_mm: u32 },
     StopSelected,
     Withdraw,
 }
@@ -92,6 +99,22 @@ impl TacticalControlRequest {
             }),
             "engageSelected" => Ok(TacticalControlIntent::EngageSelected {
                 target_unit_id: required(self.target_unit_id, &kind, "targetUnitId")?,
+            }),
+            "rotateSelected" => Ok(TacticalControlIntent::RotateSelected {
+                facing: required(self.facing, &kind, "facing")?,
+            }),
+            "turnSelected" => Ok(TacticalControlIntent::TurnSelected {
+                quarter_turns: required(self.quarter_turns, &kind, "quarterTurns")?,
+            }),
+            "frontageSelected" => Ok(TacticalControlIntent::FrontageSelected {
+                width_mm: required(self.width_mm, &kind, "widthMm")?,
+            }),
+            "moveAndFaceSelected" => Ok(TacticalControlIntent::MoveAndFaceSelected {
+                destination: BattlePoint::new(
+                    required(self.x_mm, &kind, "xMm")?,
+                    required(self.y_mm, &kind, "yMm")?,
+                ),
+                facing: self.facing,
             }),
             "stopSelected" => Ok(TacticalControlIntent::StopSelected),
             _ => Err(TacticalControlError::UnknownIntent(kind)),
@@ -215,6 +238,14 @@ impl TacticalControls {
             TacticalControlIntent::EngageSelected { target_unit_id } => {
                 self.engage_selected(battle, &target_unit_id)
             }
+            TacticalControlIntent::RotateSelected { facing } => self.formation_selected(
+                battle, |unit_id| FormationOrder::Rotate { unit_id, facing }),
+            TacticalControlIntent::TurnSelected { quarter_turns } => self.formation_selected(
+                battle, |unit_id| FormationOrder::Turn { unit_id, quarter_turns }),
+            TacticalControlIntent::FrontageSelected { width_mm } => self.formation_selected(
+                battle, |unit_id| FormationOrder::Frontage { unit_id, width_mm }),
+            TacticalControlIntent::MoveAndFaceSelected { destination, facing } => self.formation_selected(
+                battle, |unit_id| FormationOrder::MoveAndFace { unit_id, destination, facing }),
             TacticalControlIntent::StopSelected => self.stop_selected(battle),
             TacticalControlIntent::Withdraw => {
                 battle
@@ -315,6 +346,20 @@ impl TacticalControls {
         if self.selected_units.is_empty() {
             self.order_preview = false;
         }
+        Ok(())
+    }
+
+    fn formation_selected(
+        &mut self,
+        battle: &mut TacticalBattle,
+        command: impl Fn(String) -> FormationOrder,
+    ) -> Result<(), TacticalControlError> {
+        self.sync_with_battle(battle);
+        self.ensure_selection()?;
+        let orders = self.selected_units.iter().cloned().map(command).collect::<Vec<_>>();
+        battle.issue_formation_orders(&orders)
+            .map_err(|error| TacticalControlError::RuleRejected(error.to_string()))?;
+        self.order_preview = false;
         Ok(())
     }
 
@@ -483,6 +528,39 @@ mod tests {
             ],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn formation_requests_are_atomic_across_the_selected_units() {
+        let mut battle = sample_battle();
+        let mut controls = TacticalControls::new(&battle, BattleSide::Attacker);
+        controls.apply_request(&mut battle, TacticalControlRequest {
+            kind: "selectReplace".into(),
+            unit_ids: Some(vec!["attacker-a".into(), "attacker-b".into()]),
+            ..TacticalControlRequest::default()
+        }).unwrap();
+        controls.apply_request(&mut battle, TacticalControlRequest {
+            kind: "turnSelected".into(), quarter_turns: Some(-1),
+            ..TacticalControlRequest::default()
+        }).unwrap();
+        for unit in battle.units().iter().filter(|unit| unit.side() == BattleSide::Attacker) {
+            assert_eq!(unit.facing().unwrap().direction(), [0,-1]);
+        }
+        // 45 metres fits the second unit but crosses the first unit's field edge.
+        let before = battle.clone();
+        let controls_before = controls.clone();
+        assert!(controls.apply_request(&mut battle, TacticalControlRequest {
+            kind: "frontageSelected".into(), width_mm: Some(45_000),
+            ..TacticalControlRequest::default()
+        }).is_err());
+        assert_eq!(battle, before);
+        assert_eq!(controls, controls_before);
+        controls.apply_request(&mut battle, TacticalControlRequest {
+            kind: "frontageSelected".into(), width_mm: Some(10_000),
+            ..TacticalControlRequest::default()
+        }).unwrap();
+        assert!(battle.units().iter().filter(|unit|unit.side()==BattleSide::Attacker)
+            .all(|unit|unit.formation()==Formation::Line {files:10}));
     }
 
     #[test]
