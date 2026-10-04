@@ -271,3 +271,20 @@ fraction per attacker/defender pair, bounded below 1,000 and serialized. Thus
 frontal spear resistance also matters at the default ten-file campaign frontage
 instead of every weak contact being rounded up to one casualty. Historical combat
 without profiles retains that minimum-casualty rule.
+
+## Cavalry charge transitions
+
+New profiled knights begin `ready`. Engaging a formed enemy advances through
+`approaching` to `charging` after 4,000 mm of uninterrupted movement on open ground,
+with the target in the facing front cone and no pathing detour or intercepting
+formation. Run-up uses integer displacement, conservatively taking the larger
+coordinate change for diagonal travel, and saturates at the threshold.
+
+Arrival records `contact` momentum. Only a full run-up adds the profile's bounded
+charge impact to that engagement target's next simultaneous melee pulse. Frontal
+profiled spearmen suppress the added impact while retaining the normal matchup
+counter. Short approaches receive no charge bonus. The pulse consumes contact and
+starts 40 ticks of `recovering`; stopping, turning, changing formation or target,
+cover, detours and interception interrupt momentum. Repeating the same engagement
+order does not restart momentum or recovery. Core serialization and browser status
+retain charge state; historical records lacking it do not acquire charge bonuses.

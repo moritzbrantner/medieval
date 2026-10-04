@@ -177,6 +177,7 @@ struct UnitStatus {
     source_army_id: Option<String>,
     combat_stats: Option<medieval_core::UnitStats>,
     facing: Option<medieval_core::Facing>,
+    charge: Option<medieval_core::CavalryChargeState>,
     engagement_arc: Option<medieval_core::CombatArc>,
     morale: u16,
     fatigue: u16,
@@ -352,9 +353,21 @@ impl BrowserSandbox {
         shift: bool,
     ) -> Result<(), String> {
         validate_viewport(x_px, y_px, width_px, height_px)?;
-        let snapshot = self.snapshot();
-        let picked = pick_unit(&snapshot, x_px, y_px, width_px, height_px);
+        let mut snapshot = self.snapshot();
         let selected = snapshot.units.iter().any(|unit| unit.selected);
+        let pick_side = if button == 2 {
+            BattleSide::Defender
+        } else {
+            BattleSide::Attacker
+        };
+        snapshot.units.retain(|rendered| {
+            self.battle.units().iter().any(|unit| {
+                unit.id() == rendered.unit_id
+                    && unit.side() == pick_side
+                    && unit.can_receive_orders()
+            })
+        });
+        let picked = pick_unit(&snapshot, x_px, y_px, width_px, height_px);
         match button {
             0 => {
                 let selectable = picked.as_deref().and_then(|unit_id| {
@@ -521,6 +534,7 @@ impl BrowserSandbox {
                         .map(|provenance| provenance.source_army_id.clone()),
                     combat_stats: unit.stats(),
                     facing: unit.facing(),
+                    charge: unit.charge_state(),
                     engagement_arc: unit
                         .engagement_target()
                         .and_then(|id| self.battle.units().iter().find(|target| target.id() == id))
