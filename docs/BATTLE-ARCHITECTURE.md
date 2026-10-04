@@ -171,3 +171,27 @@ version 1 only for unreconciled historical state and upgrades it before the next
 write. A version-1 document claiming reconciled casualties is rejected. Older
 readers therefore reject a version-2 save instead of ignoring the recorded result
 and autoresolving an already-reduced army again.
+
+## Strategic tactical outcomes
+
+`CampaignState::apply_tactical_battle_result` commits casualty reconciliation and
+strategic consequences atomically. The currently supported field and prototype
+siege battles follow the existing campaign rule: an attacker victory captures
+the target province and moves its surviving attacking army there. Capture cancels
+the former owner's recruitment in that province. Losing survivors retreat to a
+friendly neighbor of the battle province, preferring the attacker's entry province
+when legal and otherwise choosing the lowest stable province ID. This choice is
+independent of province, army, and adjacency storage order.
+
+A force with no friendly retreat destination surrenders and is removed. Its exact
+survivor roster is recorded separately from tactical casualties, preserving the
+accounting boundary between battlefield losses and strategic surrender. A draw
+preserves ownership, returns surviving attackers through the same legality check,
+and leaves defending survivors in their province.
+
+The matching pending battle and intermediate result clear once. A persisted
+`TacticalCampaignReport` retains the tactical result, capture, retreats, surrender
+rosters, and campaign winner queried after all consequences. An identical replay
+returns that report without applying casualties, moving armies, or adding another
+report/log entry. Historical report validation does not depend on armies still
+existing in later turns. Tactical outcomes are written only in save schema 2.

@@ -74,8 +74,10 @@ impl CampaignSave {
         let mut save: Self = serde_json::from_str(json)
             .map_err(|error| SaveError::InvalidJson(error.to_string()))?;
         if header.schema_version == 1 {
-            if save.campaign.pending_tactical_result.is_some() {
-                return invalid("version 1 cannot contain reconciled tactical casualties");
+            if save.campaign.pending_tactical_result.is_some()
+                || !save.campaign.tactical_battle_reports.is_empty()
+            {
+                return invalid("version 1 cannot contain tactical battle outcomes");
             }
             save.schema_version = CAMPAIGN_SAVE_SCHEMA_VERSION;
         }

@@ -47,6 +47,7 @@ impl CampaignState {
             .iter()
             .find(|report| &report.result == result)
         {
+            report.validate()?;
             return Ok(report.clone());
         }
         let mut next = self.clone();
