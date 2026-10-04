@@ -212,6 +212,24 @@ impl TacticalUnit {
     }
 
     #[must_use]
+    pub fn formation_footprint(&self) -> crate::FormationFootprint {
+        crate::FormationFootprint::at(self, self.position)
+    }
+
+    /// Initial campaign heading: zero faces +X, 180 degrees faces -X.
+    #[must_use]
+    pub const fn initial_facing_millidegrees(&self) -> u32 {
+        match self.side {
+            BattleSide::Attacker => 0,
+            BattleSide::Defender => 180_000,
+        }
+    }
+
+    pub(crate) fn set_initial_position(&mut self, point: BattlePoint) {
+        self.position = point;
+    }
+
+    #[must_use]
     pub const fn formation(&self) -> Formation {
         self.formation
     }
@@ -962,6 +980,10 @@ pub enum TacticalError {
         depth_mm: u32,
     },
     CampaignForceTooLarge(BattleSide),
+    DeploymentFull {
+        unit_id: String,
+        side: BattleSide,
+    },
     EmptyUnitId,
     DuplicateUnitId(String),
     ZeroSoldiers(String),
@@ -1018,6 +1040,10 @@ impl fmt::Display for TacticalError {
             Self::CampaignForceTooLarge(side) => write!(
                 formatter,
                 "{side:?} campaign force exceeds tactical construction capacity"
+            ),
+            Self::DeploymentFull { unit_id, side } => write!(
+                formatter,
+                "{side:?} deployment has no legal space for formation {unit_id}"
             ),
             Self::EmptyUnitId => write!(formatter, "tactical unit IDs must not be empty"),
             Self::DuplicateUnitId(unit_id) => {
