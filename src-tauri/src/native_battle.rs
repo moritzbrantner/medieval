@@ -593,7 +593,8 @@ fn sample_session(location: BattlefieldLocation) -> NativeBattleSession {
                 BattlePoint::new(30_000, 50_000),
                 Formation::Line { files: 20 },
                 1_000,
-            ),
+            )
+            .with_unit_kind(medieval_core::UnitKind::Spearmen),
             TacticalUnit::new(
                 "defender-spears",
                 BattleSide::Defender,
@@ -601,7 +602,8 @@ fn sample_session(location: BattlefieldLocation) -> NativeBattleSession {
                 BattlePoint::new(70_000, 50_000),
                 Formation::Column { files: 16 },
                 1_000,
-            ),
+            )
+            .with_unit_kind(medieval_core::UnitKind::Spearmen),
         ],
         location,
     )
