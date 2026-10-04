@@ -619,6 +619,7 @@ pub fn install_browser_input_listener(
                 controls,
                 player_side,
                 input,
+                ..
             } = &mut *session;
             input.apply_browser(battle, controls, *player_side, envelope)
         })();
