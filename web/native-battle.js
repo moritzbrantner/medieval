@@ -16,6 +16,7 @@ const tacticalKeys = new Set([
   "NumpadSubtract",
   "Space",
   "KeyS",
+  "KeyR",
   "Escape",
   "Digit0",
   "Digit1",
@@ -179,3 +180,27 @@ nativeBattleButton?.addEventListener("click", () =>
 battleSandboxButton?.addEventListener("click", () =>
   openBattlePreview(sandboxBattleLocation?.value ?? "mountainPass"),
 );
+
+export async function openCampaignBattle(seed) {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke) throw new Error("The desktop battle runtime is unavailable.");
+  const opened = await invoke("open_native_campaign_battle", { seed });
+  inputSequence = 0;
+  inputQueue = Promise.resolve();
+  browserInputActive = Boolean(opened?.browserInput);
+  try {
+    for (;;) {
+      const status = await invoke("native_campaign_battle_status");
+      if (status.result) return JSON.stringify(status.result);
+      if (!status.running) return null;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  } finally {
+    browserInputActive = false;
+    try {
+      await invoke("close_native_campaign_battle");
+    } catch (error) {
+      nativeBattleStatus.textContent = `Battle window could not close: ${String(error)}`;
+    }
+  }
+}

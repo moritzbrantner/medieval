@@ -24,5 +24,5 @@ test("pending battle state is projected explicitly", () => {
   assert.match(html, /id="pending-battle"/);
   assert.match(html, /id="pending-battle-detail"/);
   assert.match(script, /const battle = campaign\.pendingBattle/);
-  assert.match(script, /Rust will resolve casualties, retreat, and province control deterministically/);
+  assert.match(script, /Lead your army into battle, or choose a seed for Auto-resolve/);
 });

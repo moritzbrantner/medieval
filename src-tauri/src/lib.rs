@@ -5,7 +5,8 @@ use std::{
 };
 
 use medieval_core::{
-    CampaignSave, CampaignState, RecruitmentOption, UnitKind, new_campaign as fresh_campaign,
+    CampaignSave, CampaignState, RecruitmentOption, TacticalBattleResult, TacticalBattleSeed,
+    UnitKind, new_campaign as fresh_campaign,
 };
 use tauri::{AppHandle, Manager, State};
 
@@ -13,7 +14,10 @@ use tauri::{AppHandle, Manager, State};
 mod native_battle;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-use native_battle::{control_native_battle, open_native_battle_renderer};
+use native_battle::{
+    close_native_campaign_battle, control_native_battle, native_campaign_battle_status,
+    open_native_battle_renderer, open_native_campaign_battle,
+};
 
 const SAVE_FILE_NAME: &str = "campaign-save.json";
 
@@ -287,6 +291,38 @@ fn resolve_pending_battle(state: State<'_, GameState>, seed: u64) -> Result<Camp
 }
 
 #[tauri::command]
+fn pending_tactical_battle_seed(state: State<'_, GameState>) -> Result<TacticalBattleSeed, String> {
+    lock_session(&state)?
+        .campaign
+        .pending_tactical_battle_seed()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn finish_reconciled_tactical_battle(state: State<'_, GameState>) -> Result<CampaignState, String> {
+    let mut session = lock_session(&state)?;
+    session
+        .campaign
+        .finish_reconciled_tactical_battle()
+        .map_err(|error| error.to_string())?;
+    Ok(session.campaign.clone())
+}
+
+#[tauri::command]
+fn apply_tactical_battle_result(
+    state: State<'_, GameState>,
+    document: String,
+) -> Result<CampaignState, String> {
+    let result = TacticalBattleResult::from_json(&document).map_err(|error| error.to_string())?;
+    let mut session = lock_session(&state)?;
+    session
+        .campaign
+        .apply_tactical_battle_result(&result)
+        .map_err(|error| error.to_string())?;
+    Ok(session.campaign.clone())
+}
+
+#[tauri::command]
 fn end_player_turn(
     app: AppHandle,
     state: State<'_, GameState>,
@@ -332,6 +368,24 @@ fn control_native_battle() -> Result<(), String> {
     Err("native tactical controls are currently desktop-only".to_owned())
 }
 
+#[cfg(any(target_os = "android", target_os = "ios"))]
+#[tauri::command]
+fn open_native_campaign_battle() -> Result<(), String> {
+    Err("native campaign battles are currently desktop-only".to_owned())
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+#[tauri::command]
+fn native_campaign_battle_status() -> Result<(), String> {
+    Err("native campaign battles are currently desktop-only".to_owned())
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+#[tauri::command]
+fn close_native_campaign_battle() -> Result<(), String> {
+    Err("native campaign battles are currently desktop-only".to_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default().manage(GameState::default());
@@ -355,6 +409,12 @@ pub fn run() {
             recruitment_options,
             queue_recruitment,
             resolve_pending_battle,
+            pending_tactical_battle_seed,
+            apply_tactical_battle_result,
+            finish_reconciled_tactical_battle,
+            open_native_campaign_battle,
+            native_campaign_battle_status,
+            close_native_campaign_battle,
             end_player_turn,
             open_native_battle_renderer,
             control_native_battle

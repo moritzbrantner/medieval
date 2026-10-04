@@ -5,12 +5,13 @@ use std::{
         mpsc,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use medieval_core::{
-    BattlePoint, BattleSide, BattlefieldLocation, FlatBattlefield, Formation, TacticalBattle,
-    TacticalUnit,
+    BattlePoint, BattleSide, BattlefieldLocation, FlatBattlefield, Formation,
+    TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalBattleResult, TacticalBattleSeed,
+    TacticalBattleState, TacticalUnit,
 };
 use medieval_renderer::{BattleRenderSnapshot, GpuBattleRenderer};
 use serde::Serialize;
@@ -60,9 +61,27 @@ struct NativeBattleSession {
     controls: TacticalControls,
     player_side: BattleSide,
     input: DesktopInputState,
+    last_tick_at: Option<Instant>,
+    tick_remainder: Duration,
 }
 
 impl NativeBattleSession {
+    fn advance_to(&mut self, now: Instant) {
+        let Some(previous) = self.last_tick_at.replace(now) else {
+            return;
+        };
+        self.tick_remainder = self
+            .tick_remainder
+            .saturating_add(now.saturating_duration_since(previous))
+            .min(Duration::from_secs(1));
+        let tick_nanos = 1_000_000_000 / u64::from(TACTICAL_TICKS_PER_SECOND);
+        let ticks = u32::try_from(self.tick_remainder.as_nanos() / u128::from(tick_nanos))
+            .expect("a one-second frame interval fits in u32 ticks");
+        self.tick_remainder -= Duration::from_nanos(u64::from(ticks) * tick_nanos);
+        self.battle.advance_ticks(ticks);
+        self.controls.sync_with_battle(&self.battle);
+    }
+
     fn snapshot(&self) -> BattleRenderSnapshot {
         BattleRenderSnapshot::project(&self.battle, &self.controls.render_view(&self.battle))
     }
@@ -381,14 +400,40 @@ pub async fn open_native_battle_renderer(
     state: State<'_, NativeBattleState>,
     location: BattlefieldLocation,
 ) -> Result<NativeBattleOpenResult, String> {
+    open_session(&state, sample_session(location))
+}
+
+#[tauri::command]
+pub async fn open_native_campaign_battle(
+    state: State<'_, NativeBattleState>,
+    seed: TacticalBattleSeed,
+) -> Result<NativeBattleOpenResult, String> {
+    let battle = TacticalBattle::from_campaign_seed(FlatBattlefield::new(120_000, 80_000), seed)
+        .map_err(|error| error.to_string())?;
+    let player_side = BattleSide::Attacker;
+    let controls = TacticalControls::new(&battle, player_side);
+    open_session(
+        &state,
+        NativeBattleSession {
+            battle,
+            controls,
+            player_side,
+            input: DesktopInputState::default(),
+            last_tick_at: None,
+            tick_remainder: Duration::ZERO,
+        },
+    )
+}
+
+fn open_session(
+    state: &NativeBattleState,
+    session: NativeBattleSession,
+) -> Result<NativeBattleOpenResult, String> {
     state.running.store(false, Ordering::Release);
-    {
-        let mut session = state
-            .session
-            .lock()
-            .map_err(|_| "native tactical session lock was poisoned".to_owned())?;
-        *session = sample_session(location);
-    }
+    *state
+        .session
+        .lock()
+        .map_err(|_| "native tactical session lock was poisoned".to_owned())? = session;
     {
         let mut renderer = state
             .renderer
@@ -396,7 +441,7 @@ pub async fn open_native_battle_renderer(
             .map_err(|_| "native renderer lock was poisoned".to_owned())?;
         *renderer = None;
     }
-    ensure_renderer_initialized(&state)?;
+    ensure_renderer_initialized(state)?;
     sync_browser_input_window(&state.main_window, &state.window)?;
     state
         .session
@@ -425,6 +470,49 @@ pub async fn open_native_battle_renderer(
     Ok(NativeBattleOpenResult {
         browser_input: browser_input_enabled(),
     })
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeCampaignBattleStatus {
+    running: bool,
+    result: Option<TacticalBattleResult>,
+}
+
+#[tauri::command]
+pub fn native_campaign_battle_status(
+    state: State<'_, NativeBattleState>,
+) -> Result<NativeCampaignBattleStatus, String> {
+    let session = state
+        .session
+        .lock()
+        .map_err(|_| "native tactical session lock was poisoned".to_owned())?;
+    if session.battle.campaign_seed().is_none() {
+        return Err("no native campaign battle is active".to_owned());
+    }
+    let result = if matches!(session.battle.state(), TacticalBattleState::Finished { .. }) {
+        Some(
+            session
+                .battle
+                .campaign_result()
+                .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
+    };
+    Ok(NativeCampaignBattleStatus {
+        running: state.running.load(Ordering::Acquire),
+        result,
+    })
+}
+
+#[tauri::command]
+pub fn close_native_campaign_battle(state: State<'_, NativeBattleState>) -> Result<(), String> {
+    state.running.store(false, Ordering::Release);
+    state
+        .window
+        .hide()
+        .map_err(|error| format!("could not hide tactical battle window: {error}"))
 }
 
 #[tauri::command]
@@ -538,12 +626,16 @@ fn spawn_frame_scheduler(
                     let frame_window = window.clone();
                     let schedule_result = window.run_on_main_thread(move || {
                         let render_result: Result<(), String> = (|| {
-                            let snapshot = frame_session
-                                .lock()
-                                .map_err(|_| {
+                            if !frame_running.load(Ordering::Acquire) {
+                                return Ok(());
+                            }
+                            let snapshot = {
+                                let mut session = frame_session.lock().map_err(|_| {
                                     "native tactical session lock was poisoned".to_owned()
-                                })?
-                                .snapshot();
+                                })?;
+                                session.advance_to(Instant::now());
+                                session.snapshot()
+                            };
                             let mut renderer = frame_renderer
                                 .lock()
                                 .map_err(|_| "native renderer lock was poisoned".to_owned())?;
@@ -637,6 +729,8 @@ fn sample_session(location: BattlefieldLocation) -> NativeBattleSession {
         controls,
         player_side,
         input: DesktopInputState::default(),
+        last_tick_at: None,
+        tick_remainder: Duration::ZERO,
     }
 }
 
@@ -703,6 +797,19 @@ mod tests {
         assert_ne!(before.camera, after.camera);
         assert!(before.units[0].selected);
         assert!(!after.units[0].selected);
+    }
+
+    #[test]
+    fn native_clock_preserves_fractional_ticks() {
+        let mut session = sample_session(BattlefieldLocation::MountainPass);
+        let start = Instant::now();
+        session.advance_to(start);
+        assert_eq!(session.battle.tick(), 0);
+        session.advance_to(start + Duration::from_millis(125));
+        assert_eq!(session.battle.tick(), 2);
+        session.advance_to(start + Duration::from_millis(150));
+        assert_eq!(session.battle.tick(), 3);
+        assert_eq!(session.tick_remainder, Duration::ZERO);
     }
 
     #[test]

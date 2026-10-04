@@ -257,6 +257,10 @@ impl DesktopInputState {
                 kind: "fitCamera".to_owned(),
                 ..TacticalControlRequest::default()
             }),
+            "KeyR" => Some(TacticalControlRequest {
+                kind: "withdraw".to_owned(),
+                ..TacticalControlRequest::default()
+            }),
             "KeyS" => Some(TacticalControlRequest {
                 kind: "stopSelected".to_owned(),
                 ..TacticalControlRequest::default()
@@ -673,6 +677,8 @@ pub fn install_linux_input(
             Some("ArrowDown")
         } else if key == constants::space {
             Some("Space")
+        } else if key == constants::r || key == constants::R {
+            Some("KeyR")
         } else if key == constants::Escape {
             Some("Escape")
         } else if key == constants::s || key == constants::S {
@@ -881,6 +887,8 @@ mod tests {
             battle,
             player_side: BattleSide::Attacker,
             input: DesktopInputState::default(),
+            last_tick_at: None,
+            tick_remainder: std::time::Duration::ZERO,
         }
     }
 
