@@ -301,7 +301,10 @@ provide surface variation. Camera rays, orders, soldier elevation, cover, and
 passability continue to use `TacticalTerrain` rather than the presentation mesh.
 
 The GPU caches terrain vertices by battlefield dimensions and the complete
-terrain value. Unit movement and selection updates do not rebuild that buffer.
+terrain value. Terrain changes upload through the queue into an unmapped vertex
+buffer, reusing its capacity where possible. This avoids browser limits on
+mapped-at-creation buffers during location changes. Unit movement and selection
+updates do not prepare or upload terrain again.
 The fixed geometry budget is 16,384 vertices / 768 KiB per battlefield, independent
 of soldier count. Representative fixtures cover Mountain Pass, Forest Clearing,
 and River Ford, including non-divisible dimensions and logical top agreement.

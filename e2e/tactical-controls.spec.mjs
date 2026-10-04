@@ -26,9 +26,6 @@ async function clickUnit(page, unitId, options = {}) {
 }
 
 test("battlefield selector rebuilds the Rust-owned sandbox across all three locations", async ({ page }) => {
-  page.on("console", message => {
-    if (message.type() === "error") console.log("[DEBUG-197-browser]", message.text());
-  });
   await page.goto("/battle.html?e2e-controls=1");
   await expect(page.locator("#army-setup")).toBeVisible();
   await page.getByRole("button", { name: "Add Levy battalion" }).click();

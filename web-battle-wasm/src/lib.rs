@@ -10,12 +10,6 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::{JsCast, prelude::*};
 use web_sys::HtmlCanvasElement;
 
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = console, js_name = error)]
-    fn debug_panic(message: &str);
-}
-
 mod controls;
 use controls::{TacticalControlRequest, TacticalControls};
 
@@ -1046,7 +1040,6 @@ async fn start_sandbox(
     selection_json: String,
     location: BattlefieldLocation,
 ) -> Result<String, JsValue> {
-    std::panic::set_hook(Box::new(|info| debug_panic(&format!("[DEBUG-197-panic] {info}"))));
     let window = web_sys::window().ok_or_else(|| js_error("browser window is unavailable"))?;
     let document = window
         .document()

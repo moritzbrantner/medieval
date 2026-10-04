@@ -375,6 +375,7 @@ impl CameraUniform {
 
 struct TerrainGpuBatch {
     vertex_buffer: wgpu::Buffer,
+    vertex_capacity: usize,
     vertex_count: u32,
     key: Option<(TacticalTerrain, FlatBattlefield)>,
 }
@@ -384,14 +385,21 @@ impl TerrainGpuBatch {
             vertex_buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Medieval terrain vertices"),
                 size: std::mem::size_of::<TerrainVertex>() as u64,
-                usage: wgpu::BufferUsages::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
+            vertex_capacity: 1,
             vertex_count: 0,
             key: None,
         }
     }
-    fn upload(&mut self, device: &wgpu::Device, terrain: TacticalTerrain, field: FlatBattlefield) {
+    fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        terrain: TacticalTerrain,
+        field: FlatBattlefield,
+    ) {
         let key = (terrain, field);
         if self.key == Some(key) {
             return;
@@ -399,12 +407,17 @@ impl TerrainGpuBatch {
         let mesh = TerrainMesh::prepare(terrain, field);
         self.vertex_count =
             u32::try_from(mesh.vertices.len()).expect("terrain vertex budget fits u32");
-        if !mesh.vertices.is_empty() {
-            self.vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        if mesh.vertices.len() > self.vertex_capacity {
+            self.vertex_capacity = mesh.vertices.len().next_power_of_two();
+            self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Medieval terrain surface and exposed cliffs"),
-                contents: bytemuck::cast_slice(&mesh.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
+                size: (self.vertex_capacity * std::mem::size_of::<TerrainVertex>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             });
+        }
+        if !mesh.vertices.is_empty() {
+            queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&mesh.vertices));
         }
         self.key = Some(key);
     }
@@ -545,7 +558,7 @@ impl GpuBattleRenderer {
         snapshot: &BattleRenderSnapshot,
     ) {
         self.terrain_batch
-            .upload(device, snapshot.terrain, snapshot.battlefield);
+            .upload(device, queue, snapshot.terrain, snapshot.battlefield);
         let instances = gpu_instances(snapshot);
         if instances.world.len() > self.instance_capacity {
             self.instance_capacity = instances.world.len().next_power_of_two();

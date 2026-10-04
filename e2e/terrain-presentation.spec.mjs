@@ -34,3 +34,24 @@ for (const location of ["mountainPass", "forestClearing", "riverFord"]) {
     await expect(page.locator("#battle-error")).toBeHidden();
   });
 }
+
+
+test("location changes work when mapped terrain allocations are unavailable", async ({ page }) => {
+  await page.goto("/battle.html?e2e-controls=1");
+  await page.getByRole("button", { name: "Enter battle" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  await page.evaluate(() => {
+    const createBuffer = GPUDevice.prototype.createBuffer;
+    GPUDevice.prototype.createBuffer = function(descriptor) {
+      if (descriptor.mappedAtCreation && descriptor.label === "Medieval terrain surface and exposed cliffs") {
+        throw new RangeError("mapped terrain allocation unavailable");
+      }
+      return createBuffer.call(this, descriptor);
+    };
+  });
+  for (const location of ["forestClearing", "riverFord", "mountainPass"]) {
+    await page.locator("#battle-location").selectOption(location);
+    await expect.poll(() => page.evaluate(() => window.__medievalControlsE2E.status().battlefieldLocation)).toBe(location);
+    await expect(page.locator("#battle-error")).toBeHidden();
+  }
+});

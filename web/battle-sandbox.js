@@ -55,7 +55,6 @@ const armySelection = {
 };
 
 function reportError(error) {
-  console.error("[DEBUG-197-caught]", error?.stack ?? error);
   const target = battleStarted ? errorBox : armySetupError;
   target.hidden = false;
   target.textContent = String(error);
