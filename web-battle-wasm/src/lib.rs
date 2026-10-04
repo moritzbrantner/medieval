@@ -176,6 +176,7 @@ struct UnitStatus {
     unit_kind: Option<UnitKind>,
     source_army_id: Option<String>,
     combat_stats: Option<medieval_core::UnitStats>,
+    ammunition: Option<u16>,
     facing: Option<medieval_core::Facing>,
     charge: Option<medieval_core::CavalryChargeState>,
     engagement_arc: Option<medieval_core::CombatArc>,
@@ -533,6 +534,7 @@ impl BrowserSandbox {
                         .campaign_provenance()
                         .map(|provenance| provenance.source_army_id.clone()),
                     combat_stats: unit.stats(),
+                    ammunition: unit.ammunition(),
                     facing: unit.facing(),
                     charge: unit.charge_state(),
                     engagement_arc: unit

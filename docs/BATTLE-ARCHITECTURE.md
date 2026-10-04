@@ -288,3 +288,25 @@ starts 40 ticks of `recovering`; stopping, turning, changing formation or target
 cover, detours and interception interrupt momentum. Repeating the same engagement
 order does not restart momentum or recovery. Core serialization and browser status
 retain charge state; historical records lacking it do not acquire charge bonuses.
+
+## Finite missile ammunition
+
+New V1 missile formations initialize the core profile's volley budget (30 for
+archers). An authoritative combat pulse spends exactly one volley only when the
+formed unit fires at a valid formed enemy in range and is not in melee. Fractional
+damage still consumes its volley; selection, orders, paused frames, invalid targets,
+out-of-range movement and melee do not. Zero ammunition suppresses ranged firing
+and reduces engagement stopping distance to melee range, so exhausted archers can
+close and fight with their existing melee stats. Ammunition cannot underflow.
+
+Remaining ammunition serializes with the tactical unit and replay. Historical
+records lacking it retain previous unlimited firing, including legacy sandbox
+fixtures. Render snapshots and browser status project remaining volleys; the unit
+row displays the count or exhaustion without deciding firing eligibility.
+
+Played source-aware results aggregate initial and remaining volleys per source
+army and troop kind, including chunked formations. Validation checks the canonical
+profile budget and remaining <= initial. Result/save records without the optional
+resource field remain readable. Campaign boundary saves preserve recorded tactical
+ammunition; recruitment and future battle deployment initialize a fresh tactical
+budget rather than treating arrows as a strategic campaign inventory.
