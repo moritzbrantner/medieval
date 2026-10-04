@@ -8,6 +8,8 @@ mod campaign_handoff;
 mod campaign_reconciliation;
 mod campaign_resolution;
 mod deployment;
+mod facing;
+pub use facing::{CombatArc, Facing};
 mod save;
 mod tactical;
 mod tactical_result;

@@ -182,6 +182,8 @@ pub struct TacticalUnit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     combat_profile: Option<crate::UnitCombatProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    facing: Option<crate::Facing>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     campaign_provenance: Option<TacticalUnitProvenance>,
     #[serde(
         default = "default_attack_range_mm",
@@ -216,6 +218,7 @@ impl TacticalUnit {
             speed_mm_per_tick,
             unit_kind: None,
             combat_profile: None,
+            facing: None,
             campaign_provenance: None,
             attack_range_mm: COMBAT_CONTACT_DISTANCE_MM,
             destination: None,
@@ -252,6 +255,10 @@ impl TacticalUnit {
         let stats = profile.stats();
         self.unit_kind = Some(profile.kind);
         self.combat_profile = Some(profile);
+        self.facing = Some(match self.side {
+            BattleSide::Attacker => crate::Facing::east(),
+            BattleSide::Defender => crate::Facing::west(),
+        });
         self.speed_mm_per_tick = stats.movement_mm_per_tick;
         self.morale = stats.initial_morale;
         self.attack_range_mm = match stats.missile {
@@ -259,6 +266,23 @@ impl TacticalUnit {
             None => COMBAT_CONTACT_DISTANCE_MM,
         };
         self
+    }
+
+    #[must_use]
+    pub const fn with_facing(mut self, facing: crate::Facing) -> Self {
+        self.facing = Some(facing);
+        self
+    }
+
+    #[must_use]
+    pub const fn facing(&self) -> Option<crate::Facing> {
+        self.facing
+    }
+
+    #[must_use]
+    pub fn incoming_arc(&self, attacker_position: BattlePoint) -> Option<crate::CombatArc> {
+        self.facing
+            .map(|facing| facing.classify(self.position, attacker_position))
     }
 
     #[must_use]
@@ -831,6 +855,20 @@ impl TacticalBattle {
         Ok(())
     }
 
+    pub fn issue_facing_order(
+        &mut self,
+        unit_id: &str,
+        facing: crate::Facing,
+    ) -> Result<(), TacticalError> {
+        self.ensure_running()?;
+        let index = self
+            .unit_index(unit_id)
+            .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
+        self.ensure_can_receive_orders(index)?;
+        self.units[index].facing = Some(facing);
+        Ok(())
+    }
+
     pub fn issue_engagement_order(
         &mut self,
         unit_id: &str,
@@ -1064,6 +1102,9 @@ impl TacticalBattle {
         let waypoint = self.movement_waypoint(unit.position, destination);
         let next = move_point_toward(unit.position, waypoint, movement_speed);
         debug_assert!(self.is_passable_at(next));
+        if unit.facing.is_some() && next != unit.position {
+            self.units[index].facing = crate::Facing::toward(unit.position, next);
+        }
         self.units[index].position = next;
         if self.units[index].destination == Some(destination) && next == destination {
             self.units[index].destination = None;
@@ -1625,6 +1666,8 @@ fn melee_casualties(
     let effective_frontage =
         terrain_adjusted_frontage(effective_frontage, attacker, defender, terrain, battlefield);
     let effective_frontage = stat_adjusted_frontage(effective_frontage, attacker, defender, false);
+    let effective_frontage =
+        effective_frontage.saturating_mul(contact_factor_milli(attacker, defender)) / 1_000;
     let losses = (effective_frontage / MELEE_CASUALTY_DIVISOR).max(1);
     u16::try_from(losses.min(u32::from(defender.soldiers))).unwrap()
 }
@@ -1654,6 +1697,18 @@ fn ranged_casualties(
     let effective_frontage = stat_adjusted_frontage(effective_frontage, attacker, defender, true);
     let losses = (effective_frontage / RANGED_CASUALTY_DIVISOR).max(1);
     u16::try_from(losses.min(u32::from(defender.soldiers))).unwrap()
+}
+
+fn contact_factor_milli(attacker: &TacticalUnit, defender: &TacticalUnit) -> u32 {
+    let bonus = match defender.incoming_arc(attacker.position) {
+        Some(crate::CombatArc::Flank) => 250_u32,
+        Some(crate::CombatArc::Rear) => 500_u32,
+        Some(crate::CombatArc::Front) | None => return 1_000,
+    };
+    let resistance = defender
+        .stats()
+        .map_or(1_000, |stats| u32::from(stats.formation_resistance_milli));
+    1_000 + (bonus * 1_000 / resistance).min(750)
 }
 
 fn ranged_damage_milli(

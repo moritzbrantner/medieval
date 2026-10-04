@@ -224,3 +224,15 @@ fractional damage per attacker/target pair across combat pulses. This makes armo
 observable in the default ten-file formations without rounding every shot up to
 one casualty. The carry is bounded below 1,000 and serialized for replay. Historical
 combat without stat profiles keeps its existing minimum-one-casualty behavior.
+
+
+Formation facing is an optional canonical integer direction owned by the core.
+New campaign units and newly built sandbox formations face their opposing side;
+historical records without facing retain their previous contact behavior. Actual
+formed movement updates facing, and a typed rotation order changes it explicitly.
+The core classifies incoming contact using integer dot and cross products: the
+front and rear include their 45-degree boundaries; intervening directions are
+flanks. Melee contact receives a bounded flank or rear advantage scaled by the
+defender's formation resistance, capped at a 75% bonus. Ranged damage is unchanged.
+Renderer gold markers project that core direction; browser status projects the
+core contact arc without calculating gameplay angles.
