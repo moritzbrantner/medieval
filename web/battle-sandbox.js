@@ -233,6 +233,7 @@ function renderStatus(rawStatus) {
     row.className = "unit-row";
     row.dataset.selected = String(unit.selected);
     row.dataset.state = unitState(unit);
+    row.dataset.unitKind = unit.unitKind ?? "legacy";
 
     const name = document.createElement("strong");
     name.textContent = readableUnitName(unit.id);
@@ -245,7 +246,8 @@ function renderStatus(rawStatus) {
     const order = unit.engagementTarget
       ? ` · engaging ${readableUnitName(unit.engagementTarget)}`
       : "";
-    detail.textContent = `${unitState(unit)} · ${unit.soldiers} soldiers · ${readableFormation(unit)} · range ${readableRange(unit.attackRangeMm)} · morale ${unit.morale} · fatigue ${unit.fatigue}${order}`;
+    const kind = { levy: "Levy", spearmen: "Spearmen", archers: "Archers", knights: "Knights" }[unit.unitKind] ?? "Legacy unit";
+    detail.textContent = `${kind} · ${unitState(unit)} · ${unit.soldiers} soldiers · ${readableFormation(unit)} · range ${readableRange(unit.attackRangeMm)} · morale ${unit.morale} · fatigue ${unit.fatigue}${order}`;
 
     row.append(name, side, detail);
     fragment.append(row);

@@ -928,6 +928,44 @@ mod tests {
     use medieval_core::{BattlePoint, FlatBattlefield, Formation, TacticalBattle, TacticalUnit};
 
     #[test]
+    fn character_selection_projects_kind_instead_of_ids_or_combat_values() {
+        let kinds = [
+            Some(UnitKind::Levy),
+            Some(UnitKind::Spearmen),
+            Some(UnitKind::Archers),
+            Some(UnitKind::Knights),
+            None,
+        ];
+        let units = kinds
+            .into_iter()
+            .enumerate()
+            .map(|(index, kind)| {
+                let mut unit = TacticalUnit::new(
+                    format!("misleading-knight-{index}"),
+                    BattleSide::Attacker,
+                    2,
+                    BattlePoint::new(10_000 + index as u32 * 3_000, 10_000),
+                    Formation::Line { files: 2 },
+                    100,
+                )
+                .with_attack_range_mm(25_000);
+                if let Some(kind) = kind {
+                    unit = unit.with_unit_kind(kind);
+                }
+                unit
+            })
+            .collect();
+        let battle = TacticalBattle::new(FlatBattlefield::new(100_000, 100_000), units).unwrap();
+        let snapshot =
+            BattleRenderSnapshot::capture(&battle, &RenderViewState::fit(battle.battlefield()));
+        for (unit, kind) in snapshot.units.iter().zip(kinds) {
+            assert_eq!(unit.unit_kind, kind);
+        }
+        let batch = gpu_instances(&snapshot);
+        assert_eq!(batch.characters.map(|instances| instances.len()), [6, 2, 2]);
+    }
+
+    #[test]
     fn gpu_batch_contains_terrain_cells_river_and_individual_soldiers() {
         let battle = TacticalBattle::new(
             FlatBattlefield::new(100_000, 100_000),
