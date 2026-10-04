@@ -435,3 +435,19 @@ fn withdrawal_and_draw_claims_must_match_escaped_and_routed_survivors() {
         assert_eq!(campaign, before);
     }
 }
+
+#[test]
+fn existing_nonadjacent_retreat_destinations_are_rejected_on_load_and_completed_replay() {
+    let mut campaign = campaign();
+    let result = victory(&campaign, BattleSide::Attacker);
+    campaign.apply_tactical_battle_result(&result).unwrap();
+    let save = CampaignSave::from_campaign(campaign.clone(), "england").unwrap();
+    let mut document = serde_json::to_value(save).unwrap();
+    document["campaign"]["tacticalBattleReports"][0]["retreats"][0]["toProvince"] =
+        serde_json::json!("wessex");
+    assert!(CampaignSave::from_json(&serde_json::to_string(&document).unwrap()).is_err());
+    campaign.tactical_battle_reports[0].retreats[0].to_province = "wessex".into();
+    let before = campaign.clone();
+    assert!(campaign.apply_tactical_battle_result(&result).is_err());
+    assert_eq!(campaign, before);
+}

@@ -280,7 +280,7 @@ impl CampaignSave {
 
         for report in &campaign.tactical_battle_reports {
             report
-                .validate()
+                .validate_for_campaign(campaign)
                 .map_err(|error| SaveError::InvalidState(error.to_string()))?;
             if !faction_ids.contains(report.result.seed.attacker.faction_id.as_str())
                 || !faction_ids.contains(report.result.seed.defender.faction_id.as_str())
