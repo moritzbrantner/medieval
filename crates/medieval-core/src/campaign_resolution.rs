@@ -177,6 +177,9 @@ impl TacticalCampaignReport {
         campaign: &CampaignState,
     ) -> Result<(), CampaignError> {
         self.validate()?;
+        if self.result.seed.turn > campaign.turn {
+            return Err(CampaignError::TacticalResultMismatch);
+        }
         if campaign.pending_battle.as_ref().is_some_and(|pending| {
             self.result.seed.turn == campaign.turn
                 && self.result.seed.attacker_army_id == pending.attacker_army_id

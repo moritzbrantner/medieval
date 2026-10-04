@@ -264,17 +264,14 @@ impl TacticalBattleResult {
                 .filter(move |army| army.side == side)
                 .flat_map(|army| &army.units)
         };
-        // A side that withdrew has no formed units. Before withdrawal, absence
-        // of escape plus non-routed survivors identifies the formed force.
+        // Routed units may already have escaped while another unit remains formed.
+        // Voluntary escape cannot coexist with a formed force on the same side.
         let formed = |side| {
-            units(side).all(|unit| unit.escaped_soldiers == 0)
+            units(side).all(|unit| unit.escaped_soldiers <= unit.routed_soldiers)
                 && units(side).any(|unit| unit.surviving_soldiers > unit.routed_soldiers)
         };
-        let defeated = |side| {
-            units(side).all(|unit| {
-                unit.escaped_soldiers == 0 && unit.surviving_soldiers == unit.routed_soldiers
-            })
-        };
+        let defeated =
+            |side| units(side).all(|unit| unit.surviving_soldiers == unit.routed_soldiers);
         let withdrawn = |side| {
             units(side).any(|unit| unit.initial_soldiers > 0)
                 && units(side).all(|unit| unit.surviving_soldiers == unit.escaped_soldiers)
