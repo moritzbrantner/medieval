@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   asset-contract:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Checkout pinned asset-tooling
