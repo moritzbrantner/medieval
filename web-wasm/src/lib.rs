@@ -4,7 +4,7 @@ use std::{
 };
 
 use medieval_core::{
-    CampaignSave, CampaignState, RecruitmentOption, SettlementUpgradeOption, TacticalBattleResult, TacticalBattleSeed,
+    BuildingId, CampaignSave, CampaignState, ProvinceConstruction, RecruitmentOption, SettlementUpgradeOption, TacticalBattleResult, TacticalBattleSeed,
     UnitKind, new_campaign as fresh_campaign,
 };
 use serde::Serialize;
@@ -71,6 +71,11 @@ unsafe fn read_input(pointer: *const u8, length: usize) -> Result<String, String
 fn decode_unit(value: &str) -> Result<UnitKind, String> {
     let json = serde_json::to_string(value).map_err(|error| error.to_string())?;
     serde_json::from_str(&json).map_err(|_| format!("unsupported unit kind {value}"))
+}
+
+fn decode_building(value: &str) -> Result<BuildingId, String> {
+    let json = serde_json::to_string(value).map_err(|error| error.to_string())?;
+    serde_json::from_str(&json).map_err(|_| format!("unsupported building {value}"))
 }
 
 fn decode_seed(seed: f64) -> Result<u64, String> {
@@ -169,6 +174,29 @@ fn queue_settlement_upgrade(province_id: &str) -> Result<CampaignState, String> 
         session
             .campaign
             .queue_settlement_upgrade(province_id)
+            .map_err(|error| error.to_string())?;
+        Ok(session.campaign.clone())
+    })
+}
+
+fn construction_options(province_id: &str) -> Result<ProvinceConstruction, String> {
+    SESSION.with(|session| {
+        let session = session.borrow();
+        ensure_campaign_running(&session)?;
+        session
+            .campaign
+            .construction_options(province_id)
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn queue_construction(province_id: &str, building: BuildingId) -> Result<CampaignState, String> {
+    SESSION.with(|session| {
+        let mut session = session.borrow_mut();
+        ensure_campaign_running(&session)?;
+        session
+            .campaign
+            .queue_construction(province_id, building)
             .map_err(|error| error.to_string())?;
         Ok(session.campaign.clone())
     })
@@ -373,6 +401,27 @@ pub unsafe extern "C" fn medieval_settlement_upgrade_option(pointer: *const u8, 
 pub unsafe extern "C" fn medieval_queue_settlement_upgrade(pointer: *const u8, length: usize) {
     let province_id = unsafe { read_input(pointer, length) };
     respond(province_id.and_then(|province_id| queue_settlement_upgrade(&province_id)));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medieval_construction_options(pointer: *const u8, length: usize) {
+    let province_id = unsafe { read_input(pointer, length) };
+    respond(province_id.and_then(|province_id| construction_options(&province_id)));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medieval_queue_construction(
+    province_pointer: *const u8,
+    province_length: usize,
+    building_pointer: *const u8,
+    building_length: usize,
+) {
+    let result = unsafe { read_input(province_pointer, province_length) }.and_then(|province_id| {
+        unsafe { read_input(building_pointer, building_length) }
+            .and_then(|building| decode_building(&building))
+            .and_then(|building| queue_construction(&province_id, building))
+    });
+    respond(result);
 }
 
 #[unsafe(no_mangle)]

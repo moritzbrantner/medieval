@@ -382,7 +382,10 @@ fn saves_preserve_reports_and_reject_unsupported_legacy_claims_or_corrupt_surren
     let mut document = serde_json::to_value(&save).unwrap();
     document["schemaVersion"] = serde_json::json!(1);
     for province in document["campaign"]["provinces"].as_array_mut().unwrap() {
-        province.as_object_mut().unwrap().remove("settlementLevel");
+        let province = province.as_object_mut().unwrap();
+        province.remove("settlementLevel");
+        province.remove("buildings");
+        province.remove("buildings");
     }
     assert!(
         CampaignSave::from_json(&serde_json::to_string(&document).unwrap())

@@ -271,6 +271,7 @@ impl ProvinceDefinitions {
                 neighbors: definition.neighbors.clone(),
                 battlefield: context,
                 settlement_level: definition.settlement.level,
+                buildings: Vec::new(),
             });
         }
         for army in armies {

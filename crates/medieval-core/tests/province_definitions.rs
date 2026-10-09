@@ -253,7 +253,10 @@ fn settlement_levels_are_explicit_definitions_and_legacy_saves_load_as_villages(
         serde_json::to_value(CampaignSave::from_campaign(upgrading, "england").unwrap()).unwrap();
     legacy["schemaVersion"] = serde_json::json!(2);
     for province in legacy["campaign"]["provinces"].as_array_mut().unwrap() {
-        province.as_object_mut().unwrap().remove("settlementLevel");
+        let province = province.as_object_mut().unwrap();
+        province.remove("settlementLevel");
+        province.remove("buildings");
+        province.remove("buildings");
     }
     assert!(matches!(
         CampaignSave::from_json(&legacy.to_string()),

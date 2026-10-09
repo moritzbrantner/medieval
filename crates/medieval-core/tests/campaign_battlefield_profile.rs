@@ -62,6 +62,7 @@ fn legacy_campaign_saves_and_seeds_keep_the_original_field_profile() {
         let province = province.as_object_mut().unwrap();
         province.remove("battlefield");
         province.remove("settlementLevel");
+        province.remove("buildings");
     }
     let restored = CampaignSave::from_json(&serde_json::to_string(&document).unwrap()).unwrap();
     let seed = restored.campaign.pending_tactical_battle_seed().unwrap();

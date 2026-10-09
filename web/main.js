@@ -42,6 +42,7 @@ let legalDestinationIds = [];
 let recruitmentOptions = [];
 let recruitmentProvinceId;
 let settlementOption;
+let construction;
 let recruitmentRequestId = 0;
 let campaignBusy = false;
 
@@ -223,6 +224,72 @@ function renderSettlement(province) {
   detail.append(section);
 }
 
+function renderBuildings(province) {
+  const section = document.createElement("section");
+  section.className = "recruitment buildings";
+
+  const eyebrow = document.createElement("p");
+  eyebrow.className = "eyebrow";
+  eyebrow.textContent = "Buildings";
+  section.append(eyebrow);
+
+  if (recruitmentProvinceId !== province.id || !construction) {
+    const loading = document.createElement("p");
+    loading.className = "settlement-note";
+    loading.textContent = campaignWinner
+      ? "The campaign is complete; no further construction is accepted."
+      : "Loading Rust construction options…";
+    section.append(loading);
+    detail.append(section);
+    return;
+  }
+
+  const slots = document.createElement("p");
+  slots.className = "settlement-note";
+  slots.textContent = `${construction.usedSlots} of ${construction.buildingSlots} building slot${construction.buildingSlots === 1 ? "" : "s"} used`;
+  section.append(slots);
+
+  if (construction.queued) {
+    const option = construction.options.find((item) => item.building === construction.queued.building);
+    const pending = document.createElement("p");
+    pending.className = "settlement-queued";
+    pending.textContent = `Building ${option?.target?.label ?? option?.label ?? construction.queued.building} · ready on turn ${construction.queued.readyOnTurn}`;
+    section.append(pending);
+  }
+
+  const options = document.createElement("div");
+  options.className = "recruitment-options";
+  for (const option of construction.options) {
+    const row = document.createElement("div");
+    row.className = "recruitment-option";
+
+    const status = document.createElement("small");
+    const standing = option.current ? `${option.current.label} (level ${option.currentLevel})` : "Not built";
+    const income = option.current?.incomeBonus ? ` · +${option.current.incomeBonus} gold income` : "";
+    status.textContent = `${option.label} · ${option.category} · ${standing}${income}. ${option.role}`;
+    row.append(status);
+
+    if (option.target) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.disabled = campaignBusy || !option.available;
+      const rounds = option.target.rounds;
+      const targetIncome = option.target.incomeBonus ? ` · +${option.target.incomeBonus} income` : "";
+      button.textContent = `Build ${option.target.label} · ${option.target.cost} gold · ${rounds} round${rounds === 1 ? "" : "s"}, ready on turn ${option.readyOnTurn}${targetIncome}`;
+      button.addEventListener("click", () => queueConstruction(province.id, option.building));
+      row.append(button);
+    }
+    if (option.reason) {
+      const reason = document.createElement("small");
+      reason.textContent = option.reason;
+      row.append(reason);
+    }
+    options.append(row);
+  }
+  section.append(options);
+  detail.append(section);
+}
+
 function renderProvinceDetail() {
   const province = campaign.provinces.find((item) => item.id === selectedProvinceId);
   detail.replaceChildren();
@@ -280,6 +347,7 @@ function renderProvinceDetail() {
   }
 
   renderSettlement(province);
+  renderBuildings(province);
   renderRecruitment(province);
 }
 
@@ -489,15 +557,17 @@ async function refreshRecruitmentOptions() {
     recruitmentOptions = [];
     recruitmentProvinceId = undefined;
     settlementOption = undefined;
+    construction = undefined;
     return;
   }
 
   const requestedProvinceId = selectedProvinceId;
-  const [options, settlement] = await Promise.all([
+  const [options, settlement, buildings] = await Promise.all([
     invoke("recruitment_options", {
       provinceId: requestedProvinceId,
     }),
     invoke("settlement_upgrade_option", { provinceId: requestedProvinceId }),
+    invoke("construction_options", { provinceId: requestedProvinceId }),
   ]);
   if (
     requestId !== recruitmentRequestId ||
@@ -508,6 +578,7 @@ async function refreshRecruitmentOptions() {
 
   recruitmentOptions = options;
   settlementOption = settlement;
+  construction = buildings;
   recruitmentProvinceId = requestedProvinceId;
 }
 
@@ -575,6 +646,23 @@ async function queueRecruitment(provinceId, unit) {
   errorBox.hidden = true;
   try {
     campaign = await invoke("queue_recruitment", { provinceId, unit });
+    await refreshCampaignWinner();
+    await refreshRecruitmentOptions();
+    renderCampaign();
+  } catch (error) {
+    reportError(error);
+  } finally {
+    setCampaignBusy(false);
+  }
+}
+
+async function queueConstruction(provinceId, building) {
+  if (!invoke || campaignWinner || campaignBusy) return;
+
+  setCampaignBusy(true);
+  errorBox.hidden = true;
+  try {
+    campaign = await invoke("queue_construction", { provinceId, building });
     await refreshCampaignWinner();
     await refreshRecruitmentOptions();
     renderCampaign();

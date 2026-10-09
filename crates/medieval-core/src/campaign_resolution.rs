@@ -130,6 +130,7 @@ impl CampaignState {
                 province_id,
                 &result.seed.attacker.faction_id,
             );
+            next.cancel_construction_after_capture(province_id, &result.seed.attacker.faction_id);
         }
         next.pending_battle = None;
         next.pending_tactical_result = None;

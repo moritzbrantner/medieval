@@ -7,7 +7,9 @@ use crate::CampaignState;
 /// Version 3 adds province settlement levels and queued settlement upgrades.
 /// Versions 1 and 2 never recorded levels: they must not contain settlement
 /// levels or upgrade orders, and their provinces load as villages.
-pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 3;
+/// Version 4 adds province buildings and the construction queue; older
+/// versions must not contain either and load without buildings.
+pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,17 +83,22 @@ impl CampaignSave {
             .and_then(serde_json::Value::as_array)
         {
             for province in provinces {
-                let declared = province.get("settlementLevel").is_some();
-                if declared != (header.schema_version >= 3) {
-                    return invalid(format!(
-                        "version {} {} province settlement levels",
-                        header.schema_version,
-                        if declared {
-                            "cannot contain"
-                        } else {
-                            "requires"
-                        }
-                    ));
+                for (field, since, description) in [
+                    ("settlementLevel", 3, "province settlement levels"),
+                    ("buildings", 4, "province buildings"),
+                ] {
+                    let declared = province.get(field).is_some();
+                    if declared != (header.schema_version >= since) {
+                        return invalid(format!(
+                            "version {} {} {description}",
+                            header.schema_version,
+                            if declared {
+                                "cannot contain"
+                            } else {
+                                "requires"
+                            }
+                        ));
+                    }
                 }
             }
         }
@@ -106,6 +113,12 @@ impl CampaignSave {
         if header.schema_version < 3 && !save.campaign.settlement_upgrades.is_empty() {
             return invalid(format!(
                 "version {} cannot contain settlement upgrades",
+                header.schema_version
+            ));
+        }
+        if header.schema_version < 4 && !save.campaign.construction_queue.is_empty() {
+            return invalid(format!(
+                "version {} cannot contain construction orders",
                 header.schema_version
             ));
         }
@@ -358,31 +371,128 @@ impl CampaignSave {
                     order.province_id, order.ready_on_turn
                 ));
             }
-            // Orders complete at the start of their owner's turn, exactly the
-            // target level's build duration after the turn they were queued.
-            let faction_count = campaign.factions.len() as u32;
             let rounds = order
                 .target_level
                 .spec()
                 .upgrade
                 .map_or(0, |upgrade| upgrade.rounds);
-            let remaining = order.ready_on_turn - campaign.turn;
-            let active_index = campaign
-                .factions
-                .iter()
-                .position(|faction| faction.id == campaign.active_faction)
-                .unwrap_or_default() as u32;
-            let owner_at_ready = &campaign.factions
-                [((active_index + remaining % faction_count) % faction_count) as usize];
-            if order.queued_on_turn > campaign.turn
-                || order
-                    .queued_on_turn
-                    .checked_add(rounds.saturating_mul(faction_count))
-                    != Some(order.ready_on_turn)
-                || owner_at_ready.id != order.faction_id
-            {
+            if !deadline_is_exact(
+                campaign,
+                &order.faction_id,
+                order.queued_on_turn,
+                order.ready_on_turn,
+                rounds,
+            ) {
                 return invalid(format!(
                     "settlement upgrade in {} cannot complete on turn {}",
+                    order.province_id, order.ready_on_turn
+                ));
+            }
+        }
+
+        for province in &campaign.provinces {
+            let mut built = HashSet::new();
+            for standing in &province.buildings {
+                if !built.insert(standing.building) {
+                    return invalid(format!(
+                        "province {} has more than one {:?}",
+                        province.id, standing.building
+                    ));
+                }
+                let level = standing.building.level(standing.level).ok_or_else(|| {
+                    SaveError::InvalidState(format!(
+                        "province {} has {:?} at unknown level {}",
+                        province.id, standing.building, standing.level
+                    ))
+                })?;
+                if let Some(error) = province.building_level_error(level) {
+                    return invalid(format!("province {}: {error}", province.id));
+                }
+            }
+            if !province
+                .buildings
+                .windows(2)
+                .all(|pair| pair[0].building < pair[1].building)
+            {
+                return invalid(format!(
+                    "province {} buildings are not in canonical order",
+                    province.id
+                ));
+            }
+        }
+
+        let mut constructing = HashSet::new();
+        for order in &campaign.construction_queue {
+            let province = campaign
+                .provinces
+                .iter()
+                .find(|province| province.id == order.province_id)
+                .ok_or_else(|| {
+                    SaveError::InvalidState(format!(
+                        "construction order references unknown province {}",
+                        order.province_id
+                    ))
+                })?;
+            if !constructing.insert(order.province_id.as_str()) {
+                return invalid(format!(
+                    "province {} has more than one construction order",
+                    order.province_id
+                ));
+            }
+            if province.owner != order.faction_id {
+                return invalid(format!(
+                    "construction faction {} does not control {}",
+                    order.faction_id, order.province_id
+                ));
+            }
+            let current_level = province.building_level(order.building);
+            let target = order
+                .building
+                .level(order.target_level)
+                .filter(|_| current_level + 1 == order.target_level)
+                .ok_or_else(|| {
+                    SaveError::InvalidState(format!(
+                        "construction in {} does not raise {:?} by one level",
+                        order.province_id, order.building
+                    ))
+                })?;
+            if let Some(error) = province.building_level_error(target) {
+                return invalid(format!("construction in {}: {error}", order.province_id));
+            }
+        }
+        for province in &campaign.provinces {
+            let new_building = campaign
+                .construction_queue
+                .iter()
+                .any(|order| order.province_id == province.id && order.target_level == 1);
+            let slots = usize::from(province.settlement_level.spec().building_slots);
+            if province.buildings.len() + usize::from(new_building) > slots {
+                return invalid(format!(
+                    "province {} uses more than its {slots} building slots",
+                    province.id
+                ));
+            }
+        }
+        for order in &campaign.construction_queue {
+            if order.ready_on_turn <= campaign.turn {
+                return invalid(format!(
+                    "construction in {} is already due on turn {}",
+                    order.province_id, order.ready_on_turn
+                ));
+            }
+            let rounds = order
+                .building
+                .level(order.target_level)
+                .map_or(0, |level| level.rounds);
+            if !deadline_is_exact(
+                campaign,
+                &order.faction_id,
+                order.queued_on_turn,
+                order.ready_on_turn,
+                rounds,
+            ) {
+                return invalid(format!(
+                    "construction in {} cannot complete on turn {}",
                     order.province_id, order.ready_on_turn
                 ));
             }
@@ -440,6 +550,30 @@ impl CampaignSave {
 
         Ok(())
     }
+}
+
+/// Queued orders complete at the start of their owner's turn, exactly `rounds`
+/// full faction rounds after the turn they were queued, which must not lie in
+/// the future. Callers check that `ready_on_turn` is still ahead.
+fn deadline_is_exact(
+    campaign: &CampaignState,
+    faction_id: &str,
+    queued_on_turn: u32,
+    ready_on_turn: u32,
+    rounds: u32,
+) -> bool {
+    let faction_count = campaign.factions.len() as u32;
+    let remaining = ready_on_turn.saturating_sub(campaign.turn);
+    let active_index = campaign
+        .factions
+        .iter()
+        .position(|faction| faction.id == campaign.active_faction)
+        .unwrap_or_default() as u32;
+    let owner_at_ready =
+        &campaign.factions[((active_index + remaining % faction_count) % faction_count) as usize];
+    queued_on_turn <= campaign.turn
+        && queued_on_turn.checked_add(rounds.saturating_mul(faction_count)) == Some(ready_on_turn)
+        && owner_at_ready.id == faction_id
 }
 
 fn unique_ids<'a>(
