@@ -263,9 +263,7 @@ impl CampaignState {
     }
 
     fn settlement_ready_on_turn(&self, target: SettlementLevel) -> u32 {
-        let rounds = target.spec().upgrade.map_or(0, |upgrade| upgrade.rounds);
-        self.turn
-            .saturating_add(rounds.saturating_mul(self.factions.len() as u32))
+        self.ready_on_turn_after(target.spec().upgrade.map_or(0, |upgrade| upgrade.rounds))
     }
 
     fn settlement_upgrade_error(

@@ -49,8 +49,7 @@ unavailable.
 | Major city | +200 gold | 4 | 1,600 gold | 3 rounds | 8 |
 
 The income bonus is added to `wealth × 50` provincial income. Building slots
-are the capacity the construction system will consume; nothing consumes them
-yet.
+are the capacity [buildings](#buildings-and-construction) consume.
 
 Only the active faction may upgrade a province it controls, one level at a
 time, with at most one upgrade queued per province, and never while a battle is
@@ -66,6 +65,44 @@ cancelled without refund.
 The packaged map starts Normandy as a town, Paris as a city, and every other
 province as a village.
 
+## Buildings and construction
+
+Buildings are core-owned runtime province state (`buildings`, one entry per
+standing building with its level, ordered by building id).
+`medieval_core::BuildingId::spec()` is the single source of each building's
+category, levels, costs, durations, prerequisites, and effects; the UI only
+displays the `ProvinceConstruction` view the core returns
+(`construction_options`), including the reason each choice is unavailable, and
+sends `queue_construction` intents.
+
+| Building | Category | Level 1 | Level 2 |
+| --- | --- | --- | --- |
+| Farms | Economy | Farmland: 250 gold, 1 round, village, +40 income | Irrigated fields: 600 gold, 2 rounds, town, Reeve's hall, +100 income |
+| Town hall | Administration | Reeve's hall: 300 gold, 1 round, town | Guildhall: 800 gold, 2 rounds, city |
+| Barracks | Military | Muster field: 300 gold, 1 round, village | Barracks: 700 gold, 2 rounds, town, Reeve's hall |
+| Walls | Defense | Palisade: 400 gold, 2 rounds, town | Stone walls: 1,000 gold, 3 rounds, city, Reeve's hall |
+
+Each level names a minimum current settlement level and any other building
+levels that must already stand. A level's income bonus replaces the lower
+level's. Military and defense buildings have no campaign effect yet: unit
+unlocks (#111) and siege fortification profiles (#122) consume them. Every
+distinct building uses one of the settlement's building slots; raising a
+standing building to its next level needs no new slot.
+
+Only the active faction may build in a province it controls, one level at a
+time, with at most one construction order per province (independent of a
+settlement upgrade), and never while a battle is pending. Queueing pays the cost
+immediately and schedules completion for the start of the owner's turn the
+given number of rounds later (`readyOnTurn`). Completion runs in the
+`lastEconomyTurn`-guarded turn-start step after settlement upgrades and before
+income, and removes the order, so it is applied exactly once and the completing
+turn already pays the new income. The deterministic AI queues at most one
+construction per turn through the same commands, in its wealthiest province with
+a legal choice, preferring farms, then town hall, walls, and barracks, while
+keeping 500 gold in reserve. A captured province keeps its buildings; the
+former owner's queued construction is cancelled without refund. New campaigns
+start without buildings.
+
 ## Versions and saved campaigns
 
 The definition document has `schemaVersion: 2`. Version 1 documents remain supported: they must not declare `settlement.level`, every settlement starts as a village, and the loaded document is migrated to version 2. Unsupported versions are
@@ -75,7 +112,13 @@ is independent of the campaign save schema. Save schema version 3 adds
 2 saves still load, with every province as a village; they must not contain
 settlement levels or upgrades, and schema 3 saves must give every province a
 level. Save validation also rejects upgrade orders whose `readyOnTurn` is not
-on the owner's turn or lies beyond the target level's build duration.
+on the owner's turn or lies beyond the target level's build duration. Save
+schema version 4 adds `buildings` to provinces (required) and the
+`constructionQueue`; older saves load without buildings and must not contain
+either. Validation rejects duplicate or out-of-range buildings, buildings
+whose settlement or building prerequisites are missing, more buildings than
+slots, and construction orders that are foreign, skip a level, share a
+province, or do not complete exactly on the owner's turn.
 
 Saved campaigns contain their own province state. Loading a save does not
 replace names, borders, wealth, ownership, settlement level, or battlefield context with current

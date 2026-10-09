@@ -3,6 +3,11 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 mod battle;
+mod buildings;
+pub use buildings::{
+    BUILDINGS, BuildingCategory, BuildingId, BuildingLevelSpec, BuildingRequirement, BuildingSpec,
+    ConstructionOption, ConstructionOrder, ProvinceBuilding, ProvinceConstruction,
+};
 mod campaign_deployment;
 mod campaign_handoff;
 mod campaign_reconciliation;
@@ -85,6 +90,8 @@ pub struct CampaignState {
     pub recruitment_queue: Vec<RecruitmentOrder>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub settlement_upgrades: Vec<SettlementUpgradeOrder>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub construction_queue: Vec<ConstructionOrder>,
     pub battle_reports: Vec<BattleReport>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tactical_battle_reports: Vec<TacticalCampaignReport>,
@@ -113,6 +120,10 @@ pub struct Province {
     /// Saves from before settlement levels load every province as a village.
     #[serde(default)]
     pub settlement_level: SettlementLevel,
+    /// Standing buildings ordered by [`BuildingId`]; saves from before
+    /// construction load without buildings.
+    #[serde(default)]
+    pub buildings: Vec<ProvinceBuilding>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,6 +273,29 @@ pub enum CampaignError {
         wealth: u32,
         required: u32,
     },
+    ConstructionAlreadyQueued {
+        province: String,
+        building: String,
+        ready_on_turn: u32,
+    },
+    BuildingAtMaximumLevel {
+        province: String,
+        building: String,
+    },
+    NoFreeBuildingSlot {
+        province: String,
+        slots: u8,
+    },
+    BuildingRequiresSettlement {
+        province: String,
+        building: String,
+        required: SettlementLevel,
+    },
+    BuildingPrerequisiteMissing {
+        province: String,
+        building: String,
+        required: String,
+    },
 }
 
 impl fmt::Display for CampaignError {
@@ -352,6 +386,36 @@ impl fmt::Display for CampaignError {
                 formatter,
                 "{province} needs wealth {required} to upgrade but has {wealth}"
             ),
+            Self::ConstructionAlreadyQueued {
+                province,
+                building,
+                ready_on_turn,
+            } => write!(
+                formatter,
+                "{province} is already building {building}, ready on turn {ready_on_turn}"
+            ),
+            Self::BuildingAtMaximumLevel { province, building } => write!(
+                formatter,
+                "{building} in {province} is already at its highest level"
+            ),
+            Self::NoFreeBuildingSlot { province, slots } => write!(
+                formatter,
+                "{province} has no free building slot; all {slots} are in use"
+            ),
+            Self::BuildingRequiresSettlement {
+                province,
+                building,
+                required,
+            } => write!(
+                formatter,
+                "{building} in {province} requires a {}",
+                required.label().to_lowercase()
+            ),
+            Self::BuildingPrerequisiteMissing {
+                province,
+                building,
+                required,
+            } => write!(formatter, "{building} in {province} requires {required}"),
         }
     }
 }
@@ -607,6 +671,7 @@ impl CampaignState {
         }
 
         self.complete_settlement_upgrades()?;
+        self.complete_construction()?;
         let income = self.income_for(&faction_id);
         self.factions[faction_index].treasury =
             self.factions[faction_index].treasury.saturating_add(income);
@@ -681,6 +746,7 @@ impl CampaignState {
                     .wealth
                     .saturating_mul(INCOME_PER_WEALTH)
                     .saturating_add(province.settlement_level.spec().income_bonus)
+                    .saturating_add(province.building_income_bonus())
             })
             .fold(0_u32, u32::saturating_add)
     }
@@ -802,6 +868,7 @@ pub fn new_campaign_with_province_definitions(
         pending_tactical_result: None,
         recruitment_queue: Vec::new(),
         settlement_upgrades: Vec::new(),
+        construction_queue: Vec::new(),
         battle_reports: Vec::new(),
         tactical_battle_reports: Vec::new(),
         log: vec!["The campaign begins in 1087.".into()],

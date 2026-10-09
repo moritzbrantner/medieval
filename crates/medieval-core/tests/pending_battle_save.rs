@@ -155,7 +155,10 @@ fn corrupt_staged_handoff_turn_and_profile_are_rejected() {
 /// Pre-settlement-level saves carry no levels: strip them and expect villages.
 fn strip_settlement_levels(document: &mut serde_json::Value, expected: &mut CampaignState) {
     for province in document["campaign"]["provinces"].as_array_mut().unwrap() {
-        province.as_object_mut().unwrap().remove("settlementLevel");
+        let province = province.as_object_mut().unwrap();
+        province.remove("settlementLevel");
+        province.remove("buildings");
+        province.remove("buildings");
     }
     for province in &mut expected.provinces {
         province.settlement_level = medieval_core::SettlementLevel::Village;

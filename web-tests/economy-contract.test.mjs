@@ -53,3 +53,17 @@ test("settlement levels, effects, and upgrade rules come from Rust", () => {
   assert.doesNotMatch(script, /settlementLevel\s*=(?!=)|incomeBonus\s*[-+]?=(?!=)|buildingSlots\s*[-+]?=(?!=)/);
   assert.doesNotMatch(script, /upgradeCosts|levelCosts|costByLevel/);
 });
+
+test("buildings, prerequisites, and construction rules come from Rust", () => {
+  assert.match(
+    script,
+    /invoke\("construction_options", \{ provinceId: requestedProvinceId \}\)/,
+  );
+  assert.match(script, /invoke\("queue_construction", \{ provinceId, building \}\)/);
+  assert.match(script, /button\.disabled = campaignBusy \|\| !option\.available/);
+  assert.match(script, /construction\.buildingSlots/);
+  assert.match(script, /option\.target\.cost/);
+  assert.match(script, /option\.readyOnTurn/);
+  assert.doesNotMatch(script, /\.buildings\s*(=(?!=)|\.push)|usedSlots\s*[-+]?=(?!=)|currentLevel\s*[-+]?=(?!=)/);
+  assert.doesNotMatch(script, /buildingCosts|costByBuilding|prerequisites/);
+});

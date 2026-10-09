@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Army, BattleSide, CampaignError, CampaignState, TACTICAL_BATTLE_RESULT_SCHEMA_VERSION,
-    TacticalArmyResult, TacticalBattleResult, TacticalFinishReason, TacticalUnitResult, UnitKind,
+    Army, BattleSide, BuildingId, CampaignError, CampaignState,
+    TACTICAL_BATTLE_RESULT_SCHEMA_VERSION, TacticalArmyResult, TacticalBattleResult,
+    TacticalFinishReason, TacticalUnitResult, UnitKind,
 };
 
 const DEFENDER_MODIFIER_PERCENT: u32 = 8;
@@ -306,6 +307,7 @@ impl CampaignState {
 
         self.ai_recruit(seed)?;
         self.ai_upgrade_settlement()?;
+        self.ai_construct()?;
         self.ai_move(seed)?;
 
         if self.pending_battle.is_some() {
@@ -385,6 +387,46 @@ impl CampaignState {
             };
             if option.available && treasury.saturating_sub(cost) >= AI_UPGRADE_RESERVE {
                 self.queue_settlement_upgrade(&province_id)?;
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Queue at most one construction per turn through the same command
+    /// surface as the player: in the wealthiest province with a legal choice,
+    /// the first available building in a fixed priority order, while keeping
+    /// the same gold reserve as settlement upgrades.
+    fn ai_construct(&mut self) -> Result<(), CampaignError> {
+        const PRIORITY: [BuildingId; 4] = [
+            BuildingId::Farms,
+            BuildingId::TownHall,
+            BuildingId::Walls,
+            BuildingId::Barracks,
+        ];
+        let faction_id = self.active_faction.clone();
+        let treasury = self.faction(&faction_id)?.treasury;
+        let mut candidates: Vec<(u32, String)> = self
+            .provinces
+            .iter()
+            .filter(|province| province.owner == faction_id)
+            .map(|province| (province.wealth, province.id.clone()))
+            .collect();
+        candidates.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+
+        for (_, province_id) in candidates {
+            let construction = self.construction_options(&province_id)?;
+            let choice = PRIORITY.iter().find_map(|building| {
+                construction
+                    .options
+                    .iter()
+                    .find(|option| option.building == *building && option.available)
+                    .and_then(|option| option.target)
+                    .filter(|target| treasury.saturating_sub(target.cost) >= AI_UPGRADE_RESERVE)
+                    .map(|_| *building)
+            });
+            if let Some(building) = choice {
+                self.queue_construction(&province_id, building)?;
                 break;
             }
         }
@@ -706,6 +748,28 @@ mod tests {
         poor.factions[1].treasury = 0;
         poor.play_ai_turn("england", 7).unwrap();
         assert!(poor.settlement_upgrades.is_empty());
+    }
+
+    #[test]
+    fn ai_constructs_buildings_deterministically_and_keeps_a_reserve() {
+        let mut campaign = new_campaign();
+        campaign.end_turn().unwrap();
+        campaign.factions[1].treasury = 5_000;
+        campaign.play_ai_turn("england", 7).unwrap();
+        let orders: Vec<_> = campaign
+            .construction_queue
+            .iter()
+            .filter(|order| order.faction_id == "france")
+            .collect();
+        assert_eq!(orders.len(), 1);
+        assert_eq!(orders[0].province_id, "paris");
+        assert_eq!(orders[0].building, BuildingId::Farms);
+
+        let mut poor = new_campaign();
+        poor.end_turn().unwrap();
+        poor.factions[1].treasury = 600;
+        poor.play_ai_turn("england", 7).unwrap();
+        assert!(poor.construction_queue.is_empty());
     }
 
     #[test]
