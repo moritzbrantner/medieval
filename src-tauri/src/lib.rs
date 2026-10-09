@@ -5,8 +5,8 @@ use std::{
 };
 
 use medieval_core::{
-    CampaignSave, CampaignState, RecruitmentOption, TacticalBattleResult, TacticalBattleSeed,
-    UnitKind, new_campaign as fresh_campaign,
+    CampaignSave, CampaignState, RecruitmentOption, SettlementUpgradeOption, TacticalBattleResult,
+    TacticalBattleSeed, UnitKind, new_campaign as fresh_campaign,
 };
 use tauri::{AppHandle, Manager, State};
 
@@ -295,6 +295,33 @@ fn queue_recruitment(
 }
 
 #[tauri::command]
+fn settlement_upgrade_option(
+    state: State<'_, GameState>,
+    province_id: String,
+) -> Result<SettlementUpgradeOption, String> {
+    let session = lock_session(&state)?;
+    ensure_campaign_running(&session)?;
+    session
+        .campaign
+        .settlement_upgrade_option(&province_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn queue_settlement_upgrade(
+    state: State<'_, GameState>,
+    province_id: String,
+) -> Result<CampaignState, String> {
+    let mut session = lock_session(&state)?;
+    ensure_campaign_running(&session)?;
+    session
+        .campaign
+        .queue_settlement_upgrade(&province_id)
+        .map_err(|error| error.to_string())?;
+    Ok(session.campaign.clone())
+}
+
+#[tauri::command]
 fn resolve_pending_battle(
     app: AppHandle,
     state: State<'_, GameState>,
@@ -440,6 +467,8 @@ pub fn run() {
             move_army,
             recruitment_options,
             queue_recruitment,
+            settlement_upgrade_option,
+            queue_settlement_upgrade,
             resolve_pending_battle,
             pending_tactical_battle_seed,
             apply_tactical_battle_result,

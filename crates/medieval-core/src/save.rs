@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::CampaignState;
 
-pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 2;
+/// Version 3 adds province settlement levels and queued settlement upgrades.
+/// Versions 1 and 2 never recorded levels: they must not contain settlement
+/// levels or upgrade orders, and their provinces load as villages.
+pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -67,20 +70,46 @@ impl CampaignSave {
     pub fn from_json(json: &str) -> Result<Self, SaveError> {
         let header: SaveHeader = serde_json::from_str(json)
             .map_err(|error| SaveError::InvalidJson(error.to_string()))?;
-        if header.schema_version != 1 && header.schema_version != CAMPAIGN_SAVE_SCHEMA_VERSION {
+        if !(1..=CAMPAIGN_SAVE_SCHEMA_VERSION).contains(&header.schema_version) {
             return Err(SaveError::UnsupportedVersion(header.schema_version));
         }
 
-        let mut save: Self = serde_json::from_str(json)
+        let raw: serde_json::Value = serde_json::from_str(json)
             .map_err(|error| SaveError::InvalidJson(error.to_string()))?;
-        if header.schema_version == 1 {
-            if save.campaign.pending_tactical_result.is_some()
-                || !save.campaign.tactical_battle_reports.is_empty()
-            {
-                return invalid("version 1 cannot contain tactical battle outcomes");
+        if let Some(provinces) = raw
+            .pointer("/campaign/provinces")
+            .and_then(serde_json::Value::as_array)
+        {
+            for province in provinces {
+                let declared = province.get("settlementLevel").is_some();
+                if declared != (header.schema_version >= 3) {
+                    return invalid(format!(
+                        "version {} {} province settlement levels",
+                        header.schema_version,
+                        if declared {
+                            "cannot contain"
+                        } else {
+                            "requires"
+                        }
+                    ));
+                }
             }
-            save.schema_version = CAMPAIGN_SAVE_SCHEMA_VERSION;
         }
+        let mut save: Self = serde_json::from_value(raw)
+            .map_err(|error| SaveError::InvalidJson(error.to_string()))?;
+        if header.schema_version == 1
+            && (save.campaign.pending_tactical_result.is_some()
+                || !save.campaign.tactical_battle_reports.is_empty())
+        {
+            return invalid("version 1 cannot contain tactical battle outcomes");
+        }
+        if header.schema_version < 3 && !save.campaign.settlement_upgrades.is_empty() {
+            return invalid(format!(
+                "version {} cannot contain settlement upgrades",
+                header.schema_version
+            ));
+        }
+        save.schema_version = CAMPAIGN_SAVE_SCHEMA_VERSION;
         save.validate()?;
         Ok(save)
     }
@@ -277,6 +306,83 @@ impl CampaignSave {
             if order.ready_on_turn <= campaign.turn {
                 return invalid(format!(
                     "recruitment order in {} is already due on turn {}",
+                    order.province_id, order.ready_on_turn
+                ));
+            }
+        }
+
+        let mut upgrading = HashSet::new();
+        for order in &campaign.settlement_upgrades {
+            let province = campaign
+                .provinces
+                .iter()
+                .find(|province| province.id == order.province_id)
+                .ok_or_else(|| {
+                    SaveError::InvalidState(format!(
+                        "settlement upgrade references unknown province {}",
+                        order.province_id
+                    ))
+                })?;
+            if !upgrading.insert(order.province_id.as_str()) {
+                return invalid(format!(
+                    "province {} has more than one settlement upgrade",
+                    order.province_id
+                ));
+            }
+            if province.owner != order.faction_id {
+                return invalid(format!(
+                    "settlement upgrade faction {} does not control {}",
+                    order.faction_id, order.province_id
+                ));
+            }
+            if order
+                .target_level
+                .spec()
+                .upgrade
+                .is_some_and(|upgrade| province.wealth < upgrade.minimum_wealth)
+            {
+                return invalid(format!(
+                    "settlement upgrade in {} lacks the required wealth",
+                    order.province_id
+                ));
+            }
+            if province.settlement_level.next() != Some(order.target_level) {
+                return invalid(format!(
+                    "settlement upgrade in {} skips from {:?} to {:?}",
+                    order.province_id, province.settlement_level, order.target_level
+                ));
+            }
+            if order.ready_on_turn <= campaign.turn {
+                return invalid(format!(
+                    "settlement upgrade in {} is already due on turn {}",
+                    order.province_id, order.ready_on_turn
+                ));
+            }
+            // Orders complete at the start of their owner's turn, exactly the
+            // target level's build duration after the turn they were queued.
+            let faction_count = campaign.factions.len() as u32;
+            let rounds = order
+                .target_level
+                .spec()
+                .upgrade
+                .map_or(0, |upgrade| upgrade.rounds);
+            let remaining = order.ready_on_turn - campaign.turn;
+            let active_index = campaign
+                .factions
+                .iter()
+                .position(|faction| faction.id == campaign.active_faction)
+                .unwrap_or_default() as u32;
+            let owner_at_ready = &campaign.factions
+                [((active_index + remaining % faction_count) % faction_count) as usize];
+            if order.queued_on_turn > campaign.turn
+                || order
+                    .queued_on_turn
+                    .checked_add(rounds.saturating_mul(faction_count))
+                    != Some(order.ready_on_turn)
+                || owner_at_ready.id != order.faction_id
+            {
+                return invalid(format!(
+                    "settlement upgrade in {} cannot complete on turn {}",
                     order.province_id, order.ready_on_turn
                 ));
             }

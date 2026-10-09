@@ -381,7 +381,15 @@ fn saves_preserve_reports_and_reject_unsupported_legacy_claims_or_corrupt_surren
     let save = CampaignSave::from_campaign(campaign, "england").unwrap();
     let mut document = serde_json::to_value(&save).unwrap();
     document["schemaVersion"] = serde_json::json!(1);
-    assert!(CampaignSave::from_json(&serde_json::to_string(&document).unwrap()).is_err());
+    for province in document["campaign"]["provinces"].as_array_mut().unwrap() {
+        province.as_object_mut().unwrap().remove("settlementLevel");
+    }
+    assert!(
+        CampaignSave::from_json(&serde_json::to_string(&document).unwrap())
+            .unwrap_err()
+            .to_string()
+            .contains("tactical battle outcomes")
+    );
     let mut corrupted = save.campaign;
     corrupted.tactical_battle_reports[0].surrenders[0].units[0].soldiers += 1;
     let before = corrupted.clone();

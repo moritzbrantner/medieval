@@ -290,11 +290,12 @@ fn source_storage_order_does_not_change_reconciled_counts() {
 
 #[test]
 fn historical_campaign_saves_default_to_the_unreconciled_phase() {
-    let base = campaign();
+    let mut base = campaign();
     let mut document =
         serde_json::to_value(CampaignSave::from_campaign(base.clone(), "england").unwrap())
             .unwrap();
     document["schemaVersion"] = serde_json::json!(1);
+    strip_settlement_levels(&mut document, &mut base);
     document["campaign"]
         .as_object_mut()
         .unwrap()
@@ -417,31 +418,57 @@ fn a_result_without_its_pending_battle_cannot_mutate_campaign_armies() {
 }
 
 #[test]
-fn reconciled_saves_use_version_two_and_cannot_be_disguised_as_legacy_documents() {
+fn reconciled_saves_use_the_current_version_and_cannot_be_disguised_as_legacy_documents() {
     let mut campaign = campaign();
     let result = combat_result(&campaign);
     campaign.reconcile_tactical_casualties(&result).unwrap();
     let save = CampaignSave::from_campaign(campaign, "england").unwrap();
-    assert_eq!(save.schema_version, 2);
+    assert_eq!(
+        save.schema_version,
+        medieval_core::CAMPAIGN_SAVE_SCHEMA_VERSION
+    );
     let mut document = serde_json::to_value(&save).unwrap();
-    assert_eq!(document["schemaVersion"], 2);
+    assert_eq!(
+        document["schemaVersion"],
+        medieval_core::CAMPAIGN_SAVE_SCHEMA_VERSION
+    );
     document["schemaVersion"] = serde_json::json!(1);
-    assert!(matches!(
-        CampaignSave::from_json(&serde_json::to_string(&document).unwrap()),
-        Err(medieval_core::SaveError::InvalidState(_))
-    ));
+    strip_settlement_levels(&mut document, &mut save.campaign.clone());
+    assert!(
+        CampaignSave::from_json(&serde_json::to_string(&document).unwrap())
+            .unwrap_err()
+            .to_string()
+            .contains("tactical battle outcomes")
+    );
 }
 
 #[test]
-fn loading_version_one_preserves_state_and_upgrades_the_next_write_to_version_two() {
-    let original = campaign();
+fn loading_version_one_preserves_state_and_upgrades_the_next_write_to_the_current_version() {
+    let mut original = campaign();
     let mut document =
         serde_json::to_value(CampaignSave::from_campaign(original.clone(), "england").unwrap())
             .unwrap();
     document["schemaVersion"] = serde_json::json!(1);
+    strip_settlement_levels(&mut document, &mut original);
     let upgraded = CampaignSave::from_json(&serde_json::to_string(&document).unwrap()).unwrap();
     assert_eq!(upgraded.campaign, original);
-    assert_eq!(upgraded.schema_version, 2);
+    assert_eq!(
+        upgraded.schema_version,
+        medieval_core::CAMPAIGN_SAVE_SCHEMA_VERSION
+    );
     let written: serde_json::Value = serde_json::from_str(&upgraded.to_json().unwrap()).unwrap();
-    assert_eq!(written["schemaVersion"], 2);
+    assert_eq!(
+        written["schemaVersion"],
+        medieval_core::CAMPAIGN_SAVE_SCHEMA_VERSION
+    );
+}
+
+/// Pre-settlement-level saves carry no levels: strip them and expect villages.
+fn strip_settlement_levels(document: &mut serde_json::Value, expected: &mut CampaignState) {
+    for province in document["campaign"]["provinces"].as_array_mut().unwrap() {
+        province.as_object_mut().unwrap().remove("settlementLevel");
+    }
+    for province in &mut expected.provinces {
+        province.settlement_level = medieval_core::SettlementLevel::Village;
+    }
 }

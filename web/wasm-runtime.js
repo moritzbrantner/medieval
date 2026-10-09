@@ -133,6 +133,10 @@ export async function createWasmInvoke() {
         return callWithString("medieval_recruitment_options", args.provinceId);
       case "queue_recruitment":
         return callWithTwoStrings("medieval_queue_recruitment", args.provinceId, args.unit);
+      case "settlement_upgrade_option":
+        return callWithString("medieval_settlement_upgrade_option", args.provinceId);
+      case "queue_settlement_upgrade":
+        return callWithString("medieval_queue_settlement_upgrade", args.provinceId);
       case "finish_reconciled_tactical_battle":
         return persistTransition(() => call("medieval_finish_reconciled_tactical_battle"));
       case "pending_tactical_battle_seed":

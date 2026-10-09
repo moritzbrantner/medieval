@@ -59,7 +59,9 @@ fn legacy_campaign_saves_and_seeds_keep_the_original_field_profile() {
     let mut document = serde_json::to_value(save).unwrap();
     document["schemaVersion"] = serde_json::json!(1);
     for province in document["campaign"]["provinces"].as_array_mut().unwrap() {
-        province.as_object_mut().unwrap().remove("battlefield");
+        let province = province.as_object_mut().unwrap();
+        province.remove("battlefield");
+        province.remove("settlementLevel");
     }
     let restored = CampaignSave::from_json(&serde_json::to_string(&document).unwrap()).unwrap();
     let seed = restored.campaign.pending_tactical_battle_seed().unwrap();

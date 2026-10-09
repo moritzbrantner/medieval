@@ -18,7 +18,7 @@ for (const mode of ["Fight", "Auto-resolve"]) {
     await expect(page.locator("#pending-battle")).toBeVisible();
     const before = await state(page);
     const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("medieval-campaign-save-v1")));
-    expect(saved.schemaVersion).toBe(2);
+    expect(saved.schemaVersion).toBe(3);
     expect(saved.campaign).toEqual(before);
     await page.reload();
     await page.locator("#open-campaign").click();
