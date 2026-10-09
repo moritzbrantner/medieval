@@ -8,6 +8,7 @@ use crate::{
 const DEFENDER_MODIFIER_PERCENT: u32 = 8;
 const AI_ATTACK_SCORE: u64 = 1_000_000;
 const AI_REINFORCE_SCORE: u64 = 100_000;
+const AI_UPGRADE_RESERVE: u32 = 500;
 const AI_FRIENDLY_MOVE_SCORE: u64 = 10_000;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -304,6 +305,7 @@ impl CampaignState {
         ));
 
         self.ai_recruit(seed)?;
+        self.ai_upgrade_settlement()?;
         self.ai_move(seed)?;
 
         if self.pending_battle.is_some() {
@@ -354,6 +356,37 @@ impl CampaignState {
             .unwrap_or(0);
             self.queue_recruitment(&province_id, options[option_index])?;
             break;
+        }
+        Ok(())
+    }
+
+    /// Queue at most one settlement upgrade per turn through the same command
+    /// surface as the player, in the wealthiest eligible province, while
+    /// keeping a gold reserve for future recruitment.
+    fn ai_upgrade_settlement(&mut self) -> Result<(), CampaignError> {
+        let faction_id = self.active_faction.clone();
+        let treasury = self.faction(&faction_id)?.treasury;
+        let mut candidates: Vec<(u32, String)> = self
+            .provinces
+            .iter()
+            .filter(|province| province.owner == faction_id)
+            .map(|province| (province.wealth, province.id.clone()))
+            .collect();
+        candidates.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+
+        for (_, province_id) in candidates {
+            let option = self.settlement_upgrade_option(&province_id)?;
+            let Some(cost) = option
+                .target
+                .and_then(|target| target.upgrade)
+                .map(|upgrade| upgrade.cost)
+            else {
+                continue;
+            };
+            if option.available && treasury.saturating_sub(cost) >= AI_UPGRADE_RESERVE {
+                self.queue_settlement_upgrade(&province_id)?;
+                break;
+            }
         }
         Ok(())
     }
@@ -652,6 +685,27 @@ mod tests {
                 .iter()
                 .any(|order| order.faction_id == "france")
         );
+    }
+
+    #[test]
+    fn ai_upgrades_settlements_deterministically_and_keeps_a_reserve() {
+        let mut campaign = new_campaign();
+        campaign.end_turn().unwrap();
+        campaign.factions[1].treasury = 5_000;
+        campaign.play_ai_turn("england", 7).unwrap();
+        let upgrades: Vec<_> = campaign
+            .settlement_upgrades
+            .iter()
+            .filter(|order| order.faction_id == "france")
+            .collect();
+        assert_eq!(upgrades.len(), 1);
+        assert_eq!(upgrades[0].province_id, "paris");
+
+        let mut poor = new_campaign();
+        poor.end_turn().unwrap();
+        poor.factions[1].treasury = 0;
+        poor.play_ai_turn("england", 7).unwrap();
+        assert!(poor.settlement_upgrades.is_empty());
     }
 
     #[test]

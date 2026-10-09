@@ -274,6 +274,14 @@ fn schema_one_definitions_load_as_villages_and_cannot_declare_levels() {
             .remove("level");
     }
     let legacy = ProvinceDefinitions::from_json(&value.to_string()).unwrap();
+    let migrated = serde_json::to_string(legacy.document()).unwrap();
+    assert_eq!(
+        ProvinceDefinitions::from_json(&migrated)
+            .unwrap()
+            .document(),
+        legacy.document()
+    );
+    assert_eq!(legacy.document().schema_version, 2);
     let campaign = new_campaign_with_province_definitions(&legacy).unwrap();
     assert!(
         campaign

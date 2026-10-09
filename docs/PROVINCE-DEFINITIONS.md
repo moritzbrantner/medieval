@@ -58,7 +58,9 @@ pending. Queueing pays the cost immediately and schedules completion for the
 start of the owner's turn the given number of rounds later (`readyOnTurn`).
 Completion happens in the turn-start step guarded by `lastEconomyTurn`, before
 that turn's income is paid, and removes the order, so it is applied exactly
-once. A captured province keeps its level; the former owner's queued upgrade is
+once. The deterministic AI queues at most one
+upgrade per turn through the same commands, in its wealthiest eligible
+province, while keeping 500 gold in reserve. A captured province keeps its level; the former owner's queued upgrade is
 cancelled without refund.
 
 The packaged map starts Normandy as a town, Paris as a city, and every other
@@ -66,7 +68,7 @@ province as a village.
 
 ## Versions and saved campaigns
 
-The definition document has `schemaVersion: 2`. Version 1 documents remain supported: they must not declare `settlement.level`, and every settlement starts as a village. Unsupported versions are
+The definition document has `schemaVersion: 2`. Version 1 documents remain supported: they must not declare `settlement.level`, every settlement starts as a village, and the loaded document is migrated to version 2. Unsupported versions are
 reported before decoding the current document shape. This configuration version
 is independent of the campaign save schema. Save schema version 3 adds
 `settlementLevel` to provinces and the `settlementUpgrades` queue; schema 1 and

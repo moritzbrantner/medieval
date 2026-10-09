@@ -499,6 +499,9 @@ mod tests {
         let mut off_phase = save.clone();
         off_phase.campaign.settlement_upgrades[0].ready_on_turn = 4;
         assert!(off_phase.validate().is_err());
+        let mut poor = save.clone();
+        poor.campaign.provinces[1].wealth = 5;
+        assert!(poor.validate().is_err());
         let mut too_far = save;
         too_far.campaign.settlement_upgrades[0].ready_on_turn = 7;
         assert!(too_far.validate().is_err());

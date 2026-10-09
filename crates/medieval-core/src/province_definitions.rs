@@ -225,6 +225,10 @@ impl ProvinceDefinitions {
         if reachable.len() != provinces.len() {
             return invalid("province adjacency graph is disconnected");
         }
+        // Version 1 documents migrate to the current shape (explicit village
+        // levels), so the retained document always round-trips.
+        let mut document = document;
+        document.schema_version = PROVINCE_DEFINITION_SCHEMA_VERSION;
         Ok(Self { document })
     }
     #[must_use]

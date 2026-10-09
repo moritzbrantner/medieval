@@ -335,6 +335,17 @@ impl CampaignSave {
                     order.faction_id, order.province_id
                 ));
             }
+            if order
+                .target_level
+                .spec()
+                .upgrade
+                .is_some_and(|upgrade| province.wealth < upgrade.minimum_wealth)
+            {
+                return invalid(format!(
+                    "settlement upgrade in {} lacks the required wealth",
+                    order.province_id
+                ));
+            }
             if province.settlement_level.next() != Some(order.target_level) {
                 return invalid(format!(
                     "settlement upgrade in {} skips from {:?} to {:?}",
