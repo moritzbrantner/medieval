@@ -126,6 +126,10 @@ impl CampaignState {
             if cancelled > 0 {
                 next.log.push(format!("Turn {}: {cancelled} queued recruitment order(s) in {province_id} are cancelled after capture.", next.turn));
             }
+            next.cancel_settlement_upgrades_after_capture(
+                province_id,
+                &result.seed.attacker.faction_id,
+            );
         }
         next.pending_battle = None;
         next.pending_tactical_result = None;

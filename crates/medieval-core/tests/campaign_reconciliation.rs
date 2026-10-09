@@ -417,14 +417,20 @@ fn a_result_without_its_pending_battle_cannot_mutate_campaign_armies() {
 }
 
 #[test]
-fn reconciled_saves_use_version_two_and_cannot_be_disguised_as_legacy_documents() {
+fn reconciled_saves_use_the_current_version_and_cannot_be_disguised_as_legacy_documents() {
     let mut campaign = campaign();
     let result = combat_result(&campaign);
     campaign.reconcile_tactical_casualties(&result).unwrap();
     let save = CampaignSave::from_campaign(campaign, "england").unwrap();
-    assert_eq!(save.schema_version, 2);
+    assert_eq!(
+        save.schema_version,
+        medieval_core::CAMPAIGN_SAVE_SCHEMA_VERSION
+    );
     let mut document = serde_json::to_value(&save).unwrap();
-    assert_eq!(document["schemaVersion"], 2);
+    assert_eq!(
+        document["schemaVersion"],
+        medieval_core::CAMPAIGN_SAVE_SCHEMA_VERSION
+    );
     document["schemaVersion"] = serde_json::json!(1);
     assert!(matches!(
         CampaignSave::from_json(&serde_json::to_string(&document).unwrap()),
@@ -433,7 +439,7 @@ fn reconciled_saves_use_version_two_and_cannot_be_disguised_as_legacy_documents(
 }
 
 #[test]
-fn loading_version_one_preserves_state_and_upgrades_the_next_write_to_version_two() {
+fn loading_version_one_preserves_state_and_upgrades_the_next_write_to_the_current_version() {
     let original = campaign();
     let mut document =
         serde_json::to_value(CampaignSave::from_campaign(original.clone(), "england").unwrap())
@@ -441,7 +447,13 @@ fn loading_version_one_preserves_state_and_upgrades_the_next_write_to_version_tw
     document["schemaVersion"] = serde_json::json!(1);
     let upgraded = CampaignSave::from_json(&serde_json::to_string(&document).unwrap()).unwrap();
     assert_eq!(upgraded.campaign, original);
-    assert_eq!(upgraded.schema_version, 2);
+    assert_eq!(
+        upgraded.schema_version,
+        medieval_core::CAMPAIGN_SAVE_SCHEMA_VERSION
+    );
     let written: serde_json::Value = serde_json::from_str(&upgraded.to_json().unwrap()).unwrap();
-    assert_eq!(written["schemaVersion"], 2);
+    assert_eq!(
+        written["schemaVersion"],
+        medieval_core::CAMPAIGN_SAVE_SCHEMA_VERSION
+    );
 }

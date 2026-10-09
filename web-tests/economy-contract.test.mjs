@@ -37,3 +37,17 @@ test("recruitment completion timing is projected from campaign state", () => {
   assert.match(script, /order\.readyOnTurn/);
   assert.doesNotMatch(script, /readyOnTurn\s*=/);
 });
+
+test("settlement levels, effects, and upgrade rules come from Rust", () => {
+  assert.match(
+    script,
+    /invoke\("settlement_upgrade_option", \{ provinceId: requestedProvinceId \}\)/,
+  );
+  assert.match(script, /invoke\("queue_settlement_upgrade", \{ provinceId \}\)/);
+  assert.match(script, /button\.disabled = campaignBusy \|\| !settlementOption\.available/);
+  assert.match(script, /reason\.textContent = settlementOption\.reason/);
+  assert.match(script, /current\.incomeBonus/);
+  assert.match(script, /target\.upgrade\.cost/);
+  assert.doesNotMatch(script, /settlementLevel\s*=(?!=)|incomeBonus\s*[-+]?=(?!=)|buildingSlots\s*[-+]?=(?!=)/);
+  assert.doesNotMatch(script, /upgradeCosts|levelCosts|costByLevel/);
+});

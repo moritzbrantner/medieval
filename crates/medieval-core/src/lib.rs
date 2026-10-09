@@ -23,6 +23,11 @@ pub use province_definitions::{
     ProvinceEconomyDefinition, SettlementDefinition, default_province_definitions,
 };
 mod save;
+mod settlement;
+pub use settlement::{
+    SETTLEMENT_LEVELS, SettlementLevel, SettlementLevelSpec, SettlementUpgradeOption,
+    SettlementUpgradeOrder, SettlementUpgradeRequirement,
+};
 mod tactical;
 mod tactical_opponent;
 mod tactical_work;
@@ -78,6 +83,8 @@ pub struct CampaignState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_tactical_result: Option<TacticalBattleResult>,
     pub recruitment_queue: Vec<RecruitmentOrder>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub settlement_upgrades: Vec<SettlementUpgradeOrder>,
     pub battle_reports: Vec<BattleReport>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tactical_battle_reports: Vec<TacticalCampaignReport>,
@@ -103,6 +110,9 @@ pub struct Province {
     pub neighbors: Vec<String>,
     #[serde(default)]
     pub battlefield: ProvinceBattlefieldContext,
+    /// Saves from before settlement levels load every province as a village.
+    #[serde(default)]
+    pub settlement_level: SettlementLevel,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -237,6 +247,21 @@ pub enum CampaignError {
         cost: u32,
         treasury: u32,
     },
+    SettlementNotControlled {
+        province: String,
+        owner: String,
+        active_faction: String,
+    },
+    SettlementUpgradeAlreadyQueued {
+        province: String,
+        ready_on_turn: u32,
+    },
+    SettlementAtMaximumLevel(String),
+    SettlementWealthTooLow {
+        province: String,
+        wealth: u32,
+        required: u32,
+    },
 }
 
 impl fmt::Display for CampaignError {
@@ -297,6 +322,35 @@ impl fmt::Display for CampaignError {
             } => write!(
                 formatter,
                 "{faction} needs {cost} gold but has only {treasury}"
+            ),
+            Self::SettlementNotControlled {
+                province,
+                owner,
+                active_faction,
+            } => write!(
+                formatter,
+                "{active_faction} cannot upgrade {province}, which is controlled by {owner}"
+            ),
+            Self::SettlementUpgradeAlreadyQueued {
+                province,
+                ready_on_turn,
+            } => write!(
+                formatter,
+                "{province} is already upgrading and is ready on turn {ready_on_turn}"
+            ),
+            Self::SettlementAtMaximumLevel(province) => {
+                write!(
+                    formatter,
+                    "{province} is already at the highest settlement level"
+                )
+            }
+            Self::SettlementWealthTooLow {
+                province,
+                wealth,
+                required,
+            } => write!(
+                formatter,
+                "{province} needs wealth {required} to upgrade but has {wealth}"
             ),
         }
     }
@@ -552,6 +606,7 @@ impl CampaignState {
             return Ok(());
         }
 
+        self.complete_settlement_upgrades()?;
         let income = self.income_for(&faction_id);
         self.factions[faction_index].treasury =
             self.factions[faction_index].treasury.saturating_add(income);
@@ -621,8 +676,13 @@ impl CampaignState {
         self.provinces
             .iter()
             .filter(|province| province.owner == faction_id)
-            .map(|province| province.wealth.saturating_mul(INCOME_PER_WEALTH))
-            .sum()
+            .map(|province| {
+                province
+                    .wealth
+                    .saturating_mul(INCOME_PER_WEALTH)
+                    .saturating_add(province.settlement_level.spec().income_bonus)
+            })
+            .fold(0_u32, u32::saturating_add)
     }
 
     fn recruitment_unavailable_reason(
@@ -741,6 +801,7 @@ pub fn new_campaign_with_province_definitions(
         pending_battle: None,
         pending_tactical_result: None,
         recruitment_queue: Vec::new(),
+        settlement_upgrades: Vec::new(),
         battle_reports: Vec::new(),
         tactical_battle_reports: Vec::new(),
         log: vec!["The campaign begins in 1087.".into()],
@@ -873,11 +934,12 @@ mod tests {
 
         campaign.end_turn().unwrap();
         let france = campaign.faction("france").unwrap();
-        assert_eq!(france.treasury, 2_350);
+        // Wealth 23 * 50 plus the Paris city bonus of 100.
+        assert_eq!(france.treasury, 2_450);
         assert_eq!(france.last_economy_turn, Some(2));
 
         campaign.apply_turn_start().unwrap();
-        assert_eq!(campaign.faction("france").unwrap().treasury, 2_350);
+        assert_eq!(campaign.faction("france").unwrap().treasury, 2_450);
     }
 
     #[test]

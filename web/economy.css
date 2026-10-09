@@ -34,12 +34,15 @@
 
 .recruitment-option small,
 .recruitment-note,
-.recruitment-queued {
+.recruitment-queued,
+.settlement-note,
+.settlement-queued {
   color: #9f967f;
   font: 0.75rem/1.4 system-ui, sans-serif;
 }
 
-.recruitment-queued {
+.recruitment-queued,
+.settlement-queued {
   margin-bottom: 0.6rem;
   color: #d0b96d;
 }

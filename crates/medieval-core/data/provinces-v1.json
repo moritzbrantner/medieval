@@ -40,7 +40,8 @@
       ],
       "battlefieldProfile": "mountain-pass-field",
       "settlement": {
-        "fortified": false
+        "fortified": false,
+        "level": "village"
       },
       "baseEconomy": {
         "wealth": 5
@@ -57,7 +58,8 @@
       ],
       "battlefieldProfile": "forest-clearing-field",
       "settlement": {
-        "fortified": false
+        "fortified": false,
+        "level": "town"
       },
       "baseEconomy": {
         "wealth": 6
@@ -73,7 +75,8 @@
       ],
       "battlefieldProfile": "forest-clearing-field",
       "settlement": {
-        "fortified": false
+        "fortified": false,
+        "level": "village"
       },
       "baseEconomy": {
         "wealth": 4
@@ -89,7 +92,8 @@
       ],
       "battlefieldProfile": "river-ford-field",
       "settlement": {
-        "fortified": false
+        "fortified": false,
+        "level": "village"
       },
       "baseEconomy": {
         "wealth": 4
@@ -106,7 +110,8 @@
       ],
       "battlefieldProfile": "mountain-pass-siege",
       "settlement": {
-        "fortified": true
+        "fortified": true,
+        "level": "city"
       },
       "baseEconomy": {
         "wealth": 8
@@ -121,7 +126,8 @@
       ],
       "battlefieldProfile": "river-ford-field",
       "settlement": {
-        "fortified": false
+        "fortified": false,
+        "level": "village"
       },
       "baseEconomy": {
         "wealth": 7

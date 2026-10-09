@@ -20,6 +20,7 @@ pub struct BattlefieldDefinition {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SettlementDefinition {
     pub fortified: bool,
+    pub level: crate::SettlementLevel,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, serde_json::Value>,
 }
@@ -233,6 +234,7 @@ impl ProvinceDefinitions {
                 wealth: definition.base_economy.wealth,
                 neighbors: definition.neighbors.clone(),
                 battlefield: context,
+                settlement_level: definition.settlement.level,
             });
         }
         for army in armies {
