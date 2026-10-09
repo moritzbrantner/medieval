@@ -225,7 +225,7 @@ fn definition_versions_and_unknown_fields_are_explicitly_rejected() {
 #[test]
 fn settlement_levels_are_explicit_definitions_and_legacy_saves_load_as_villages() {
     let mut value: serde_json::Value =
-        serde_json::from_str(include_str!("../data/provinces-v1.json")).unwrap();
+        serde_json::from_str(include_str!("../data/provinces-v2.json")).unwrap();
     value["provinces"][0]["settlement"]
         .as_object_mut()
         .unwrap()
@@ -252,8 +252,48 @@ fn settlement_levels_are_explicit_definitions_and_legacy_saves_load_as_villages(
     let mut legacy =
         serde_json::to_value(CampaignSave::from_campaign(upgrading, "england").unwrap()).unwrap();
     legacy["schemaVersion"] = serde_json::json!(2);
+    for province in legacy["campaign"]["provinces"].as_array_mut().unwrap() {
+        province.as_object_mut().unwrap().remove("settlementLevel");
+    }
     assert!(matches!(
         CampaignSave::from_json(&legacy.to_string()),
         Err(medieval_core::SaveError::InvalidState(_))
     ));
+}
+
+#[test]
+fn schema_one_definitions_load_as_villages_and_cannot_declare_levels() {
+    let mut value: serde_json::Value =
+        serde_json::from_str(include_str!("../data/provinces-v2.json")).unwrap();
+    value["schemaVersion"] = serde_json::json!(1);
+    assert!(ProvinceDefinitions::from_json(&value.to_string()).is_err());
+    for province in value["provinces"].as_array_mut().unwrap() {
+        province["settlement"]
+            .as_object_mut()
+            .unwrap()
+            .remove("level");
+    }
+    let legacy = ProvinceDefinitions::from_json(&value.to_string()).unwrap();
+    let campaign = new_campaign_with_province_definitions(&legacy).unwrap();
+    assert!(
+        campaign
+            .provinces
+            .iter()
+            .all(|province| province.settlement_level == SettlementLevel::Village)
+    );
+}
+
+#[test]
+fn pre_settlement_saves_cannot_smuggle_levels_and_current_saves_require_them() {
+    let save = CampaignSave::from_campaign(new_campaign(), "england").unwrap();
+    let mut relabeled = serde_json::to_value(&save).unwrap();
+    relabeled["schemaVersion"] = serde_json::json!(2);
+    assert!(CampaignSave::from_json(&relabeled.to_string()).is_err());
+
+    let mut missing = serde_json::to_value(&save).unwrap();
+    missing["campaign"]["provinces"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("settlementLevel");
+    assert!(CampaignSave::from_json(&missing.to_string()).is_err());
 }

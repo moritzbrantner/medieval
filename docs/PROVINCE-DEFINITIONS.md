@@ -1,6 +1,6 @@
 # Province definitions
 
-`crates/medieval-core/data/provinces-v1.json` defines the starting province map.
+`crates/medieval-core/data/provinces-v2.json` defines the starting province map.
 The core parses and validates this packaged document once; `new_campaign()` uses
 it to build runtime provinces. `ProvinceDefinitions::from_json` accepts custom
 documents, and `new_campaign_with_province_definitions` constructs the current
@@ -13,8 +13,8 @@ Each province has a stable machine `id`, a separate display `name`, a
 `.`, and `/`. Movement, army positions, ownership, and adjacency reference IDs;
 renaming a display name does not change those references.
 
-Each `settlement.level` is required and is one of `village`, `town`, `city`, or
-`majorCity`; it becomes the province's starting settlement level (see
+From schema version 2, each `settlement.level` is required and is one of
+`village`, `town`, `city`, or `majorCity`; it becomes the province's starting settlement level (see
 [Settlement levels](#settlement-levels)).
 
 Named `battlefieldProfiles` carry the core's location and fortification context.
@@ -66,11 +66,14 @@ province as a village.
 
 ## Versions and saved campaigns
 
-The definition document has `schemaVersion: 1`. Unsupported versions are
+The definition document has `schemaVersion: 2`. Version 1 documents remain supported: they must not declare `settlement.level`, and every settlement starts as a village. Unsupported versions are
 reported before decoding the current document shape. This configuration version
 is independent of the campaign save schema. Save schema version 3 adds
 `settlementLevel` to provinces and the `settlementUpgrades` queue; schema 1 and
-2 saves still load, with every province as a village and no queued upgrades.
+2 saves still load, with every province as a village; they must not contain
+settlement levels or upgrades, and schema 3 saves must give every province a
+level. Save validation also rejects upgrade orders whose `readyOnTurn` is not
+on the owner's turn or lies beyond the target level's build duration.
 
 Saved campaigns contain their own province state. Loading a save does not
 replace names, borders, wealth, ownership, settlement level, or battlefield context with current

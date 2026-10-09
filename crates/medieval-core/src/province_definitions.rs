@@ -6,8 +6,10 @@ use std::{
     sync::OnceLock,
 };
 
-pub const PROVINCE_DEFINITION_SCHEMA_VERSION: u32 = 1;
-const DEFAULT_DEFINITIONS: &str = include_str!("../data/provinces-v1.json");
+/// Version 2 adds the required `settlement.level`. Version 1 documents remain
+/// supported; they cannot declare a level and every settlement is a village.
+pub const PROVINCE_DEFINITION_SCHEMA_VERSION: u32 = 2;
+const DEFAULT_DEFINITIONS: &str = include_str!("../data/provinces-v2.json");
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -20,6 +22,8 @@ pub struct BattlefieldDefinition {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SettlementDefinition {
     pub fortified: bool,
+    /// Required from schema version 2; absent (village) in version 1.
+    #[serde(default)]
     pub level: crate::SettlementLevel,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, serde_json::Value>,
@@ -86,20 +90,48 @@ impl ProvinceDefinitions {
         }
         let header: Header = serde_json::from_str(json)
             .map_err(|error| ProvinceDefinitionError::InvalidJson(error.to_string()))?;
-        if header.schema_version != PROVINCE_DEFINITION_SCHEMA_VERSION {
+        if !(1..=PROVINCE_DEFINITION_SCHEMA_VERSION).contains(&header.schema_version) {
             return Err(ProvinceDefinitionError::UnsupportedVersion(
                 header.schema_version,
             ));
         }
-        let document = serde_json::from_str(json)
+        let raw: serde_json::Value = serde_json::from_str(json)
             .map_err(|error| ProvinceDefinitionError::InvalidJson(error.to_string()))?;
+        let document = serde_json::from_value(raw.clone())
+            .map_err(|error| ProvinceDefinitionError::InvalidJson(error.to_string()))?;
+        if let Some(provinces) = raw.get("provinces").and_then(serde_json::Value::as_array) {
+            for province in provinces {
+                let declared = province
+                    .get("settlement")
+                    .is_some_and(|settlement| settlement.get("level").is_some());
+                if declared != (header.schema_version >= 2) {
+                    return Err(ProvinceDefinitionError::InvalidJson(format!(
+                        "schema version {} {} settlement.level",
+                        header.schema_version,
+                        if declared {
+                            "cannot declare"
+                        } else {
+                            "requires"
+                        }
+                    )));
+                }
+            }
+        }
         Self::validate(document)
     }
     pub fn validate(document: ProvinceDefinitionDocument) -> Result<Self, ProvinceDefinitionError> {
-        if document.schema_version != PROVINCE_DEFINITION_SCHEMA_VERSION {
+        if !(1..=PROVINCE_DEFINITION_SCHEMA_VERSION).contains(&document.schema_version) {
             return Err(ProvinceDefinitionError::UnsupportedVersion(
                 document.schema_version,
             ));
+        }
+        if document.schema_version == 1
+            && document
+                .provinces
+                .iter()
+                .any(|province| province.settlement.level != crate::SettlementLevel::Village)
+        {
+            return invalid("schema version 1 settlements are villages");
         }
         if document.provinces.is_empty() {
             return invalid("province list is empty");

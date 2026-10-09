@@ -65,11 +65,12 @@ fn reloaded_pending_battles_resume_both_resolution_choices_identically() {
 
 #[test]
 fn version_one_pending_battles_migrate_to_the_current_handoff_schema() {
-    let before = pending();
+    let mut before = pending();
     let mut document =
         serde_json::to_value(CampaignSave::from_campaign(before.clone(), "england").unwrap())
             .unwrap();
     document["schemaVersion"] = serde_json::json!(1);
+    strip_settlement_levels(&mut document, &mut before);
     let migrated = CampaignSave::from_json(&serde_json::to_string(&document).unwrap()).unwrap();
     assert_eq!(
         migrated.schema_version,
@@ -148,5 +149,15 @@ fn corrupt_staged_handoff_turn_and_profile_are_rejected() {
             serde_json::json!({"kind": "field", "location": "riverFord"})
         };
         assert!(CampaignSave::from_json(&serde_json::to_string(&document).unwrap()).is_err());
+    }
+}
+
+/// Pre-settlement-level saves carry no levels: strip them and expect villages.
+fn strip_settlement_levels(document: &mut serde_json::Value, expected: &mut CampaignState) {
+    for province in document["campaign"]["provinces"].as_array_mut().unwrap() {
+        province.as_object_mut().unwrap().remove("settlementLevel");
+    }
+    for province in &mut expected.provinces {
+        province.settlement_level = medieval_core::SettlementLevel::Village;
     }
 }

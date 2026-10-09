@@ -489,9 +489,18 @@ mod tests {
         foreign.campaign.settlement_upgrades[0].faction_id = "france".into();
         assert!(foreign.validate().is_err());
 
-        let mut duplicate = save;
+        let mut duplicate = save.clone();
         let order = duplicate.campaign.settlement_upgrades[0].clone();
         duplicate.campaign.settlement_upgrades.push(order);
         assert!(duplicate.validate().is_err());
+
+        // City upgrades take two rounds: turn 1 + 2 * 2 factions = turn 5.
+        assert_eq!(save.campaign.settlement_upgrades[0].ready_on_turn, 5);
+        let mut off_phase = save.clone();
+        off_phase.campaign.settlement_upgrades[0].ready_on_turn = 4;
+        assert!(off_phase.validate().is_err());
+        let mut too_far = save;
+        too_far.campaign.settlement_upgrades[0].ready_on_turn = 7;
+        assert!(too_far.validate().is_err());
     }
 }
