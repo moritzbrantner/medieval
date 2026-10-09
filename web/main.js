@@ -203,7 +203,8 @@ function renderSettlement(province) {
     const button = document.createElement("button");
     button.type = "button";
     button.disabled = campaignBusy || !settlementOption.available;
-    button.textContent = `Upgrade to ${target.label} · ${target.upgrade.cost} gold · wealth ${target.upgrade.minimumWealth}+`;
+    const rounds = target.upgrade.rounds;
+    button.textContent = `Upgrade to ${target.label} · ${target.upgrade.cost} gold · ${rounds} round${rounds === 1 ? "" : "s"}, ready on turn ${settlementOption.readyOnTurn} · wealth ${target.upgrade.minimumWealth}+`;
     button.addEventListener("click", () => queueSettlementUpgrade(province.id));
     row.append(button);
     if (settlementOption.reason) {

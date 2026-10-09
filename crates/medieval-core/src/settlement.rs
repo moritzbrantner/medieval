@@ -125,6 +125,9 @@ pub struct SettlementUpgradeOrder {
     pub province_id: String,
     pub target_level: SettlementLevel,
     pub cost: u32,
+    /// Turn the order was queued; `ready_on_turn` is exactly the target level's
+    /// build duration later.
+    pub queued_on_turn: u32,
     pub ready_on_turn: u32,
 }
 
@@ -188,6 +191,7 @@ impl CampaignState {
             province_id: province_id.to_owned(),
             target_level: target,
             cost: requirement.cost,
+            queued_on_turn: self.turn,
             ready_on_turn,
         });
         self.log.push(format!(
@@ -502,6 +506,13 @@ mod tests {
         let mut poor = save.clone();
         poor.campaign.provinces[1].wealth = 5;
         assert!(poor.validate().is_err());
+        let mut early = save.clone();
+        early.campaign.settlement_upgrades[0].ready_on_turn = 3;
+        assert!(early.validate().is_err());
+        let mut future_queue = save.clone();
+        future_queue.campaign.settlement_upgrades[0].queued_on_turn = 3;
+        future_queue.campaign.settlement_upgrades[0].ready_on_turn = 7;
+        assert!(future_queue.validate().is_err());
         let mut too_far = save;
         too_far.campaign.settlement_upgrades[0].ready_on_turn = 7;
         assert!(too_far.validate().is_err());

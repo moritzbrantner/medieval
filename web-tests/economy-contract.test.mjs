@@ -48,6 +48,8 @@ test("settlement levels, effects, and upgrade rules come from Rust", () => {
   assert.match(script, /reason\.textContent = settlementOption\.reason/);
   assert.match(script, /current\.incomeBonus/);
   assert.match(script, /target\.upgrade\.cost/);
+  assert.match(script, /target\.upgrade\.rounds/);
+  assert.match(script, /settlementOption\.readyOnTurn/);
   assert.doesNotMatch(script, /settlementLevel\s*=(?!=)|incomeBonus\s*[-+]?=(?!=)|buildingSlots\s*[-+]?=(?!=)/);
   assert.doesNotMatch(script, /upgradeCosts|levelCosts|costByLevel/);
 });

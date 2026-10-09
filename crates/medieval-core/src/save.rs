@@ -358,8 +358,8 @@ impl CampaignSave {
                     order.province_id, order.ready_on_turn
                 ));
             }
-            // Orders complete at the start of their owner's turn, at most the
-            // target level's build duration after they were queued.
+            // Orders complete at the start of their owner's turn, exactly the
+            // target level's build duration after the turn they were queued.
             let faction_count = campaign.factions.len() as u32;
             let rounds = order
                 .target_level
@@ -374,7 +374,11 @@ impl CampaignSave {
                 .unwrap_or_default() as u32;
             let owner_at_ready = &campaign.factions
                 [((active_index + remaining % faction_count) % faction_count) as usize];
-            if remaining > rounds.saturating_mul(faction_count)
+            if order.queued_on_turn > campaign.turn
+                || order
+                    .queued_on_turn
+                    .checked_add(rounds.saturating_mul(faction_count))
+                    != Some(order.ready_on_turn)
                 || owner_at_ready.id != order.faction_id
             {
                 return invalid(format!(
