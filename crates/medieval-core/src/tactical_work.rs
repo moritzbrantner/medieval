@@ -7,9 +7,14 @@ use serde::{Deserialize, Serialize};
 pub struct TacticalWorkCounters {
     pub ticks: u64,
     pub movement_unit_visits: u64,
+    /// Per-unit visits of the other full unit scans: order promotion,
+    /// acquisition, charge pass, combat pulse loops, siege capture, target
+    /// clearing and completion checks. Declared linear in total units.
+    pub unit_scan_visits: u64,
     pub snapshot_clones: u64,
     pub snapshot_unit_copies: u64,
     pub target_candidate_visits: u64,
+    pub indexed_unit_lookups: u64,
     pub proximity_queries: u64,
     pub physics_contact_queries: u64,
     pub path_requests: u64,

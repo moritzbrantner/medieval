@@ -1079,22 +1079,26 @@ impl TacticalBattle {
         if formation.files() == 0 {
             return Err(TacticalError::InvalidFormation(unit_id.to_owned()));
         }
-        if self.units[unit_index].destination.is_some()
-            || !self.units[unit_index].queued_movements.is_empty()
+        // Validate pending placements with the new formation in place and
+        // restore it on rejection, instead of copying the whole battle.
+        let previous = std::mem::replace(&mut self.units[unit_index].formation, formation);
+        let unit = &self.units[unit_index];
+        if let Err(error) = unit
+            .destination
+            .into_iter()
+            .chain(
+                unit.queued_movements
+                    .iter()
+                    .map(|waypoint| waypoint.destination),
+            )
+            .try_for_each(|destination| self.validate_formation_placement(unit_id, destination))
         {
-            let mut candidate = self.clone();
-            candidate.units[unit_index].formation = formation;
-            if let Some(destination) = self.units[unit_index].destination {
-                candidate.validate_formation_placement(unit_id, destination)?;
-            }
-            for waypoint in &self.units[unit_index].queued_movements {
-                candidate.validate_formation_placement(unit_id, waypoint.destination)?;
-            }
+            self.units[unit_index].formation = previous;
+            return Err(error);
         }
-        if self.units[unit_index].formation != formation {
+        if previous != formation {
             self.units[unit_index].interrupt_charge();
         }
-        self.units[unit_index].formation = formation;
         Ok(())
     }
 
@@ -1119,11 +1123,13 @@ impl TacticalBattle {
             {
                 self.resolve_combat_pulse(&mut counters);
                 if let Some(siege) = &mut self.siege {
+                    counters.unit_scan_visits += self.units.len() as u64;
                     siege.advance_capture(&self.units);
                 }
             }
-            self.clear_invalid_engagement_targets();
-            self.update_completion();
+            counters.unit_scan_visits += self.units.len() as u64;
+            self.clear_invalid_engagement_targets(&mut counters);
+            counters.unit_scan_visits += self.update_completion();
         }
         counters
     }
@@ -1135,18 +1141,21 @@ impl TacticalBattle {
         }
     }
 
-    fn update_completion(&mut self) {
+    /// Returns the units visited by the completion scans.
+    fn update_completion(&mut self) -> u64 {
+        let visits = std::cell::Cell::new(0_u64);
         if self.completion_rules.is_none() || self.ensure_running().is_err() {
-            return;
+            return 0;
         }
         let captured_by = self.siege.and_then(|siege| siege.capture.captured_by);
         let result = if let Some(winner) = captured_by {
             Some((Some(winner), TacticalFinishReason::SiegeCapture))
         } else if let Some(withdrawal) = self.withdrawal {
             let pending = |side| {
-                self.units
-                    .iter()
-                    .any(|unit| unit.side == side && unit.is_withdrawing())
+                self.units.iter().any(|unit| {
+                    visits.set(visits.get() + 1);
+                    unit.side == side && unit.is_withdrawing()
+                })
             };
             match (withdrawal.attacker, withdrawal.defender) {
                 (true, true)
@@ -1165,6 +1174,7 @@ impl TacticalBattle {
         } else {
             let active = |side| {
                 self.units.iter().any(|unit| {
+                    visits.set(visits.get() + 1);
                     unit.side == side
                         && unit.soldiers > 0
                         && unit.state == TacticalUnitState::Formed
@@ -1190,6 +1200,7 @@ impl TacticalBattle {
                 reason,
             };
         }
+        visits.get()
     }
 
     fn unit_index(&self, unit_id: &str) -> Option<usize> {
@@ -1234,6 +1245,9 @@ impl TacticalBattle {
     }
 
     fn advance_movement_orders(&mut self, counters: &mut TacticalWorkCounters) {
+        // Queued-waypoint promotion and attack-move acquisition each visit
+        // every unit once.
+        counters.unit_scan_visits += 2 * self.units.len() as u64;
         for unit in &mut self.units {
             if unit.state == TacticalUnitState::Formed
                 && unit.destination.is_none()
@@ -1248,10 +1262,10 @@ impl TacticalBattle {
                 unit.interrupt_charge();
             }
         }
-        counters.snapshot_clones += 1;
-        counters.snapshot_unit_copies += self.units.len() as u64;
-        let snapshot = self.units.clone();
-        for (index, unit) in snapshot.iter().enumerate() {
+        // Acquisition reads only enemies' side, state and position, which this
+        // loop never changes, so it reads live units instead of a snapshot.
+        for index in 0..self.units.len() {
+            let unit = &self.units[index];
             if unit.state != TacticalUnitState::Formed
                 || unit.movement_mode != crate::MovementMode::AttackMove
             {
@@ -1262,6 +1276,7 @@ impl TacticalBattle {
                 self.units[index].movement_mode = crate::MovementMode::March;
                 continue;
             }
+            let units = &self.units;
             let radius = unit.attack_range_mm().max(5_000);
             let mut eligible = |enemy: &&TacticalUnit| {
                 counters.target_candidate_visits += 1;
@@ -1274,12 +1289,12 @@ impl TacticalBattle {
                         radius,
                     )
             };
-            let retained = snapshot
+            let retained = units
                 .iter()
                 .filter(&mut eligible)
                 .find(|enemy| Some(enemy.id.as_str()) == unit.engagement_target.as_deref());
             let target = retained.or_else(|| {
-                snapshot.iter().filter(&mut eligible).min_by(|left, right| {
+                units.iter().filter(&mut eligible).min_by(|left, right| {
                     point_distance_squared(unit.position, left.position)
                         .cmp(&point_distance_squared(unit.position, right.position))
                         .then_with(|| left.id.cmp(&right.id))
@@ -1293,70 +1308,109 @@ impl TacticalBattle {
         }
     }
 
+    /// Every unit moves against the state all units had when the phase began.
+    /// Instead of cloning the whole unit vector, a unit is copied only right
+    /// before its own step may change it; reads of other units go through
+    /// [`MovementBefore`], so idle units cost a visit but no copy.
     fn advance_movement_phase(&mut self, counters: &mut TacticalWorkCounters) {
         self.advance_movement_orders(counters);
-        counters.snapshot_clones += 1;
-        counters.snapshot_unit_copies += self.units.len() as u64;
-        let snapshot = self.units.clone();
+        let mut before = MovementBefore::default();
         for index in 0..self.units.len() {
             counters.movement_unit_visits += 1;
-            match snapshot[index].state {
-                TacticalUnitState::Formed => self.advance_formed_unit(counters, index, &snapshot),
-                TacticalUnitState::Routed => self.advance_routed_unit(counters, index, &snapshot),
+            if !movement_may_change(&self.units[index]) {
+                continue;
+            }
+            counters.snapshot_unit_copies += 1;
+            before.save(index, self.units[index].clone());
+            let unit = before.saved_unit(index);
+            match unit.state {
+                TacticalUnitState::Formed => {
+                    let target = unit
+                        .engagement_target
+                        .as_deref()
+                        .and_then(|target_id| {
+                            before
+                                .find(&self.units, target_id, counters)
+                                .map(TargetView::of)
+                        })
+                        .filter(|target| {
+                            !matches!(
+                                target.state,
+                                TacticalUnitState::Destroyed | TacticalUnitState::Escaped { .. }
+                            )
+                        });
+                    self.advance_formed_unit(counters, index, unit, target);
+                }
+                TacticalUnitState::Routed => {
+                    let nearest_enemy = before
+                        .units(&self.units)
+                        .filter(|candidate| {
+                            counters.target_candidate_visits += 1;
+                            candidate.side != unit.side
+                                && candidate.state == TacticalUnitState::Formed
+                        })
+                        .min_by(|left, right| {
+                            point_distance_squared(unit.position, left.position)
+                                .cmp(&point_distance_squared(unit.position, right.position))
+                                .then_with(|| left.id.cmp(&right.id))
+                        })
+                        .map(|enemy| enemy.position);
+                    self.advance_routed_unit(counters, index, unit, nearest_enemy);
+                }
                 TacticalUnitState::Withdrawing { routed } => {
-                    self.advance_withdrawing_unit(counters, index, &snapshot, routed)
+                    self.advance_withdrawing_unit(counters, index, unit, routed);
                 }
                 TacticalUnitState::Escaped { .. } | TacticalUnitState::Destroyed => {}
             }
         }
-        for index in 0..self.units.len() {
-            self.advance_charge(counters, index, &snapshot);
+        counters.unit_scan_visits += self.units.len() as u64;
+        // Charges read only their own previous charge and positions, never
+        // another unit's charge, so all are computed before any is written.
+        let charges: Vec<(usize, crate::CavalryChargeState)> = before
+            .units(&self.units)
+            .enumerate()
+            .filter(|(_, unit)| unit.charge.is_some())
+            .map(|(index, unit)| (index, self.next_charge(counters, index, unit, &before)))
+            .collect();
+        for (index, charge) in charges {
+            self.units[index].charge = Some(charge);
         }
     }
 
-    fn advance_charge(
-        &mut self,
+    /// The charge state of a unit that carried one when movement began.
+    fn next_charge(
+        &self,
         counters: &mut TacticalWorkCounters,
         index: usize,
-        snapshot: &[TacticalUnit],
-    ) {
+        before: &TacticalUnit,
+        before_units: &MovementBefore,
+    ) -> crate::CavalryChargeState {
         use crate::CavalryChargeState as Charge;
-        let before = &snapshot[index];
-        let Some(previous) = before.charge else {
-            return;
-        };
+        let previous = before
+            .charge
+            .expect("only units with a charge state advance it");
         if before.state != TacticalUnitState::Formed {
-            self.units[index].charge = Some(Charge::Ready);
-            return;
+            return Charge::Ready;
         }
         if let Charge::Recovering { ticks_remaining } = previous {
-            self.units[index].charge = Some(if ticks_remaining <= 1 {
+            return if ticks_remaining <= 1 {
                 Charge::Ready
             } else {
                 Charge::Recovering {
                     ticks_remaining: ticks_remaining - 1,
                 }
-            });
-            return;
+            };
         }
-        let target = before.engagement_target.as_deref().and_then(|id| {
-            snapshot.iter().find(|target| {
-                counters.target_candidate_visits += 1;
-                target.id == id && target.state == TacticalUnitState::Formed
-            })
-        });
+        let target = before
+            .engagement_target
+            .as_deref()
+            .and_then(|id| before_units.find(&self.units, id, counters))
+            .filter(|target| target.state == TacticalUnitState::Formed);
         let Some(target) = target else {
-            self.units[index].charge = Some(previous.interrupted());
-            return;
+            return previous.interrupted();
         };
         let next = self.units[index].position;
-        let target_position = self
-            .units
-            .iter()
-            .find(|unit| {
-                counters.target_candidate_visits += 1;
-                unit.id == target.id
-            })
+        let target_position = find_unit(&self.units, &target.id, counters)
             .expect("movement preserves units")
             .position;
         let intercepted = self.units.iter().any(|other| {
@@ -1383,8 +1437,7 @@ impl TacticalBattle {
                 && self.terrain.ground_cover_at(self.battlefield, next)
                     == crate::TacticalGroundCover::Open;
         if intercepted || !straight {
-            self.units[index].charge = Some(previous.interrupted());
-            return;
+            return previous.interrupted();
         }
         let displacement = next
             .x_mm
@@ -1400,8 +1453,7 @@ impl TacticalBattle {
             target_position,
             COMBAT_CONTACT_DISTANCE_MM,
         ) {
-            self.units[index].charge = Some(Charge::Contact { run_up_mm });
-            return;
+            return Charge::Contact { run_up_mm };
         }
         if next == before.position
             && !measured_points_within_distance(
@@ -1411,28 +1463,22 @@ impl TacticalBattle {
                 COMBAT_CONTACT_DISTANCE_MM,
             )
         {
-            self.units[index].charge = Some(previous.interrupted());
-            return;
+            return previous.interrupted();
         }
-        self.units[index].charge = Some(if run_up_mm >= crate::charge::CHARGE_RUN_UP_MM {
+        if run_up_mm >= crate::charge::CHARGE_RUN_UP_MM {
             Charge::Charging { run_up_mm }
         } else {
             Charge::Approaching { run_up_mm }
-        });
+        }
     }
 
     fn advance_formed_unit(
         &mut self,
         counters: &mut TacticalWorkCounters,
         index: usize,
-        snapshot: &[TacticalUnit],
+        unit: &TacticalUnit,
+        target: Option<TargetView>,
     ) {
-        let unit = &snapshot[index];
-        let target = unit
-            .engagement_target
-            .as_deref()
-            .and_then(|target_id| find_work_target(snapshot, target_id, counters))
-            .filter(|target| !target.is_destroyed() && !target.is_escaped());
         if let Some(target) = target
             && target.is_pursuit_target()
             && !measured_points_within_distance(
@@ -1515,10 +1561,9 @@ impl TacticalBattle {
         &mut self,
         counters: &mut TacticalWorkCounters,
         index: usize,
-        snapshot: &[TacticalUnit],
+        unit: &TacticalUnit,
         routed: bool,
     ) {
-        let unit = &snapshot[index];
         let edge = match unit.side {
             BattleSide::Attacker => 0,
             BattleSide::Defender => self.battlefield.width_mm,
@@ -1536,11 +1581,12 @@ impl TacticalBattle {
         let waypoint = self.measured_movement_waypoint(counters, unit.position, destination);
         let next = move_point_toward(unit.position, waypoint, speed);
         debug_assert!(self.is_passable_at(next));
+        let before_position = unit.position;
         let unit = &mut self.units[index];
         unit.position = next;
         if next.x_mm == edge {
             unit.state = TacticalUnitState::Escaped { routed };
-        } else if next != snapshot[index].position {
+        } else if next != before_position {
             unit.fatigue = unit
                 .fatigue
                 .saturating_add(if routed {
@@ -1556,22 +1602,10 @@ impl TacticalBattle {
         &mut self,
         counters: &mut TacticalWorkCounters,
         index: usize,
-        snapshot: &[TacticalUnit],
+        unit: &TacticalUnit,
+        nearest_enemy: Option<BattlePoint>,
     ) {
-        let unit = &snapshot[index];
-        let nearest_enemy = snapshot
-            .iter()
-            .filter(|candidate| {
-                counters.target_candidate_visits += 1;
-                candidate.side != unit.side && candidate.state == TacticalUnitState::Formed
-            })
-            .min_by(|left, right| {
-                point_distance_squared(unit.position, left.position)
-                    .cmp(&point_distance_squared(unit.position, right.position))
-                    .then_with(|| left.id.cmp(&right.id))
-            });
-
-        let Some(enemy) = nearest_enemy else {
+        let Some(enemy_position) = nearest_enemy else {
             return;
         };
         counters.terrain_speed_queries += 1;
@@ -1582,7 +1616,7 @@ impl TacticalBattle {
         );
         let desired = move_point_away(
             unit.position,
-            enemy.position,
+            enemy_position,
             route_speed,
             self.battlefield,
             unit.side,
@@ -1599,20 +1633,24 @@ impl TacticalBattle {
         }
     }
 
+    /// Resolves one pulse against the pulse-start unit state. Units are only
+    /// read until casualties are applied (spent ammunition is applied after
+    /// the volley and melee loops), so the pulse reads live units without a snapshot.
     fn resolve_combat_pulse(&mut self, counters: &mut TacticalWorkCounters) {
-        counters.snapshot_clones += 1;
-        counters.snapshot_unit_copies += self.units.len() as u64;
         counters.combat_pulses += 1;
-        let snapshot = self.units.clone();
+        let snapshot = &self.units;
         let mut pairs = BTreeSet::new();
-        for unit in &snapshot {
+        // Pair collection, the volley loop, and charge recovery each visit
+        // every unit once.
+        counters.unit_scan_visits += 3 * snapshot.len() as u64;
+        for unit in snapshot {
             if unit.state != TacticalUnitState::Formed {
                 continue;
             }
             let Some(target_id) = unit.engagement_target.as_deref() else {
                 continue;
             };
-            let Some(target) = find_work_target(&snapshot, target_id, counters) else {
+            let Some(target) = find_work_target(snapshot, target_id, counters) else {
                 continue;
             };
             if target.is_destroyed() || target.is_escaped() || target.side == unit.side {
@@ -1630,8 +1668,8 @@ impl TacticalBattle {
         let formed_contacts = pairs
             .iter()
             .filter(|(left_id, right_id)| {
-                let left = find_work_target(&snapshot, left_id, counters).unwrap();
-                let right = find_work_target(&snapshot, right_id, counters).unwrap();
+                let left = find_work_target(snapshot, left_id, counters).unwrap();
+                let right = find_work_target(snapshot, right_id, counters).unwrap();
                 left.state == TacticalUnitState::Formed
                     && right.state == TacticalUnitState::Formed
                     && measured_points_within_distance(
@@ -1654,7 +1692,8 @@ impl TacticalBattle {
         let mut engaged_units = BTreeSet::new();
         let mut consumed_charges = BTreeSet::new();
 
-        for attacker in &snapshot {
+        let mut spent_ammunition = Vec::new();
+        for attacker in snapshot {
             if attacker.state != TacticalUnitState::Formed
                 || attacker.attack_range_mm() <= COMBAT_CONTACT_DISTANCE_MM
                 || formed_contacts.contains_key(&attacker.id)
@@ -1664,7 +1703,7 @@ impl TacticalBattle {
             let Some(target_id) = attacker.engagement_target.as_deref() else {
                 continue;
             };
-            let Some(target) = find_work_target(&snapshot, target_id, counters) else {
+            let Some(target) = find_work_target(snapshot, target_id, counters) else {
                 continue;
             };
             if target.state != TacticalUnitState::Formed || target.side == attacker.side {
@@ -1683,10 +1722,8 @@ impl TacticalBattle {
             ) {
                 continue;
             }
-            if let Some(index) = self.unit_index(&attacker.id)
-                && let Some(ammunition) = &mut self.units[index].ammunition
-            {
-                ammunition.0 = ammunition.0.saturating_sub(1);
+            if attacker.ammunition.is_some() {
+                spent_ammunition.push(attacker.id.clone());
             }
             counters.ranged_volleys += 1;
             let losses = if attacker.stats().is_some() || target.stats().is_some() {
@@ -1715,8 +1752,8 @@ impl TacticalBattle {
 
         let mut contacts_assigned = BTreeMap::<String, u16>::new();
         for (left_id, right_id) in pairs {
-            let left = find_work_target(&snapshot, &left_id, counters).unwrap();
-            let right = find_work_target(&snapshot, &right_id, counters).unwrap();
+            let left = find_work_target(snapshot, &left_id, counters).unwrap();
+            let right = find_work_target(snapshot, &right_id, counters).unwrap();
             match (left.state, right.state) {
                 (TacticalUnitState::Formed, TacticalUnitState::Formed)
                     if measured_points_within_distance(
@@ -1806,6 +1843,14 @@ impl TacticalBattle {
             }
         }
 
+        for attacker_id in spent_ammunition {
+            if let Some(index) = self.unit_index(&attacker_id)
+                && let Some(ammunition) = &mut self.units[index].ammunition
+            {
+                ammunition.0 = ammunition.0.saturating_sub(1);
+            }
+        }
+
         for unit_id in engaged_units {
             if let Some(index) = self.unit_index(&unit_id) {
                 self.units[index].fatigue = self.units[index]
@@ -1868,26 +1913,25 @@ impl TacticalBattle {
         }
     }
 
-    fn clear_invalid_engagement_targets(&mut self) {
-        let states: BTreeMap<String, TacticalUnitState> = self
-            .units
-            .iter()
-            .map(|unit| (unit.id.clone(), unit.state))
+    fn clear_invalid_engagement_targets(&mut self, counters: &mut TacticalWorkCounters) {
+        let units = &self.units;
+        let invalid: Vec<usize> = (0..units.len())
+            .filter(|&index| {
+                let unit = &units[index];
+                let Some(target_id) = unit.engagement_target.as_deref() else {
+                    return false;
+                };
+                unit.state != TacticalUnitState::Formed
+                    || find_unit(units, target_id, counters).is_some_and(|target| {
+                        matches!(
+                            target.state,
+                            TacticalUnitState::Destroyed | TacticalUnitState::Escaped { .. }
+                        )
+                    })
+            })
             .collect();
-        for unit in &mut self.units {
-            if unit.state != TacticalUnitState::Formed {
-                unit.engagement_target = None;
-                continue;
-            }
-            let Some(target_id) = unit.engagement_target.as_deref() else {
-                continue;
-            };
-            if matches!(
-                states.get(target_id),
-                Some(TacticalUnitState::Destroyed | TacticalUnitState::Escaped { .. })
-            ) {
-                unit.engagement_target = None;
-            }
+        for index in invalid {
+            self.units[index].engagement_target = None;
         }
     }
 }
@@ -2471,15 +2515,113 @@ fn measured_points_within_distance(
     .overlaps()
 }
 
+/// Finds a unit by id in the id-ordered unit vector with one indexed lookup.
 fn find_work_target<'a>(
     units: &'a [TacticalUnit],
     id: &str,
     counters: &mut TacticalWorkCounters,
 ) -> Option<&'a TacticalUnit> {
-    units.iter().find(|unit| {
-        counters.target_candidate_visits += 1;
-        unit.id == id
-    })
+    find_unit(units, id, counters)
+}
+
+fn find_unit<'a>(
+    units: &'a [TacticalUnit],
+    id: &str,
+    counters: &mut TacticalWorkCounters,
+) -> Option<&'a TacticalUnit> {
+    counters.indexed_unit_lookups += 1;
+    units
+        .binary_search_by(|unit| unit.id.as_str().cmp(id))
+        .ok()
+        .map(|index| &units[index])
+}
+
+/// Whether a unit's movement step can change it. Idle formed units without
+/// fatigue to recover, and escaped or destroyed units, are left untouched.
+fn movement_may_change(unit: &TacticalUnit) -> bool {
+    match unit.state {
+        TacticalUnitState::Formed => {
+            unit.destination.is_some() || unit.engagement_target.is_some() || unit.fatigue > 0
+        }
+        TacticalUnitState::Routed | TacticalUnitState::Withdrawing { .. } => true,
+        TacticalUnitState::Escaped { .. } | TacticalUnitState::Destroyed => false,
+    }
+}
+
+/// Copy-on-write view of the unit vector as it was when a movement phase
+/// began. Units are saved in increasing index order right before their own
+/// step; every other unit is still unchanged in the live vector.
+#[derive(Default)]
+struct MovementBefore {
+    saved: Vec<(usize, TacticalUnit)>,
+}
+
+impl MovementBefore {
+    fn save(&mut self, index: usize, unit: TacticalUnit) {
+        debug_assert!(self.saved.last().is_none_or(|(last, _)| *last < index));
+        self.saved.push((index, unit));
+    }
+
+    fn saved_unit(&self, index: usize) -> &TacticalUnit {
+        let (saved_index, unit) = self.saved.last().expect("unit was just saved");
+        debug_assert_eq!(*saved_index, index);
+        unit
+    }
+
+    /// Every unit's phase-start state in index order, merging the saved copies
+    /// with the live vector in one linear pass (no per-unit search).
+    fn units<'a>(&'a self, live: &'a [TacticalUnit]) -> impl Iterator<Item = &'a TacticalUnit> {
+        let mut saved = self.saved.iter().peekable();
+        live.iter().enumerate().map(move |(index, unit)| {
+            match saved.next_if(|(saved_index, _)| *saved_index == index) {
+                Some((_, copy)) => copy,
+                None => unit,
+            }
+        })
+    }
+
+    /// One unit's phase-start state; a binary search over the saved copies,
+    /// used for single lookups only.
+    fn unit<'a>(&'a self, live: &'a [TacticalUnit], index: usize) -> &'a TacticalUnit {
+        self.saved
+            .binary_search_by_key(&index, |(saved, _)| *saved)
+            .map_or(&live[index], |position| &self.saved[position].1)
+    }
+
+    fn find<'a>(
+        &'a self,
+        live: &'a [TacticalUnit],
+        id: &str,
+        counters: &mut TacticalWorkCounters,
+    ) -> Option<&'a TacticalUnit> {
+        counters.indexed_unit_lookups += 1;
+        live.binary_search_by(|unit| unit.id.as_str().cmp(id))
+            .ok()
+            .map(|index| self.unit(live, index))
+    }
+}
+
+/// The parts of an engagement target a formed unit's movement reads.
+#[derive(Copy, Clone)]
+struct TargetView {
+    position: BattlePoint,
+    state: TacticalUnitState,
+}
+
+impl TargetView {
+    fn of(unit: &TacticalUnit) -> Self {
+        Self {
+            position: unit.position,
+            state: unit.state,
+        }
+    }
+
+    const fn is_pursuit_target(self) -> bool {
+        matches!(
+            self.state,
+            TacticalUnitState::Routed | TacticalUnitState::Withdrawing { .. }
+        )
+    }
 }
 
 fn point_distance_squared(left: BattlePoint, right: BattlePoint) -> u128 {

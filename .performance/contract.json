@@ -32,8 +32,17 @@
           "unit": "clones",
           "direction": "lower",
           "signal": "operation-count",
+          "blocking": true,
+          "budget": {"max": 0},
+          "notes": "Whole unit-vector clones during tick advancement. Movement uses copy-on-write before-state and combat pulses read live units, so recurring ticks clone no vector (#200)."
+        },
+        {
+          "name": "unit_snapshot_copies",
+          "unit": "units",
+          "direction": "lower",
+          "signal": "operation-count",
           "blocking": false,
-          "notes": "Instrumentation priority: advance_movement_phase currently snapshots the complete unit vector each tick and combat pulses snapshot again; make this work visible before deciding whether retained/indexed state should replace it."
+          "notes": "Individual units copied right before their own movement step may change them; idle units are not copied."
         },
         {
           "name": "target_lookup_evaluations",
@@ -41,7 +50,39 @@
           "direction": "lower",
           "signal": "operation-count",
           "blocking": false,
-          "notes": "Instrumentation priority for engagement/routing scaling; exact tactical semantics remain authoritative."
+          "notes": "Remaining linear candidate scans: attack-move acquisition, routed nearest-enemy search and cavalry charge interception. Id lookups are indexed and counted as indexed_unit_lookups."
+        },
+        {
+          "name": "indexed_unit_lookups",
+          "unit": "lookups",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": false,
+          "notes": "Binary-search unit lookups by id; one per engagement-target resolution."
+        }
+      ]
+    },
+    {
+      "id": "tactical-operation-scaling",
+      "kind": "scaling",
+      "description": "Movement, combat-pulse and single-retarget ticks over a fixed active set (one melee pair, one marching unit) while idle unrelated units grow from 8 to 256; enforced by crates/medieval-core/tests/tactical_operation_scaling.rs.",
+      "dimensions": {
+        "active_units": 3,
+        "unrelated_units": [8, 64, 256]
+      },
+      "correctnessEvidence": [
+        "active units reach identical state at every unrelated population",
+        "every work counter except the two declared linear unit scans (movement_unit_visits, unit_scan_visits) is identical across populations",
+        "no whole unit-vector clone during recurring ticks"
+      ],
+      "metrics": [
+        {
+          "name": "unrelated_unit_work_growth",
+          "unit": "operations",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": false,
+          "notes": "Asserted to be zero for every counter except movement_unit_visits and unit_scan_visits, which are bounded per unit instead, by the integration test rather than emitted by the smoke command; adopt coding-tooling#300 growth declarations when available."
         }
       ]
     },

@@ -40,12 +40,23 @@ advancing one tick at a time.
 
 - `ticks` and `movementUnitVisits` count executed ticks and the movement phase's
   unit visits, including units that require no movement.
-- `snapshotClones` and `snapshotUnitCopies` count full unit-vector clones during
-  movement/order/combat phases and their copied element volume. They do not
-  measure bytes, allocations inside cloned units, or retained heap memory.
-- `targetCandidateVisits` counts actual visits in linear target lookup,
-  attack-move acquisition, charge interception, and routing scans. Map lookups
-  and unrelated validation scans are outside this metric.
+- `unitScanVisits` counts per-unit visits of the other full unit scans: queued
+  order promotion, attack-move acquisition, the charge pass, target clearing
+  and completion checks every tick, plus the combat pulse's pair, volley and
+  charge-recovery loops and siege capture. Like `movementUnitVisits`, it is a
+  declared linear cost in total units.
+- `snapshotClones` counts whole unit-vector clones during tick advancement and
+  must stay zero. `snapshotUnitCopies` counts individual units copied by the
+  movement phase's copy-on-write before-state: a unit is copied right before
+  its own step only when that step may change it (it has a destination or
+  engagement target, has fatigue to recover, or is routed/withdrawing). Combat
+  pulses read live units because nothing changes until casualties, fatigue and
+  spent ammunition are applied after the volley and melee loops. Neither
+  counter measures bytes or allocations inside copied units.
+- `targetCandidateVisits` counts visits in the remaining linear candidate scans:
+  attack-move acquisition, routed nearest-enemy search, and cavalry charge
+  interception. `indexedUnitLookups` counts id lookups, which binary-search the
+  id-ordered unit vector. Unrelated validation scans are outside both metrics.
 - `proximityQueries` counts tactical distance requests; `physicsContactQueries`
   counts requests that pass the adapter's axis rejection and call the shared
   physics kernel. Physics internals remain upstream-owned.
@@ -55,19 +66,41 @@ advancing one tick at a time.
   `pursuitContacts` distinguish pulse processing, unique engagement pairs, and
   actual combat work. A melee contact is one pair, rather than two damage calls.
 
-Movement visits and snapshot volume grow linearly with units and ticks. Current
-linear target lookups can produce quadratic candidate work as unit count grows.
+Movement visits grow linearly with units and ticks; that per-tick visit scan is
+the declared linear cost of a tick. Copies follow the units that move, fight, or
+recover. Id lookups are logarithmic; the remaining candidate scans are linear
+per scanning unit and grow quadratically only when many units scan at once.
 Path request count follows moving units and charge checks; each request may do
 additional terrain/siege work. Combat scans follow pulse count and engaged
 units, while exact physics calls depend on proximity. These metrics expose
 composition growth without duplicating upstream microbenchmarks.
+
+## Operation scaling contracts
+
+`tests/tactical_operation_scaling.rs` keeps one active set fixed — a melee pair
+in contact and one marching unit — and adds 8, 64, and 256 idle unrelated
+units. For movement ticks, the combat-pulse tick, and the tick after one
+retarget, every counter except `movementUnitVisits` must be identical across
+populations (`movementUnitVisits` and `unitScanVisits` are the declared linear
+scans and are bounded per unit instead), no whole unit vector is cloned, only active units are copied, and
+the active units reach identical state. A regression back to whole-battle
+clones or linear id lookups fails these assertions.
+
+Single-unit move, facing, engagement and formation orders find units by binary
+search and do not copy the battle. Multi-unit formation and group orders still
+apply to a cloned candidate battle so a rejected order leaves the battle
+unchanged; that copy is a deliberate transactional cost of one command, not of
+recurring ticks. A full `BattleRenderSnapshot` remains allowed to scale with
+its output.
 
 ## Regression gates and reproducibility
 
 `tests/fixtures/tactical-work-budgets-v1.json` records the baseline core revision,
 fixture revision, and per-scenario subsystem limits. Nonzero limits allow ten
 percent above the recorded work, rounded up; zero-work metrics remain zero.
-No elapsed time appears in that artifact. Review a deliberate budget change
+No elapsed time appears in that artifact. The snapshot and lookup limits were
+re-recorded after #200 replaced vector snapshots and linear id lookups; the
+other limits keep the baseline revision. Review a deliberate budget change
 alongside its fixture or algorithm change; do not regenerate limits merely to
 make a failing check pass.
 

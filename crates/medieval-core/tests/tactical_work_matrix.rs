@@ -33,10 +33,8 @@ fn scenarios_preserve_state_and_counters_across_replay_chunking_and_serializatio
         assert_eq!(chunked, measured);
         assert_eq!(totals, serde_json::to_value(work).unwrap());
         assert_eq!(work.ticks, measured.tick());
-        assert_eq!(
-            work.snapshot_unit_copies,
-            work.snapshot_clones * measured.units().len() as u64
-        );
+        assert_eq!(work.snapshot_clones, 0);
+        assert!(work.snapshot_unit_copies <= work.movement_unit_visits);
         assert_eq!(
             work.movement_unit_visits,
             work.ticks * measured.units().len() as u64
