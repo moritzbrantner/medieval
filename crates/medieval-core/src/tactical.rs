@@ -200,6 +200,10 @@ pub struct TacticalUnit {
     )]
     queued_movements: Vec<crate::MovementWaypoint>,
     engagement_target: Option<String>,
+    /// Explicit order to assault the siege gate. Serialized only while set so
+    /// documents without gate assaults keep their exact shape.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    gate_attack: bool,
     fatigue: u16,
     morale: u16,
     state: TacticalUnitState,
@@ -265,6 +269,7 @@ impl TacticalUnit {
             movement_mode: crate::MovementMode::March,
             queued_movements: Vec::new(),
             engagement_target: None,
+            gate_attack: false,
             fatigue: 0,
             morale: MAX_TACTICAL_MORALE,
             state: TacticalUnitState::Formed,
@@ -466,6 +471,18 @@ impl TacticalUnit {
         self.engagement_target.as_deref()
     }
 
+    /// Whether the unit holds an order to assault the siege gate.
+    #[must_use]
+    pub const fn is_attacking_gate(&self) -> bool {
+        self.gate_attack
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn with_gate_attack_order(mut self) -> Self {
+        self.gate_attack = true;
+        self
+    }
+
     #[must_use]
     pub const fn fatigue(&self) -> u16 {
         self.fatigue
@@ -609,7 +626,13 @@ impl From<TacticalBattleWire> for TacticalBattle {
             tick: wire.tick,
             battlefield: wire.battlefield,
             terrain: wire.terrain,
-            siege: wire.siege,
+            siege: wire.siege.map(|mut siege| {
+                // A gate destroyed before integrity was recorded has none left.
+                if siege.gate_state == SiegeGateState::Destroyed {
+                    siege.gate_integrity = 0;
+                }
+                siege
+            }),
             campaign_seed: wire.campaign_seed,
             completion_rules: wire.completion_rules,
             state: wire.state,
@@ -844,6 +867,38 @@ impl TacticalBattle {
         self.set_siege_gate_state(SiegeGateState::Destroyed)
     }
 
+    /// Orders a formed attacker unit to assault the closed siege gate. The
+    /// unit approaches its own side of the gate like an engagement order and
+    /// strikes it on each combat pulse while within reach; the core alone
+    /// applies the damage and the destruction. A layout has exactly one gate.
+    pub fn issue_gate_attack_order(&mut self, unit_id: &str) -> Result<(), TacticalError> {
+        self.ensure_running()?;
+        let Some(siege) = self.siege else {
+            return Err(TacticalError::NotSiegeBattle);
+        };
+        let index = self
+            .unit_index(unit_id)
+            .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
+        self.ensure_can_receive_orders(index)?;
+        if self.units[index].side != BattleSide::Attacker {
+            return Err(TacticalError::FriendlyGateAttack(unit_id.to_owned()));
+        }
+        if siege.gate_state != SiegeGateState::Closed {
+            return Err(TacticalError::SiegeGateNotClosed);
+        }
+        let unit = &mut self.units[index];
+        if !unit.gate_attack {
+            unit.interrupt_charge();
+        }
+        unit.destination = None;
+        unit.queued_movements.clear();
+        unit.movement_mode = crate::MovementMode::March;
+        unit.arrival_facing = None;
+        unit.engagement_target = None;
+        unit.gate_attack = true;
+        Ok(())
+    }
+
     fn set_siege_gate_state(&mut self, gate_state: SiegeGateState) -> Result<(), TacticalError> {
         self.ensure_running()?;
         let Some(siege) = &mut self.siege else {
@@ -859,6 +914,14 @@ impl TacticalBattle {
             return Err(TacticalError::SiegeExitInUse);
         }
         siege.gate_state = gate_state;
+        if gate_state == SiegeGateState::Destroyed {
+            siege.gate_integrity = 0;
+        }
+        if gate_state != SiegeGateState::Closed {
+            for unit in &mut self.units {
+                unit.gate_attack = false;
+            }
+        }
         Ok(())
     }
 
@@ -888,6 +951,7 @@ impl TacticalBattle {
                 routed: unit.is_routed(),
             };
             unit.engagement_target = None;
+            unit.gate_attack = false;
             unit.arrival_facing = None;
             unit.queued_movements.clear();
             unit.movement_mode = crate::MovementMode::March;
@@ -987,6 +1051,7 @@ impl TacticalBattle {
         let unit = &mut self.units[unit_index];
         unit.interrupt_charge();
         unit.engagement_target = None;
+        unit.gate_attack = false;
         unit.queued_movements.clear();
         unit.movement_mode = crate::MovementMode::March;
         unit.arrival_facing = None;
@@ -1062,6 +1127,7 @@ impl TacticalBattle {
         unit.queued_movements.clear();
         unit.movement_mode = crate::MovementMode::March;
         unit.arrival_facing = None;
+        unit.gate_attack = false;
         unit.engagement_target = Some(target_unit_id.to_owned());
         Ok(())
     }
@@ -1123,7 +1189,12 @@ impl TacticalBattle {
             {
                 self.resolve_combat_pulse(&mut counters);
                 if let Some(siege) = &mut self.siege {
-                    counters.unit_scan_visits += self.units.len() as u64;
+                    counters.unit_scan_visits += 2 * self.units.len() as u64;
+                    if siege.advance_gate_assault(&self.units) {
+                        for unit in &mut self.units {
+                            unit.gate_attack = false;
+                        }
+                    }
                     siege.advance_capture(&self.units);
                 }
             }
@@ -1495,11 +1566,20 @@ impl TacticalBattle {
             return;
         }
 
+        let gate_attack_position = self.siege.filter(|_| unit.gate_attack).map(|siege| {
+            counters.target_candidate_visits += 1;
+            if siege.within_gate_attack_distance(unit.position) {
+                unit.position
+            } else {
+                siege.gate_attack_position(unit.position)
+            }
+        });
         let destination = if unit.movement_mode == crate::MovementMode::AttackMove {
             target.map(|target| target.position).or(unit.destination)
         } else {
             unit.destination
                 .or_else(|| target.map(|target| target.position))
+                .or(gate_attack_position)
         };
         let Some(destination) = destination else {
             self.units[index].fatigue = self.units[index]
@@ -1511,13 +1591,17 @@ impl TacticalBattle {
         let engagement_stop_distance = target
             .filter(|target| target.state == TacticalUnitState::Formed)
             .map_or(COMBAT_CONTACT_DISTANCE_MM, |_| unit.attack_range_mm());
-        if unit.engagement_target.is_some()
-            && measured_points_within_distance(
-                counters,
-                unit.position,
-                destination,
-                engagement_stop_distance,
-            )
+        let holding_at_gate = unit.destination.is_none()
+            && unit.engagement_target.is_none()
+            && gate_attack_position == Some(unit.position);
+        if holding_at_gate
+            || (unit.engagement_target.is_some()
+                && measured_points_within_distance(
+                    counters,
+                    unit.position,
+                    destination,
+                    engagement_stop_distance,
+                ))
         {
             self.units[index].fatigue = self.units[index]
                 .fatigue
@@ -1882,6 +1966,7 @@ impl TacticalBattle {
                 self.units[index].queued_movements.clear();
                 self.units[index].movement_mode = crate::MovementMode::March;
                 self.units[index].engagement_target = None;
+                self.units[index].gate_attack = false;
                 continue;
             }
 
@@ -1899,6 +1984,7 @@ impl TacticalBattle {
                     self.units[index].queued_movements.clear();
                     self.units[index].movement_mode = crate::MovementMode::March;
                     self.units[index].engagement_target = None;
+                    self.units[index].gate_attack = false;
                 }
             }
         }
@@ -1932,6 +2018,14 @@ impl TacticalBattle {
             .collect();
         for index in invalid {
             self.units[index].engagement_target = None;
+        }
+        let gate_closed = self
+            .siege
+            .is_some_and(|siege| siege.gate_state == SiegeGateState::Closed);
+        for unit in &mut self.units {
+            if unit.gate_attack && (!gate_closed || unit.state != TacticalUnitState::Formed) {
+                unit.gate_attack = false;
+            }
         }
     }
 }
@@ -2005,6 +2099,10 @@ pub enum TacticalError {
     TargetDestroyed(String),
     NotSiegeBattle,
     SiegeExitInUse,
+    /// Only attackers may assault the gate; defenders never damage their own.
+    FriendlyGateAttack(String),
+    /// Only a standing, closed gate can be assaulted.
+    SiegeGateNotClosed,
 }
 
 impl fmt::Display for TacticalError {
@@ -2138,6 +2236,13 @@ impl fmt::Display for TacticalError {
                 write!(formatter, "withdrawing units still need the siege exit")
             }
             Self::NotSiegeBattle => write!(formatter, "battle has no siege state"),
+            Self::FriendlyGateAttack(unit_id) => write!(
+                formatter,
+                "tactical unit {unit_id} cannot attack its own side's siege gate"
+            ),
+            Self::SiegeGateNotClosed => {
+                write!(formatter, "only a closed siege gate can be attacked")
+            }
         }
     }
 }
@@ -2541,7 +2646,10 @@ fn find_unit<'a>(
 fn movement_may_change(unit: &TacticalUnit) -> bool {
     match unit.state {
         TacticalUnitState::Formed => {
-            unit.destination.is_some() || unit.engagement_target.is_some() || unit.fatigue > 0
+            unit.destination.is_some()
+                || unit.engagement_target.is_some()
+                || unit.gate_attack
+                || unit.fatigue > 0
         }
         TacticalUnitState::Routed | TacticalUnitState::Withdrawing { .. } => true,
         TacticalUnitState::Escaped { .. } | TacticalUnitState::Destroyed => false,
