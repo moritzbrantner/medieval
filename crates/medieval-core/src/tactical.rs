@@ -1364,13 +1364,15 @@ impl TacticalBattle {
             }
         }
         counters.unit_scan_visits += self.units.len() as u64;
-        let charging: Vec<usize> = before
+        // Charges read only their own previous charge and positions, never
+        // another unit's charge, so all are computed before any is written.
+        let charges: Vec<(usize, crate::CavalryChargeState)> = before
             .units(&self.units)
             .enumerate()
-            .filter_map(|(index, unit)| unit.charge.is_some().then_some(index))
+            .filter(|(_, unit)| unit.charge.is_some())
+            .map(|(index, unit)| (index, self.next_charge(counters, index, unit, &before)))
             .collect();
-        for index in charging {
-            let charge = self.next_charge(counters, index, &before);
+        for (index, charge) in charges {
             self.units[index].charge = Some(charge);
         }
     }
@@ -1380,10 +1382,10 @@ impl TacticalBattle {
         &self,
         counters: &mut TacticalWorkCounters,
         index: usize,
+        before: &TacticalUnit,
         before_units: &MovementBefore,
     ) -> crate::CavalryChargeState {
         use crate::CavalryChargeState as Charge;
-        let before = before_units.unit(&self.units, index);
         let previous = before
             .charge
             .expect("only units with a charge state advance it");
