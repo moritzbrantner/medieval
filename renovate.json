@@ -1,0 +1,12 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "description": "Hold gtk/gdk at 0.18 while tauri 2 links gtk-rs 0.18; mixing 0.18 and 0.19 does not resolve. Remove once tauri moves to gtk-rs 0.19+.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["gtk", "gdk"],
+      "allowedVersions": "<0.19"
+    }
+  ]
+}
