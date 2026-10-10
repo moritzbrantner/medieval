@@ -476,12 +476,23 @@ impl SiegeBattleState {
             return true;
         }
         // Where the line between the two positions crosses the wall center
-        // line; opposite sides guarantee distinct x coordinates.
+        // line, compared exactly as a rational (no truncation), with the
+        // points ordered by x so the result never depends on argument order.
+        // Opposite sides guarantee distinct x coordinates.
+        let (west, east) = if left.x_mm < right.x_mm {
+            (left, right)
+        } else {
+            (right, left)
+        };
         let wall_x = i128::from(gate.center().x_mm);
-        let (lx, ly) = (i128::from(left.x_mm), i128::from(left.y_mm));
-        let (rx, ry) = (i128::from(right.x_mm), i128::from(right.y_mm));
-        let crossing_y = ly + (ry - ly) * (wall_x - lx) / (rx - lx);
-        !(i128::from(gate.min_y_mm)..=i128::from(gate.max_y_mm)).contains(&crossing_y)
+        let (wx, wy) = (i128::from(west.x_mm), i128::from(west.y_mm));
+        let (ex, ey) = (i128::from(east.x_mm), i128::from(east.y_mm));
+        let run = ex - wx;
+        // crossing_y * run, with run > 0.
+        let crossing_scaled = wy * run + (ey - wy) * (wall_x - wx);
+        let within_gate = i128::from(gate.min_y_mm) * run <= crossing_scaled
+            && crossing_scaled <= i128::from(gate.max_y_mm) * run;
+        !within_gate
     }
 
     /// Per tower in layout order: the index into `units` of the staffed
@@ -835,6 +846,26 @@ mod tests {
                 BattlePoint::new(inside, wall_y)
             ));
         }
+    }
+
+    #[test]
+    fn wall_separation_is_exact_and_symmetric_at_a_gate_corner() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let mut siege = SiegeBattleState::test_siege(battlefield);
+        siege.gate_state = SiegeGateState::Open;
+        let gate = siege.layout.gate;
+        let wall_x = gate.center().x_mm;
+        // Crosses the wall line half a millimetre outside the gate's lower bound.
+        // Equidistant from the wall line, just beyond the wall on either side.
+        let half = (wall_x - gate.min_x_mm).max(gate.max_x_mm - wall_x) + 1;
+        let west = BattlePoint::new(wall_x - half, gate.min_y_mm);
+        let east = BattlePoint::new(wall_x + half, gate.min_y_mm - 1);
+        assert!(siege.wall_separates(west, east));
+        assert!(siege.wall_separates(east, west));
+        // Exactly on the bound stays inside the gate in both orders.
+        let on_bound = BattlePoint::new(wall_x + half, gate.min_y_mm);
+        assert!(!siege.wall_separates(west, on_bound));
+        assert!(!siege.wall_separates(on_bound, west));
     }
 
     #[test]
