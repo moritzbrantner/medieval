@@ -2,8 +2,9 @@ use std::{cell::RefCell, cmp::Ordering, collections::BTreeSet};
 
 use medieval_core::{
     BattlePoint, BattleSide, BattlefieldLocation, DeploymentZone, FlatBattlefield, Formation,
-    TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalBattleState, TacticalGroundCover,
-    TacticalTerrainCell, TacticalTerrainProfile, TacticalUnit, UnitKind,
+    MovementMode, SIEGE_CAPTURE_MAX_PROGRESS, TACTICAL_TICKS_PER_SECOND, TacticalBattle,
+    TacticalBattleState, TacticalGroundCover, TacticalTerrainCell, TacticalTerrainProfile,
+    TacticalUnit, UnitKind,
 };
 use medieval_renderer::{BattleRenderSnapshot, GpuBattleRenderer};
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,11 @@ mod controls;
 use controls::{TacticalControlRequest, TacticalControls};
 
 const MAX_FRAME_DELTA_MS: f64 = 250.0;
+/// Tick budget per frame at 1×; the scheduler scales it with the simulation
+/// speed so a fast speed is not silently capped back towards 1×.
 const MAX_TICKS_PER_FRAME: u32 = 5;
+const PLAYER_SIDE: BattleSide = BattleSide::Attacker;
+const OPPONENT_SIDE: BattleSide = BattleSide::Defender;
 const OPPONENT_REPLAN_TICKS: u64 = TACTICAL_TICKS_PER_SECOND as u64;
 const PICK_PADDING_PX: f64 = 14.0;
 const PICK_FALLBACK_RADIUS_PX: f64 = 44.0;
@@ -34,6 +39,44 @@ const CLEAR_COLOR: wgpu::Color = wgpu::Color {
 
 thread_local! {
     static SANDBOX: RefCell<Option<BrowserSandbox>> = const { RefCell::new(None) };
+}
+
+/// Documented single-player simulation speeds. Speed (like pause) only changes
+/// how many fixed ticks the frame scheduler runs for a span of wall time; every
+/// tick still runs the same core rules, so simulation truth at a tick is the
+/// same at every speed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SimulationSpeed {
+    Half,
+    #[default]
+    Normal,
+    Double,
+    Quadruple,
+}
+
+impl SimulationSpeed {
+    const ALL: [Self; 4] = [Self::Half, Self::Normal, Self::Double, Self::Quadruple];
+
+    const fn multiplier(self) -> f64 {
+        match self {
+            Self::Half => 0.5,
+            Self::Normal => 1.0,
+            Self::Double => 2.0,
+            Self::Quadruple => 4.0,
+        }
+    }
+
+    fn from_multiplier(multiplier: f64) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|speed| speed.multiplier() == multiplier)
+            .ok_or_else(|| format!("unsupported simulation speed {multiplier}; use 0.5, 1, 2 or 4"))
+    }
+
+    /// Ticks the scheduler may run in one frame at this speed.
+    fn max_ticks_per_frame(self) -> u32 {
+        (f64::from(MAX_TICKS_PER_FRAME) * self.multiplier()).ceil() as u32
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -139,9 +182,13 @@ struct SandboxStatus {
     terrain_vertices: u32,
     battle_state: TacticalBattleState,
     paused: bool,
+    speed_multiplier: f64,
+    player_side: BattleSide,
+    opponent_side: BattleSide,
     can_withdraw: bool,
     outcome: Option<&'static str>,
     selected_units: Vec<String>,
+    control_groups: Vec<ControlGroupStatus>,
     attack_move_armed: bool,
     deployment_zones: [DeploymentZone; 2],
     battlefield_location: BattlefieldLocation,
@@ -150,8 +197,51 @@ struct SandboxStatus {
     river_cells: Vec<TacticalTerrainCell>,
     river_crossing_cells: Vec<TacticalTerrainCell>,
     siege: Option<serde_json::Value>,
+    siege_capture_max_progress: u16,
     camera: CameraStatus,
     units: Vec<UnitStatus>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ControlGroupStatus {
+    group: u8,
+    unit_ids: Vec<String>,
+}
+
+/// The order a unit is currently carrying out, derived from core unit state.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UnitOrderStatus {
+    kind: &'static str,
+    target_unit_id: Option<String>,
+}
+
+fn unit_order_status(unit: &TacticalUnit) -> UnitOrderStatus {
+    let kind = if unit.is_destroyed() {
+        "destroyed"
+    } else if unit.is_escaped() {
+        "escaped"
+    } else if unit.is_withdrawing() {
+        "withdraw"
+    } else if unit.is_routed() {
+        "rout"
+    } else if unit.engagement_target().is_some() {
+        "engage"
+    } else if unit.destination().is_some() {
+        match unit.movement_mode() {
+            MovementMode::AttackMove => "attackMove",
+            MovementMode::March => "move",
+        }
+    } else {
+        "hold"
+    };
+    UnitOrderStatus {
+        kind,
+        target_unit_id: (kind == "engage")
+            .then(|| unit.engagement_target().map(str::to_owned))
+            .flatten(),
+    }
 }
 
 #[derive(Serialize)]
@@ -196,6 +286,7 @@ struct UnitStatus {
     engagement_target: Option<String>,
     destination: Option<BattlePoint>,
     movement_mode: medieval_core::MovementMode,
+    order: UnitOrderStatus,
     queued_movements: Vec<medieval_core::MovementWaypoint>,
     x_mm: u32,
     y_mm: u32,
@@ -223,6 +314,7 @@ struct BrowserSandbox {
     tick_accumulator: f64,
     last_opponent_plan_tick: u64,
     paused: bool,
+    speed: SimulationSpeed,
     initial_army: SandboxArmySelection,
     initial_campaign_seed: Option<medieval_core::TacticalBattleSeed>,
 }
@@ -271,7 +363,7 @@ impl BrowserSandbox {
             None => sample_battle(initial_army, location)?,
         };
         drive_opponent(&mut battle)?;
-        let controls = TacticalControls::new(&battle, BattleSide::Attacker);
+        let controls = TacticalControls::new(&battle, PLAYER_SIDE);
         let snapshot = BattleRenderSnapshot::capture(&battle, &controls.render_view(&battle));
         let mut renderer = GpuBattleRenderer::new(&device, config.format);
         renderer.upload_snapshot(&device, &queue, &snapshot);
@@ -288,6 +380,7 @@ impl BrowserSandbox {
             tick_accumulator: 0.0,
             last_opponent_plan_tick: 0,
             paused: false,
+            speed: SimulationSpeed::default(),
             initial_army,
             initial_campaign_seed: campaign_seed,
         };
@@ -305,7 +398,7 @@ impl BrowserSandbox {
         }
         let mut battle = sample_battle(self.initial_army, location)?;
         drive_opponent(&mut battle)?;
-        self.controls = TacticalControls::new(&battle, BattleSide::Attacker);
+        self.controls = TacticalControls::new(&battle, PLAYER_SIDE);
         self.battle = battle;
         self.last_frame_ms = None;
         self.tick_accumulator = 0.0;
@@ -319,27 +412,23 @@ impl BrowserSandbox {
             return Err("animation timestamp must be finite".to_owned());
         }
         let previous = self.last_frame_ms.replace(timestamp_ms);
-        if !self.paused {
-            if let Some(previous) = previous {
-                let elapsed_ms = (timestamp_ms - previous).clamp(0.0, MAX_FRAME_DELTA_MS);
-                self.tick_accumulator +=
-                    elapsed_ms * f64::from(TACTICAL_TICKS_PER_SECOND) / 1_000.0;
-                let pending_ticks = (self.tick_accumulator.floor() as u32).min(MAX_TICKS_PER_FRAME);
-                if pending_ticks > 0 {
-                    self.tick_accumulator -= f64::from(pending_ticks);
-                    self.battle.advance_ticks(pending_ticks);
-                    if self
-                        .battle
-                        .tick()
-                        .saturating_sub(self.last_opponent_plan_tick)
-                        >= OPPONENT_REPLAN_TICKS
-                    {
-                        drive_opponent(&mut self.battle)?;
-                        self.last_opponent_plan_tick = self.battle.tick();
-                    }
-                    if self.outcome().is_some() {
-                        self.paused = true;
-                    }
+        if !self.paused
+            && let Some(previous) = previous
+        {
+            let elapsed_ms = (timestamp_ms - previous).clamp(0.0, MAX_FRAME_DELTA_MS);
+            self.tick_accumulator += elapsed_ms * f64::from(TACTICAL_TICKS_PER_SECOND) / 1_000.0
+                * self.speed.multiplier();
+            let scheduled_ticks =
+                (self.tick_accumulator.floor() as u32).min(self.speed.max_ticks_per_frame());
+            if scheduled_ticks > 0 {
+                self.tick_accumulator -= f64::from(scheduled_ticks);
+                run_ticks(
+                    &mut self.battle,
+                    &mut self.last_opponent_plan_tick,
+                    scheduled_ticks,
+                )?;
+                if self.outcome().is_some() {
+                    self.paused = true;
                 }
             }
         }
@@ -495,6 +584,10 @@ impl BrowserSandbox {
         self.last_frame_ms = None;
     }
 
+    fn set_speed(&mut self, speed: SimulationSpeed) {
+        self.speed = speed;
+    }
+
     fn snapshot(&self) -> BattleRenderSnapshot {
         BattleRenderSnapshot::capture(&self.battle, &self.controls.render_view(&self.battle))
     }
@@ -576,6 +669,7 @@ impl BrowserSandbox {
                     engagement_target: unit.engagement_target().map(str::to_owned),
                     destination: unit.destination(),
                     movement_mode: unit.movement_mode(),
+                    order: unit_order_status(unit),
                     queued_movements: unit.queued_movements().to_vec(),
                     x_mm: position.x_mm,
                     y_mm: position.y_mm,
@@ -596,9 +690,18 @@ impl BrowserSandbox {
             terrain_vertices: self.renderer.terrain_vertex_count(),
             battle_state: self.battle.state(),
             paused: self.paused,
-            can_withdraw: self.battle.can_withdraw(BattleSide::Attacker),
+            speed_multiplier: self.speed.multiplier(),
+            player_side: PLAYER_SIDE,
+            opponent_side: OPPONENT_SIDE,
+            can_withdraw: self.battle.can_withdraw(PLAYER_SIDE),
             outcome: self.outcome(),
             selected_units: selected.into_iter().map(str::to_owned).collect(),
+            control_groups: self
+                .controls
+                .control_groups(&self.battle)
+                .into_iter()
+                .map(|(group, unit_ids)| ControlGroupStatus { group, unit_ids })
+                .collect(),
             attack_move_armed: self.controls.attack_move_armed(),
             deployment_zones: self.battle.deployment_zones(),
             battlefield_location: terrain.location(),
@@ -607,6 +710,7 @@ impl BrowserSandbox {
             river_cells: terrain.river_cells().to_vec(),
             river_crossing_cells: terrain.river_crossing_cells().to_vec(),
             siege,
+            siege_capture_max_progress: SIEGE_CAPTURE_MAX_PROGRESS,
             camera: CameraStatus {
                 target_x_mm: snapshot.camera.target_x_mm(),
                 target_z_mm: snapshot.camera.target_z_mm(),
@@ -838,6 +942,32 @@ fn unit(
         BattleSide::Attacker => medieval_core::Facing::east(),
         BattleSide::Defender => medieval_core::Facing::west(),
     })
+}
+
+/// Runs `ticks` fixed simulation ticks. Batches are split at opponent
+/// replanning boundaries so the same tick sees the same opponent orders no
+/// matter how the frame scheduler grouped ticks into frames.
+fn run_ticks(
+    battle: &mut TacticalBattle,
+    last_opponent_plan_tick: &mut u64,
+    ticks: u32,
+) -> Result<(), String> {
+    let mut remaining = ticks;
+    while remaining > 0 && battle.state() == TacticalBattleState::Running {
+        let until_replan = (*last_opponent_plan_tick + OPPONENT_REPLAN_TICKS)
+            .saturating_sub(battle.tick())
+            .max(1);
+        let pending_ticks = remaining.min(u32::try_from(until_replan).unwrap_or(u32::MAX));
+        battle.advance_ticks(pending_ticks);
+        remaining -= pending_ticks;
+        if battle.state() == TacticalBattleState::Running
+            && battle.tick().saturating_sub(*last_opponent_plan_tick) >= OPPONENT_REPLAN_TICKS
+        {
+            drive_opponent(battle)?;
+            *last_opponent_plan_tick = battle.tick();
+        }
+    }
+    Ok(())
 }
 
 fn drive_opponent(battle: &mut TacticalBattle) -> Result<(), String> {
@@ -1218,6 +1348,17 @@ pub fn battle_sandbox_set_paused(paused: bool) -> Result<String, JsValue> {
     })
 }
 
+/// Selects a documented simulation speed (0.5, 1, 2 or 4). Speed only changes
+/// tick scheduling in [`BrowserSandbox::frame`].
+#[wasm_bindgen]
+pub fn battle_sandbox_set_speed(multiplier: f64) -> Result<String, JsValue> {
+    let speed = SimulationSpeed::from_multiplier(multiplier).map_err(js_error)?;
+    with_sandbox(|sandbox| {
+        sandbox.set_speed(speed);
+        sandbox.status_json()
+    })
+}
+
 #[wasm_bindgen]
 pub fn battle_sandbox_pan(direction: &str) -> Result<String, JsValue> {
     let (delta_x_mm, delta_y_mm) = match direction {
@@ -1264,6 +1405,89 @@ mod tests {
                 assert_eq!(battle.terrain().location(), location);
             }
         }
+    }
+
+    #[test]
+    fn only_documented_simulation_speeds_are_accepted() {
+        for (multiplier, speed) in [
+            (0.5, SimulationSpeed::Half),
+            (1.0, SimulationSpeed::Normal),
+            (2.0, SimulationSpeed::Double),
+            (4.0, SimulationSpeed::Quadruple),
+        ] {
+            assert_eq!(SimulationSpeed::from_multiplier(multiplier), Ok(speed));
+        }
+        for multiplier in [0.0, 3.0, 8.0, f64::NAN, -1.0] {
+            assert!(SimulationSpeed::from_multiplier(multiplier).is_err());
+        }
+        assert_eq!(SimulationSpeed::default().multiplier(), 1.0);
+        assert_eq!(SimulationSpeed::Quadruple.max_ticks_per_frame(), 20);
+        assert_eq!(SimulationSpeed::Half.max_ticks_per_frame(), 3);
+    }
+
+    #[test]
+    fn tick_batching_does_not_change_simulation_truth() {
+        let selection = SandboxArmySelection {
+            levy: 0,
+            spearmen: 1,
+            archers: 1,
+            knights: 1,
+        };
+        for location in BattlefieldLocation::ALL {
+            let mut reference = sample_battle(selection, location).unwrap();
+            drive_opponent(&mut reference).unwrap();
+            let mut batched = reference.clone();
+            let (mut reference_plan, mut batched_plan) = (0, 0);
+            for _ in 0..90 {
+                run_ticks(&mut reference, &mut reference_plan, 1).unwrap();
+            }
+            for _ in 0..30 {
+                run_ticks(&mut batched, &mut batched_plan, 3).unwrap();
+            }
+            assert_eq!(batched.tick(), reference.tick());
+            assert_eq!(batched, reference, "{location:?}");
+        }
+    }
+
+    #[test]
+    fn unit_orders_follow_core_unit_state() {
+        let mut battle = sample_battle(
+            SandboxArmySelection {
+                levy: 0,
+                spearmen: 1,
+                archers: 0,
+                knights: 0,
+            },
+            BattlefieldLocation::ForestClearing,
+        )
+        .unwrap();
+        let order = |battle: &TacticalBattle| {
+            unit_order_status(
+                battle
+                    .units()
+                    .iter()
+                    .find(|unit| unit.id() == "attacker-spears")
+                    .unwrap(),
+            )
+        };
+        assert_eq!(order(&battle).kind, "hold");
+        battle
+            .issue_move_order(medieval_core::MovementOrder {
+                unit_id: "attacker-spears".to_owned(),
+                destination: BattlePoint::new(30_000, 30_000),
+            })
+            .unwrap();
+        assert_eq!(order(&battle).kind, "move");
+        battle
+            .issue_engagement_order("attacker-spears", "defender-spears")
+            .unwrap();
+        assert_eq!(
+            order(&battle),
+            UnitOrderStatus {
+                kind: "engage",
+                target_unit_id: Some("defender-spears".to_owned()),
+            }
+        );
     }
 
     #[test]

@@ -70,12 +70,12 @@ canvas:focus-visible {
   align-items: end;
   justify-content: space-between;
   gap: 2rem;
-  padding: 0.5rem 0 1rem;
+  padding: 0 0 0.75rem;
 }
 
 .sandbox-header h1 {
   margin: 0.2rem 0 0;
-  font-size: clamp(2rem, 5vw, 3.8rem);
+  font-size: clamp(1.6rem, 3vw, 2.4rem);
   font-weight: 500;
 }
 
@@ -98,10 +98,21 @@ canvas:focus-visible {
 .battle-state {
   display: grid;
   gap: 0.25rem;
-  max-width: 32rem;
+  width: min(32rem, 100%);
   text-align: right;
   font-family: system-ui, sans-serif;
   color: #cfc5b1;
+}
+
+.battle-state-text {
+  display: grid;
+  gap: 0.15rem;
+}
+
+#battle-selection {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .battle-state strong {
@@ -284,8 +295,8 @@ button:disabled {
 .sandbox-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 1.3rem;
-  padding: 1rem;
+  gap: 0.9rem;
+  padding: 0.85rem;
   border: 1px solid #514633;
   border-radius: 6px;
   background: rgb(25 22 17 / 0.9);
@@ -293,7 +304,7 @@ button:disabled {
 }
 
 .sandbox-sidebar section {
-  padding-bottom: 1rem;
+  padding-bottom: 0.8rem;
   border-bottom: 1px solid #3d3528;
 }
 
@@ -347,11 +358,164 @@ button:disabled {
   text-transform: capitalize;
 }
 
-.runtime-note {
-  margin: auto 0 0;
-  color: #958a78;
-  font-size: 0.8rem;
-  line-height: 1.45;
+fieldset.speed-control {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.speed-control legend {
+  grid-column: 1 / -1;
+  padding: 0;
+}
+
+.speed-control label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  min-height: 36px;
+  border: 1px solid #887452;
+  border-radius: 4px;
+  background: #28231a;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.speed-control label:has(input:checked) {
+  background: #7c6339;
+  color: #fff7e6;
+}
+
+.speed-control label:has(input:focus-visible) {
+  outline: 2px solid #e0bd76;
+  outline-offset: 2px;
+}
+
+.speed-control input {
+  margin: 0;
+  accent-color: #e0bd76;
+}
+
+.battle-sides {
+  display: flex;
+  justify-content: end;
+  gap: 1rem;
+  margin: 0;
+}
+
+.battle-sides div {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.battle-sides dt {
+  color: #a89b85;
+}
+
+.battle-sides dd {
+  margin: 0;
+  color: #f6ecd6;
+  font-weight: 700;
+}
+
+.siege-capture {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+}
+
+.siege-capture progress {
+  width: 100%;
+  height: 0.6rem;
+  accent-color: #c9ad78;
+}
+
+.hud-hint {
+  margin: 0.2rem 0 0;
+  color: #a99d89;
+  font-size: 0.85rem;
+}
+
+.unit-cards {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.unit-card {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #5f523c;
+  border-radius: 4px;
+  background: #211d16;
+  font-size: 0.85rem;
+}
+
+.unit-card[data-state="routed"],
+.unit-card[data-state="destroyed"] {
+  opacity: 0.6;
+}
+
+.unit-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+}
+
+.unit-card header strong {
+  color: #f4cd7c;
+}
+
+.unit-card header span {
+  color: #b8ac98;
+}
+
+.unit-card dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 0.15rem 0.5rem;
+  margin: 0;
+}
+
+.unit-card dt {
+  color: #a89b85;
+}
+
+.unit-card dd {
+  margin: 0;
+  color: #eee5d1;
+  font-variant-numeric: tabular-nums;
+}
+
+.unit-card dd[data-field="formation"],
+.unit-card dd[data-field="order"] {
+  grid-column: span 3;
+}
+
+.control-group-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.control-group {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-height: 36px;
+  padding: 0.35rem 0.6rem;
+}
+
+.control-group strong {
+  color: #f4cd7c;
+}
+
+.instructions summary {
+  cursor: pointer;
 }
 
 @media (max-width: 900px) {
@@ -369,6 +533,10 @@ button:disabled {
     text-align: left;
   }
 
+  .battle-sides {
+    justify-content: start;
+  }
+
   .muster-summary,
   .army-options {
     grid-template-columns: 1fr;
@@ -382,4 +550,8 @@ button:disabled {
   #battle-canvas {
     min-height: 58vh;
   }
+}
+
+#set-frontage {
+  grid-column: 1 / -1;
 }

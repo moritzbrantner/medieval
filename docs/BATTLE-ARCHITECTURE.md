@@ -52,6 +52,26 @@ Camera3d perspective basis + viewport rays
 
 There is one production renderer and one camera geometry contract. Do not maintain a long-lived 2D renderer, Three.js battle renderer, browser-only gameplay renderer, or adapter-owned projection formula beside it.
 
+## Pause, simulation speed and tick scheduling
+
+The browser battle offers four documented simulation speed multipliers: **0.5×**, **1×** (default), **2×** and **4×**. Pause and simulation speed are tick scheduling only. They decide how many fixed `TACTICAL_TICKS_PER_SECOND` ticks run for a span of wall time, never what a tick does. A battle at the same tick has the same simulation truth (units, siege capture state, battle state and outcome) at every speed and while paused.
+
+- `web-battle-wasm` owns the scheduler. JavaScript passes the raw `requestAnimationFrame` timestamp to `battle_sandbox_frame(timestamp)` and selects a speed with `battle_sandbox_set_speed(multiplier)`, which only accepts the documented multipliers. JavaScript does no tick math.
+- At speed `s`, each frame adds `elapsed_ms × 20 / 1000 × s` ticks to an accumulator and runs its whole ticks. A frame delta is clamped to 250 ms and the per-frame budget is `ceil(5 × s)` ticks, so one slow frame cannot cause a catch-up spiral.
+- Pause runs no ticks. Resuming starts a new frame interval, so the time spent paused is not replayed.
+- Ticks run in batches that split at the once-per-second opponent replanning boundary. The opponent replans at the same tick no matter how frames group the ticks (for example 4× with 37.5 ms frames gives three ticks per frame). Combat pulses and siege capture are already keyed to the core tick.
+- A terminal outcome stops the scheduler mid-batch and pauses the battle.
+
+Speed and pause are sandbox presentation and scheduling state. They are reported in the sandbox status (`paused`, `speedMultiplier`) but are not part of `TacticalBattle`, campaign results or saves.
+
+## Tactical battle HUD
+
+The browser HUD only renders the Rust sandbox status and forwards input:
+
+- **Battle status** shows the run state, the player and opponent sides (`playerSide` / `opponentSide`: attacker or defender) and, only in a siege, a capture progress bar from `siege.capture.progress` out of `siegeCaptureMaxProgress` (core `SIEGE_CAPTURE_MAX_PROGRESS`). A terminal state with reason `siegeCapture` gets its own text, separate from a defeated force or a withdrawal.
+- **Selected units** shows one card per Rust-selected unit with its kind, soldiers, morale, fatigue, ammunition, formation and current order. The order is derived in Rust from core unit state (`order.kind`: `hold`, `move`, `attackMove`, `engage` with `targetUnitId`, `withdraw`, `rout`, `destroyed` or `escaped`).
+- **Control groups** are shared `TacticalControls` state and are reported as `controlGroups`. As on desktop, Ctrl+1–9 assigns the selection, 1–9 recalls a group and Shift+1–9 adds it to the selection. Digit 0 stays bound to fit camera in the browser. Each group is a focusable button that recalls it. Resetting the battle clears the groups.
+
 ## Converged 3D foundations
 
 The original tactical preview assumptions have now been removed or contained at the correct domain boundary:

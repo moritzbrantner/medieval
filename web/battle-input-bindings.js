@@ -3,13 +3,56 @@ export const INPUT_BINDINGS_BUNDLE_URL =
 
 const CONTEXT_ID = "battleSandbox";
 
-const physical = (id, action, code) => ({
+const physical = (id, action, code, modifiers = {}) => ({
   id,
   action,
-  sequence: [{ key: { kind: "physical", value: code }, modifiers: {} }],
+  sequence: [{ key: { kind: "physical", value: code }, modifiers }],
   when: { op: "context", id: CONTEXT_ID },
   priority: 0,
 });
+
+// Digit0 stays bound to "fit camera", so browser control groups are 1–9.
+const CONTROL_GROUPS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+// Native parity (src-tauri/src/native_battle/input.rs): Ctrl+digit assigns,
+// digit recalls, Shift+digit adds the group to the selection.
+const controlGroupActions = CONTROL_GROUPS.flatMap((group) => [
+  {
+    id: `battle.controlGroup.assign${group}`,
+    title: `Assign control group ${group}`,
+    categoryPath: ["Battle", "Control groups"],
+    repeatPolicy: "never",
+    allowedDevices: ["keyboard"],
+    defaults: [
+      physical(`battle.controlGroup.assign${group}.default`, `battle.controlGroup.assign${group}`, `Digit${group}`, { ctrl: true }),
+    ],
+    provenance: { source: "medieval/battle-sandbox", version: "1" },
+  },
+  {
+    id: `battle.controlGroup.recall${group}`,
+    title: `Recall control group ${group}`,
+    categoryPath: ["Battle", "Control groups"],
+    repeatPolicy: "never",
+    allowedDevices: ["keyboard"],
+    defaults: [
+      physical(`battle.controlGroup.recall${group}.default`, `battle.controlGroup.recall${group}`, `Digit${group}`),
+    ],
+    provenance: { source: "medieval/battle-sandbox", version: "1" },
+  },
+  {
+    id: `battle.controlGroup.add${group}`,
+    title: `Add control group ${group} to selection`,
+    categoryPath: ["Battle", "Control groups"],
+    repeatPolicy: "never",
+    allowedDevices: ["keyboard"],
+    defaults: [
+      physical(`battle.controlGroup.add${group}.default`, `battle.controlGroup.add${group}`, `Digit${group}`, { shift: true }),
+    ],
+    provenance: { source: "medieval/battle-sandbox", version: "1" },
+  },
+]);
+
+const CONTROL_GROUP_ACTION = /^battle\.controlGroup\.(assign|recall|add)([1-9])$/;
 
 export const BATTLE_INPUT_REGISTRY = Object.freeze({
   actions: [
@@ -159,6 +202,7 @@ export const BATTLE_INPUT_REGISTRY = Object.freeze({
       defaults: [physical("battle.pause.default", "battle.pause", "KeyP")],
       provenance: { source: "medieval/battle-sandbox", version: "1" },
     },
+    ...controlGroupActions,
   ],
 });
 
@@ -172,6 +216,8 @@ export function attachBattleInputBindings({
   turnSelected,
   fitCamera,
   togglePause,
+  assignControlGroup,
+  recallControlGroup,
 }) {
   let disposed = false;
   let detachRuntime = () => {};
@@ -229,6 +275,13 @@ export function attachBattleInputBindings({
             case "battle.pause":
               togglePause();
               break;
+            default: {
+              const group = CONTROL_GROUP_ACTION.exec(dispatch.action);
+              if (!group) break;
+              const number = Number(group[2]);
+              if (group[1] === "assign") assignControlGroup(number);
+              else recallControlGroup(number, group[1] === "add");
+            }
           }
         },
       });
