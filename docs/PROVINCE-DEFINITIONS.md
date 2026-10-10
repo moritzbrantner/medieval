@@ -168,7 +168,11 @@ slots, and construction orders that are foreign, skip a level, share a
 province, or do not complete exactly on the owner's turn. Save schema version
 5 adds the required `recruitmentPool` to provinces; older saves must not
 contain it and load with every unlocked pool full. Validation rejects pools
-above their current capacity.
+above their current capacity. Save schema version 6 derives battlefields
+from fortification levels. A pre-6 save whose staged (reconciled) tactical
+result was fought as a field battle in a province that now has walls keeps that
+battlefield as the pending battle's `legacyBattlefieldProfile`, so the result
+still applies; only migrated saves may contain it.
 
 Saved campaigns contain their own province state. Loading a save does not
 replace names, borders, wealth, ownership, settlement level, or battlefield context with current

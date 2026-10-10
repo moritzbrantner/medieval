@@ -46,6 +46,7 @@ let construction;
 let recruitmentRequestId = 0;
 let pendingSiegeKey;
 let pendingSiegeProfile = null;
+let pendingSiegeEpoch = 0;
 let campaignBusy = false;
 
 function showView(name) {
@@ -441,11 +442,19 @@ function renderPendingBattle() {
   }
 }
 
+// A replaced campaign may repeat the same battle identity with other walls.
+function resetPendingSiegeProfile() {
+  pendingSiegeEpoch += 1;
+  pendingSiegeKey = undefined;
+  pendingSiegeProfile = null;
+}
+
 function pendingBattleKey(battle) {
   return `${campaign.turn}:${battle.attackerArmyId}:${battle.fromProvince}:${battle.targetProvince}`;
 }
 
 async function refreshPendingSiegeProfile(key) {
+  const epoch = pendingSiegeEpoch;
   let seed;
   try {
     seed = await invoke("pending_tactical_battle_seed");
@@ -453,7 +462,12 @@ async function refreshPendingSiegeProfile(key) {
     return;
   }
   const battle = campaign.pendingBattle;
-  if (!battle || campaign.pendingTacticalResult || pendingBattleKey(battle) !== key) return;
+  if (
+    epoch !== pendingSiegeEpoch ||
+    !battle ||
+    campaign.pendingTacticalResult ||
+    pendingBattleKey(battle) !== key
+  ) return;
   const profile = seed.battlefieldProfile;
   pendingSiegeProfile = profile?.kind === "siege" ? profile.fortification : null;
   pendingSiegeKey = key;
@@ -841,6 +855,7 @@ async function loadCampaign() {
   errorBox.hidden = true;
   try {
     campaign = await invoke("load_campaign");
+    resetPendingSiegeProfile();
     [playerFaction, campaignWinner] = await Promise.all([
       invoke("campaign_player_faction"),
       invoke("campaign_winner"),
@@ -892,6 +907,7 @@ async function startNewCampaign() {
   errorBox.hidden = true;
   try {
     campaign = await invoke("start_new_campaign", { playerFaction: requestedFaction });
+    resetPendingSiegeProfile();
     playerFaction = requestedFaction;
     campaignWinner = undefined;
     clearMovementSelection();
