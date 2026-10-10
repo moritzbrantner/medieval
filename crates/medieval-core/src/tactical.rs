@@ -1332,8 +1332,8 @@ impl TacticalBattle {
                     self.advance_formed_unit(counters, index, unit, target);
                 }
                 TacticalUnitState::Routed => {
-                    let nearest_enemy = (0..self.units.len())
-                        .map(|other| before.unit(&self.units, other))
+                    let nearest_enemy = before
+                        .units(&self.units)
                         .filter(|candidate| {
                             counters.target_candidate_visits += 1;
                             candidate.side != unit.side
@@ -1354,11 +1354,14 @@ impl TacticalBattle {
             }
         }
         counters.unit_scan_visits += self.units.len() as u64;
-        for index in 0..self.units.len() {
-            if before.unit(&self.units, index).charge.is_some() {
-                let charge = self.next_charge(counters, index, &before);
-                self.units[index].charge = Some(charge);
-            }
+        let charging: Vec<usize> = before
+            .units(&self.units)
+            .enumerate()
+            .filter_map(|(index, unit)| unit.charge.is_some().then_some(index))
+            .collect();
+        for index in charging {
+            let charge = self.next_charge(counters, index, &before);
+            self.units[index].charge = Some(charge);
         }
     }
 
@@ -2555,6 +2558,20 @@ impl MovementBefore {
         unit
     }
 
+    /// Every unit's phase-start state in index order, merging the saved copies
+    /// with the live vector in one linear pass (no per-unit search).
+    fn units<'a>(&'a self, live: &'a [TacticalUnit]) -> impl Iterator<Item = &'a TacticalUnit> {
+        let mut saved = self.saved.iter().peekable();
+        live.iter().enumerate().map(move |(index, unit)| {
+            match saved.next_if(|(saved_index, _)| *saved_index == index) {
+                Some((_, copy)) => copy,
+                None => unit,
+            }
+        })
+    }
+
+    /// One unit's phase-start state; a binary search over the saved copies,
+    /// used for single lookups only.
     fn unit<'a>(&'a self, live: &'a [TacticalUnit], index: usize) -> &'a TacticalUnit {
         self.saved
             .binary_search_by_key(&index, |(saved, _)| *saved)
