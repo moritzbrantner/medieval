@@ -22,11 +22,13 @@ pub use facing::{CombatArc, Facing};
 mod group_orders;
 pub use group_orders::{GroupMovementOrder, MAX_QUEUED_WAYPOINTS, MovementMode, MovementWaypoint};
 mod province_definitions;
+mod recruitment;
 pub use province_definitions::{
     BattlefieldDefinition, PROVINCE_DEFINITION_SCHEMA_VERSION, ProvinceDefinition,
     ProvinceDefinitionDocument, ProvinceDefinitionError, ProvinceDefinitions,
     ProvinceEconomyDefinition, SettlementDefinition, default_province_definitions,
 };
+pub use recruitment::{RecruitmentOption, RecruitmentPool, UnitUnlock};
 mod save;
 mod settlement;
 pub use settlement::{
@@ -68,7 +70,7 @@ pub use terrain::{
 pub use unit_stats::{MissileStats, UnitCombatProfile, UnitStats, UnitStatsVersion};
 
 const INCOME_PER_WEALTH: u32 = 50;
-const UNIT_KINDS: [UnitKind; 4] = [
+pub(crate) const UNIT_KINDS: [UnitKind; 4] = [
     UnitKind::Levy,
     UnitKind::Spearmen,
     UnitKind::Archers,
@@ -124,6 +126,10 @@ pub struct Province {
     /// construction load without buildings.
     #[serde(default)]
     pub buildings: Vec<ProvinceBuilding>,
+    /// Recruitable batches per unit; saves from before recruitment pools load
+    /// with every unlocked pool full.
+    #[serde(default)]
+    pub recruitment_pool: RecruitmentPool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,17 +162,6 @@ pub enum UnitKind {
     Spearmen,
     Archers,
     Knights,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecruitmentOption {
-    pub unit: UnitKind,
-    pub label: String,
-    pub cost: u32,
-    pub soldiers: u16,
-    pub available: bool,
-    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -249,7 +244,12 @@ pub enum CampaignError {
         owner: String,
         active_faction: String,
     },
-    RecruitmentAlreadyQueued {
+    UnitLocked {
+        province: String,
+        unit: UnitKind,
+        requirement: String,
+    },
+    RecruitmentPoolEmpty {
         province: String,
         unit: UnitKind,
     },
@@ -344,9 +344,18 @@ impl fmt::Display for CampaignError {
                 formatter,
                 "{active_faction} cannot recruit in {province}, which is controlled by {owner}"
             ),
-            Self::RecruitmentAlreadyQueued { province, unit } => write!(
+            Self::UnitLocked {
+                province,
+                unit,
+                requirement,
+            } => write!(
                 formatter,
-                "{} is already queued in {province}",
+                "{} in {province} require {requirement}",
+                unit.spec().label
+            ),
+            Self::RecruitmentPoolEmpty { province, unit } => write!(
+                formatter,
+                "no {} batch is available in {province} until its pool replenishes",
                 unit.spec().label
             ),
             Self::InsufficientTreasury {
@@ -523,103 +532,6 @@ impl CampaignState {
         Ok(())
     }
 
-    pub fn recruitment_options(
-        &self,
-        province_id: &str,
-    ) -> Result<Vec<RecruitmentOption>, CampaignError> {
-        let province = self.province(province_id)?;
-        let faction = self.faction(&self.active_faction)?;
-
-        Ok(UNIT_KINDS
-            .iter()
-            .copied()
-            .map(|unit| {
-                let spec = unit.spec();
-                let reason = self.recruitment_unavailable_reason(province, unit, faction.treasury);
-                RecruitmentOption {
-                    unit,
-                    label: spec.label.to_owned(),
-                    cost: spec.cost,
-                    soldiers: spec.soldiers,
-                    available: reason.is_none(),
-                    reason,
-                }
-            })
-            .collect())
-    }
-
-    pub fn queue_recruitment(
-        &mut self,
-        province_id: &str,
-        unit: UnitKind,
-    ) -> Result<(), CampaignError> {
-        if self.pending_battle.is_some() {
-            return Err(CampaignError::BattlePending);
-        }
-
-        let province = self.province(province_id)?;
-        let province_name = province.name.clone();
-        let province_owner = province.owner.clone();
-        let active_faction = self.active_faction.clone();
-
-        if province_owner != active_faction {
-            return Err(CampaignError::ProvinceNotOwned {
-                province: province_name,
-                owner: province_owner,
-                active_faction,
-            });
-        }
-
-        if self.recruitment_queue.iter().any(|order| {
-            order.faction_id == self.active_faction
-                && order.province_id == province_id
-                && order.unit == unit
-        }) {
-            return Err(CampaignError::RecruitmentAlreadyQueued {
-                province: province_name,
-                unit,
-            });
-        }
-
-        let faction_index = self
-            .factions
-            .iter()
-            .position(|faction| faction.id == self.active_faction)
-            .ok_or_else(|| CampaignError::FactionNotFound(self.active_faction.clone()))?;
-        let spec = unit.spec();
-        let treasury = self.factions[faction_index].treasury;
-
-        if treasury < spec.cost {
-            return Err(CampaignError::InsufficientTreasury {
-                faction: self.factions[faction_index].name.clone(),
-                cost: spec.cost,
-                treasury,
-            });
-        }
-
-        self.factions[faction_index].treasury -= spec.cost;
-        let ready_on_turn = self.turn.saturating_add(self.factions.len() as u32);
-        self.recruitment_queue.push(RecruitmentOrder {
-            faction_id: self.active_faction.clone(),
-            province_id: province_id.to_owned(),
-            unit,
-            label: spec.label.to_owned(),
-            cost: spec.cost,
-            soldiers: spec.soldiers,
-            ready_on_turn,
-        });
-        self.log.push(format!(
-            "Turn {}: {} queues {} {} in {} for {} gold.",
-            self.turn,
-            self.factions[faction_index].name,
-            spec.soldiers,
-            spec.label,
-            province_name,
-            spec.cost
-        ));
-        Ok(())
-    }
-
     pub fn end_turn(&mut self) -> Result<(), CampaignError> {
         if self.pending_battle.is_some() {
             return Err(CampaignError::BattlePending);
@@ -672,6 +584,7 @@ impl CampaignState {
 
         self.complete_settlement_upgrades()?;
         self.complete_construction()?;
+        self.replenish_recruitment_pools();
         let income = self.income_for(&faction_id);
         self.factions[faction_index].treasury =
             self.factions[faction_index].treasury.saturating_add(income);
@@ -751,44 +664,6 @@ impl CampaignState {
             .fold(0_u32, u32::saturating_add)
     }
 
-    fn recruitment_unavailable_reason(
-        &self,
-        province: &Province,
-        unit: UnitKind,
-        treasury: u32,
-    ) -> Option<String> {
-        if self.pending_battle.is_some() {
-            return Some("Resolve the pending battle before recruiting.".to_owned());
-        }
-        if province.owner != self.active_faction {
-            return Some(format!(
-                "Only {} can recruit during this turn, and it does not control {}.",
-                self.faction_name(&self.active_faction),
-                province.name
-            ));
-        }
-        if self.recruitment_queue.iter().any(|order| {
-            order.faction_id == self.active_faction
-                && order.province_id == province.id
-                && order.unit == unit
-        }) {
-            return Some(format!(
-                "{} is already queued in {}.",
-                unit.spec().label,
-                province.name
-            ));
-        }
-
-        let spec = unit.spec();
-        if treasury < spec.cost {
-            return Some(format!(
-                "Need {} gold; the treasury has {}.",
-                spec.cost, treasury
-            ));
-        }
-        None
-    }
-
     fn faction(&self, faction_id: &str) -> Result<&Faction, CampaignError> {
         self.factions
             .iter()
@@ -856,7 +731,10 @@ pub fn new_campaign_with_province_definitions(
             moved_this_turn: false,
         },
     ];
-    let provinces = definitions.build_provinces(&factions, &armies)?;
+    let mut provinces = definitions.build_provinces(&factions, &armies)?;
+    for province in &mut provinces {
+        province.recruitment_pool = province.full_recruitment_pool();
+    }
     Ok(CampaignState {
         year: 1087,
         turn: 1,
@@ -1010,7 +888,7 @@ mod tests {
     }
 
     #[test]
-    fn recruitment_deducts_cost_and_rejects_duplicate_queueing() {
+    fn recruitment_deducts_cost_and_consumes_the_local_pool() {
         let mut campaign = new_campaign();
         let options = campaign.recruitment_options("normandy").unwrap();
         let levy = options
@@ -1026,10 +904,7 @@ mod tests {
             .unwrap();
         assert_eq!(campaign.faction("england").unwrap().treasury, 1_080);
         assert_eq!(campaign.recruitment_queue.len(), 1);
-        assert!(matches!(
-            campaign.queue_recruitment("normandy", UnitKind::Levy),
-            Err(CampaignError::RecruitmentAlreadyQueued { .. })
-        ));
+        assert_eq!(campaign.provinces[1].recruitment_pool.levy, 1);
     }
 
     #[test]
@@ -1056,7 +931,7 @@ mod tests {
     fn one_turn_recruitment_completes_once_when_faction_returns() {
         let mut campaign = new_campaign();
         campaign
-            .queue_recruitment("normandy", UnitKind::Spearmen)
+            .queue_recruitment("normandy", UnitKind::Archers)
             .unwrap();
 
         campaign.end_turn().unwrap();
@@ -1067,7 +942,7 @@ mod tests {
             .iter()
             .find(|army| army.id == "england-main")
             .unwrap();
-        assert_eq!(army.spearmen, 110);
+        assert_eq!(army.archers, 60);
         assert!(campaign.recruitment_queue.is_empty());
 
         campaign.apply_turn_start().unwrap();
@@ -1076,7 +951,7 @@ mod tests {
             .iter()
             .find(|army| army.id == "england-main")
             .unwrap();
-        assert_eq!(army.spearmen, 110);
+        assert_eq!(army.archers, 60);
     }
 
     #[test]
@@ -1097,7 +972,7 @@ mod tests {
             .clone();
         campaign.move_army(&first_id, "normandy").unwrap();
         campaign
-            .queue_recruitment("wessex", UnitKind::Archers)
+            .queue_recruitment("wessex", UnitKind::Levy)
             .unwrap();
         campaign.end_turn().unwrap();
         campaign.end_turn().unwrap();

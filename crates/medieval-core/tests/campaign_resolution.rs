@@ -385,7 +385,9 @@ fn saves_preserve_reports_and_reject_unsupported_legacy_claims_or_corrupt_surren
         let province = province.as_object_mut().unwrap();
         province.remove("settlementLevel");
         province.remove("buildings");
+        province.remove("recruitmentPool");
         province.remove("buildings");
+        province.remove("recruitmentPool");
     }
     assert!(
         CampaignSave::from_json(&serde_json::to_string(&document).unwrap())
