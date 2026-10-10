@@ -32,6 +32,14 @@ test("queueing recruitment sends an intent rather than mutating treasury or armi
   assert.doesNotMatch(script, /\.knights\s*[-+]?=/);
 });
 
+test("unit unlocks and recruitment pools are projected from Rust", () => {
+  assert.match(script, /option\.unlocked/);
+  assert.match(script, /option\.pool\}\/\$\{option\.poolCapacity\}/);
+  assert.match(script, /option\.unlockLabel/);
+  assert.doesNotMatch(script, /recruitmentPool\s*[-+]?=(?!=)|poolCapacity\s*[-+]?=(?!=)/);
+  assert.doesNotMatch(script, /unitUnlocks|unlockByUnit|requiresBarracks/);
+});
+
 test("recruitment completion timing is projected from campaign state", () => {
   assert.match(script, /campaign\.recruitmentQueue/);
   assert.match(script, /order\.readyOnTurn/);

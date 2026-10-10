@@ -272,6 +272,7 @@ impl ProvinceDefinitions {
                 battlefield: context,
                 settlement_level: definition.settlement.level,
                 buildings: Vec::new(),
+                recruitment_pool: crate::RecruitmentPool::default(),
             });
         }
         for army in armies {

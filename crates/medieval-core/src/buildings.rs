@@ -136,7 +136,7 @@ const BARRACKS: BuildingSpec = BuildingSpec {
     building: BuildingId::Barracks,
     category: BuildingCategory::Military,
     label: "Barracks",
-    role: "Military infrastructure for future unit unlocks.",
+    role: "Unlocks spearmen and knights; deepens every recruitment pool.",
     levels: &[
         BuildingLevelSpec {
             level: 1,
@@ -826,7 +826,9 @@ mod tests {
 
         let mut queued = relabeled.clone();
         for province in queued["campaign"]["provinces"].as_array_mut().unwrap() {
-            province.as_object_mut().unwrap().remove("buildings");
+            let province = province.as_object_mut().unwrap();
+            province.remove("buildings");
+            province.remove("recruitmentPool");
         }
         assert!(CampaignSave::from_json(&queued.to_string()).is_err());
 

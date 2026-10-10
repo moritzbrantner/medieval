@@ -153,6 +153,12 @@ function renderRecruitment(province) {
     button.addEventListener("click", () => queueRecruitment(province.id, option.unit));
 
     row.append(button);
+    if (option.unlocked) {
+      const pool = document.createElement("small");
+      pool.className = "recruitment-pool";
+      pool.textContent = `Pool ${option.pool}/${option.poolCapacity} batches · unlocked by ${option.unlockLabel}`;
+      row.append(pool);
+    }
     if (option.reason) {
       const reason = document.createElement("small");
       reason.textContent = option.reason;

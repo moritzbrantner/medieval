@@ -730,6 +730,36 @@ mod tests {
     }
 
     #[test]
+    fn ai_recruits_only_locally_unlocked_units_from_its_pools() {
+        for seed in 0..32 {
+            let mut campaign = new_campaign();
+            campaign.end_turn().unwrap();
+            campaign.factions[1].treasury = 5_000;
+            let before = campaign.clone();
+
+            campaign.play_ai_turn("england", seed).unwrap();
+
+            for order in campaign
+                .recruitment_queue
+                .iter()
+                .filter(|order| order.faction_id == "france")
+            {
+                let province = before
+                    .provinces
+                    .iter()
+                    .find(|province| province.id == order.province_id)
+                    .unwrap();
+                assert!(province.unlocks_unit(order.unit), "seed {seed}: {order:?}");
+                assert!(province.recruitment_pool.available(order.unit) > 0);
+                assert!(!matches!(
+                    order.unit,
+                    UnitKind::Spearmen | UnitKind::Knights
+                ));
+            }
+        }
+    }
+
+    #[test]
     fn ai_upgrades_settlements_deterministically_and_keeps_a_reserve() {
         let mut campaign = new_campaign();
         campaign.end_turn().unwrap();
