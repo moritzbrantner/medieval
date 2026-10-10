@@ -9,7 +9,9 @@ use crate::CampaignState;
 /// levels or upgrade orders, and their provinces load as villages.
 /// Version 4 adds province buildings and the construction queue; older
 /// versions must not contain either and load without buildings.
-pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 4;
+/// Version 5 adds per-province recruitment pools; older versions must not
+/// contain them and load with every unlocked pool full.
+pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +88,7 @@ impl CampaignSave {
                 for (field, since, description) in [
                     ("settlementLevel", 3, "province settlement levels"),
                     ("buildings", 4, "province buildings"),
+                    ("recruitmentPool", 5, "recruitment pools"),
                 ] {
                     let declared = province.get(field).is_some();
                     if declared != (header.schema_version >= since) {
@@ -121,6 +124,11 @@ impl CampaignSave {
                 "version {} cannot contain construction orders",
                 header.schema_version
             ));
+        }
+        if header.schema_version < 5 {
+            for province in &mut save.campaign.provinces {
+                province.recruitment_pool = province.full_recruitment_pool();
+            }
         }
         save.schema_version = CAMPAIGN_SAVE_SCHEMA_VERSION;
         save.validate()?;
@@ -421,6 +429,17 @@ impl CampaignSave {
             }
         }
 
+        for province in &campaign.provinces {
+            if let Some(unit) = crate::UNIT_KINDS.into_iter().find(|&unit| {
+                province.recruitment_pool.available(unit) > province.recruitment_capacity(unit)
+            }) {
+                return invalid(format!(
+                    "province {} recruitment pool exceeds its {:?} capacity",
+                    province.id, unit
+                ));
+            }
+        }
+
         let mut constructing = HashSet::new();
         for order in &campaign.construction_queue {
             let province = campaign
@@ -604,7 +623,7 @@ mod tests {
     fn representative_save() -> CampaignSave {
         let mut campaign = new_campaign();
         campaign
-            .queue_recruitment("normandy", UnitKind::Spearmen)
+            .queue_recruitment("normandy", UnitKind::Archers)
             .unwrap();
         campaign.move_army("england-main", "paris").unwrap();
         CampaignSave::from_campaign(campaign, "england").unwrap()

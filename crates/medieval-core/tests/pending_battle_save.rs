@@ -158,9 +158,12 @@ fn strip_settlement_levels(document: &mut serde_json::Value, expected: &mut Camp
         let province = province.as_object_mut().unwrap();
         province.remove("settlementLevel");
         province.remove("buildings");
+        province.remove("recruitmentPool");
         province.remove("buildings");
+        province.remove("recruitmentPool");
     }
     for province in &mut expected.provinces {
         province.settlement_level = medieval_core::SettlementLevel::Village;
+        province.recruitment_pool = province.full_recruitment_pool();
     }
 }

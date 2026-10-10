@@ -59,7 +59,8 @@ The current shipping and acceptance target is desktop. Android/iOS packaging, mo
 - Provincial income is computed in Rust from controlled territory and paid once at each faction-turn start.
 - Turn-start economy processing is idempotent for the same faction/turn pair.
 - Small unit roster: levy, spearmen, archers, knights.
-- Rust owns recruitment batch sizes, prices, treasury checks, duplicate-queue rejection, and one-turn completion timing.
+- Rust owns recruitment batch sizes, prices, treasury checks, and one-turn completion timing.
+- Units unlock from explicit local settlement/barracks state and are recruited from bounded, deterministically replenished province pools (#111).
 - Recruitment orders deduct their price immediately and complete when that faction next becomes active.
 - Completed recruits reinforce an army in the province or create a deterministic local army when none exists.
 - Province UI displays treasury, queue state, costs, availability, and rejection reasons returned by Rust.

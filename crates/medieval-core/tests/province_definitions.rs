@@ -8,7 +8,8 @@ fn document() -> ProvinceDefinitionDocument {
     default_province_definitions().document().clone()
 }
 /// The pre-settlement-level v2 fixture, with the packaged initial levels
-/// applied: the only bootstrap difference introduced by settlement levels.
+/// applied (and the recruitment pools they unlock refilled): the only
+/// bootstrap difference introduced by settlement levels.
 fn legacy_bootstrap_with_packaged_levels() -> CampaignSave {
     let mut legacy =
         CampaignSave::from_json(include_str!("fixtures/six-provinces-save-v2.json")).unwrap();
@@ -27,6 +28,7 @@ fn legacy_bootstrap_with_packaged_levels() -> CampaignSave {
             .unwrap()
             .settlement
             .level;
+        province.recruitment_pool = province.full_recruitment_pool();
     }
     legacy
 }
@@ -256,7 +258,9 @@ fn settlement_levels_are_explicit_definitions_and_legacy_saves_load_as_villages(
         let province = province.as_object_mut().unwrap();
         province.remove("settlementLevel");
         province.remove("buildings");
+        province.remove("recruitmentPool");
         province.remove("buildings");
+        province.remove("recruitmentPool");
     }
     assert!(matches!(
         CampaignSave::from_json(&legacy.to_string()),
