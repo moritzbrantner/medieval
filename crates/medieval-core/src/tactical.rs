@@ -904,6 +904,9 @@ impl TacticalBattle {
         let Some(siege) = &mut self.siege else {
             return Err(TacticalError::NotSiegeBattle);
         };
+        if siege.gate_state == SiegeGateState::Destroyed {
+            return Err(TacticalError::SiegeGateDestroyed);
+        }
         if gate_state == SiegeGateState::Closed
             && self.units.iter().any(|unit| {
                 unit.side == BattleSide::Attacker
@@ -2103,6 +2106,8 @@ pub enum TacticalError {
     FriendlyGateAttack(String),
     /// Only a standing, closed gate can be assaulted.
     SiegeGateNotClosed,
+    /// A destroyed gate stays destroyed; it cannot be opened or closed again.
+    SiegeGateDestroyed,
 }
 
 impl fmt::Display for TacticalError {
@@ -2242,6 +2247,9 @@ impl fmt::Display for TacticalError {
             ),
             Self::SiegeGateNotClosed => {
                 write!(formatter, "only a closed siege gate can be attacked")
+            }
+            Self::SiegeGateDestroyed => {
+                write!(formatter, "a destroyed siege gate cannot change state")
             }
         }
     }
@@ -3075,6 +3083,35 @@ mod tests {
         battle.advance_ticks(200);
         assert_eq!(unit(&battle, "attacker").position(), destination);
         assert!(unit(&battle, "attacker").destination().is_none());
+    }
+
+    #[test]
+    fn destroyed_siege_gate_is_terminal() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let mut siege = SiegeBattleState::test_siege(battlefield);
+        siege.gate_state = SiegeGateState::Closed;
+        let mut battle = TacticalBattle::new(
+            battlefield,
+            vec![sample_unit(
+                "attacker",
+                BattleSide::Attacker,
+                siege.layout.capture_point.center,
+                Formation::Line { files: 10 },
+            )],
+        )
+        .unwrap();
+        battle.siege = Some(siege);
+        battle.destroy_siege_gate().unwrap();
+        for result in [
+            battle.close_siege_gate(),
+            battle.open_siege_gate(),
+            battle.destroy_siege_gate(),
+        ] {
+            assert!(matches!(result, Err(TacticalError::SiegeGateDestroyed)));
+        }
+        let siege = battle.siege.unwrap();
+        assert_eq!(siege.gate_state, SiegeGateState::Destroyed);
+        assert_eq!(siege.gate_integrity, 0);
     }
 
     #[test]
