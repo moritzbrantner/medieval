@@ -63,6 +63,28 @@ pub struct SiegeTower {
     pub radius_mm: u32,
 }
 
+impl SiegeTower {
+    /// Whether `point` lies inside the tower footprint circle (inclusive).
+    #[must_use]
+    pub fn contains(self, point: BattlePoint) -> bool {
+        point_distance_squared(self.center, point) <= square(self.radius_mm)
+    }
+}
+
+/// Core-owned activity of one siege tower, derived from authoritative unit
+/// state. Presentation projects it and never re-derives targets or casualties.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiegeTowerActivity {
+    /// A formed defender unit stands inside the tower footprint.
+    pub staffed: bool,
+    /// The formed attacker unit the staffed tower fires at on the next combat
+    /// pulse: the nearest one within [`SiegeProfile::tower_range_mm`] of the
+    /// tower center, ties broken by unit id. `None` while unstaffed or with no
+    /// attacker in range.
+    pub target_unit_id: Option<String>,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SiegeCapturePoint {
@@ -129,6 +151,36 @@ impl SiegeProfile {
         }
     }
 
+    /// Reach of a staffed tower, from the tower center to the target unit
+    /// position (inclusive). Stone towers stand taller than palisade
+    /// watchtowers; both stay near V1 archer range (25 m).
+    #[must_use]
+    pub const fn tower_range_mm(self) -> u32 {
+        match self {
+            Self::PalisadeV1 => 20_000,
+            Self::StoneWallsV1 => 30_000,
+        }
+    }
+
+    /// Upper bound on the soldiers one staffed tower removes in one combat pulse.
+    #[must_use]
+    pub const fn tower_max_casualties_per_pulse(self) -> u16 {
+        match self {
+            Self::PalisadeV1 => 2,
+            Self::StoneWallsV1 => 3,
+        }
+    }
+
+    /// Missile frontage of one staffed tower volley, in the same frontage
+    /// slots a formed missile unit fires with (a 10-file archer line fires 10).
+    #[must_use]
+    pub(crate) const fn tower_volley_frontage(self) -> u32 {
+        match self {
+            Self::PalisadeV1 => 12,
+            Self::StoneWallsV1 => 24,
+        }
+    }
+
     /// The profile for a campaign fortification level; `None` below a palisade.
     #[must_use]
     pub const fn for_fortification_level(level: u8) -> Option<Self> {
@@ -174,8 +226,9 @@ impl SiegeLayout {
 
     /// Deterministic layout of a fortification profile. The wall forms one
     /// vertical barrier through the battlefield with a centered gate. Towers
-    /// remain bounded to the wall footprint; they are presentation/state
-    /// anchors in this slice, not independent destruction or collision systems.
+    /// remain bounded to the wall footprint; staffed towers fire on attackers
+    /// in range (see [`SiegeBattleState::tower_activity`]), but they are not
+    /// independent destruction or collision systems.
     #[must_use]
     pub fn for_profile(battlefield: FlatBattlefield, profile: SiegeProfile) -> Self {
         let geometry = profile.geometry();
@@ -400,6 +453,84 @@ impl SiegeBattleState {
             )
     }
 
+    /// Whether the wall stands between `left` and `right`, so formed units at
+    /// those positions cannot fight in melee. Positions on opposite sides of
+    /// the wall line are separated unless the straight line between them
+    /// crosses the wall line inside a traversable (open or destroyed) gate.
+    /// No wall-access mechanic exists yet, so a closed gate separates them
+    /// too. Missiles are not affected.
+    #[must_use]
+    pub fn wall_separates(self, left: BattlePoint, right: BattlePoint) -> bool {
+        let gate = self.layout.gate;
+        let (left_side, right_side) = (
+            wall_side(left.x_mm, gate.min_x_mm, gate.max_x_mm),
+            wall_side(right.x_mm, gate.min_x_mm, gate.max_x_mm),
+        );
+        if !matches!(
+            (left_side, right_side),
+            (WallSide::Left, WallSide::Right) | (WallSide::Right, WallSide::Left)
+        ) {
+            return false;
+        }
+        if !self.gate_state.is_traversable() {
+            return true;
+        }
+        // Where the line between the two positions crosses the wall center
+        // line; opposite sides guarantee distinct x coordinates.
+        let wall_x = i128::from(gate.center().x_mm);
+        let (lx, ly) = (i128::from(left.x_mm), i128::from(left.y_mm));
+        let (rx, ry) = (i128::from(right.x_mm), i128::from(right.y_mm));
+        let crossing_y = ly + (ry - ly) * (wall_x - lx) / (rx - lx);
+        !(i128::from(gate.min_y_mm)..=i128::from(gate.max_y_mm)).contains(&crossing_y)
+    }
+
+    /// Per tower in layout order: the index into `units` of the staffed
+    /// tower's target, or `None`, plus whether the tower is staffed. One pass
+    /// over `units` resolves all towers.
+    pub(crate) fn tower_targets(
+        self,
+        units: &[TacticalUnit],
+    ) -> [(bool, Option<usize>); SIEGE_TOWER_COUNT] {
+        let range = square(self.profile.tower_range_mm());
+        let mut towers = [(false, None::<(u128, usize)>); SIEGE_TOWER_COUNT];
+        for (index, unit) in units.iter().enumerate() {
+            if !unit.can_receive_orders() {
+                continue;
+            }
+            for (tower, (staffed, target)) in self.layout.towers.iter().zip(&mut towers) {
+                match unit.side() {
+                    BattleSide::Defender => *staffed |= tower.contains(unit.position()),
+                    BattleSide::Attacker => {
+                        let distance = point_distance_squared(tower.center, unit.position());
+                        if distance > range {
+                            continue;
+                        }
+                        let closer = target.is_none_or(|(best, best_index)| {
+                            (distance, unit.id()) < (best, units[best_index].id())
+                        });
+                        if closer {
+                            *target = Some((distance, index));
+                        }
+                    }
+                }
+            }
+        }
+        towers
+            .map(|(staffed, target)| (staffed, target.filter(|_| staffed).map(|(_, index)| index)))
+    }
+
+    /// Current activity of every tower in layout order.
+    #[must_use]
+    pub fn tower_activity(self, units: &[TacticalUnit]) -> Vec<SiegeTowerActivity> {
+        self.tower_targets(units)
+            .into_iter()
+            .map(|(staffed, target)| SiegeTowerActivity {
+                staffed,
+                target_unit_id: target.map(|index| units[index].id().to_owned()),
+            })
+            .collect()
+    }
+
     /// Applies one combat pulse of gate damage. Only formed attacker units
     /// under an explicit gate-attack order and within reach of the gate count;
     /// defenders never damage their own gate. Integrity only falls, and the
@@ -493,6 +624,17 @@ fn wall_side(x_mm: u32, min_x_mm: u32, max_x_mm: u32) -> WallSide {
 
 fn scale(span_mm: u32, numerator: u32, denominator: u32) -> u32 {
     ((u64::from(span_mm) * u64::from(numerator)) / u64::from(denominator)) as u32
+}
+
+fn point_distance_squared(left: BattlePoint, right: BattlePoint) -> u128 {
+    squared_components(
+        i64::from(left.x_mm) - i64::from(right.x_mm),
+        i64::from(left.y_mm) - i64::from(right.y_mm),
+    )
+}
+
+const fn square(value: u32) -> u128 {
+    (value as u128) * (value as u128)
 }
 
 fn squared_components(dx: i64, dy: i64) -> u128 {
@@ -668,6 +810,31 @@ mod tests {
             stone.gate_integrity,
             SIEGE_GATE_MAX_INTEGRITY - 2 * SiegeProfile::StoneWallsV1.gate_damage_per_pulse()
         );
+    }
+
+    #[test]
+    fn walls_separate_melee_unless_the_line_crosses_a_traversable_gate() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let mut siege = SiegeBattleState::test_siege(battlefield);
+        let gate = siege.layout.gate;
+        let at_gate = |x_mm| BattlePoint::new(x_mm, gate.center().y_mm);
+        let (outside, inside) = (gate.min_x_mm - 1, gate.max_x_mm + 1);
+        let wall_y = 20_000;
+        assert!(siege.wall_separates(at_gate(outside), at_gate(inside)));
+        assert!(siege.wall_separates(
+            BattlePoint::new(outside, wall_y),
+            BattlePoint::new(inside, wall_y)
+        ));
+        assert!(!siege.wall_separates(at_gate(outside), BattlePoint::new(outside - 500, 1)));
+        assert!(!siege.wall_separates(at_gate(outside), gate.center()));
+        for state in [SiegeGateState::Open, SiegeGateState::Destroyed] {
+            siege.gate_state = state;
+            assert!(!siege.wall_separates(at_gate(outside), at_gate(inside)));
+            assert!(siege.wall_separates(
+                BattlePoint::new(outside, wall_y),
+                BattlePoint::new(inside, wall_y)
+            ));
+        }
     }
 
     #[test]
