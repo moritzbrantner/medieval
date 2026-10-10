@@ -10,4 +10,4 @@ medieval-core = { path = "../medieval-core" }
 serde.workspace = true
 serde_json.workspace = true
 wgpu = "30.0.1"
-three-d-formats = { git = "https://github.com/moritzbrantner/3d-lab", rev = "c8da821648d6146ad04ee3f85de18533f3639a42" }
+three-d-formats = { git = "https://github.com/moritzbrantner/3d-lab", rev = "5340bdf31de6761ed16737dd6d19da2431172fd6" }
