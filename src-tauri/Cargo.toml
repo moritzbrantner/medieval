@@ -28,4 +28,4 @@ wgpu = "30.0.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gdk = "0.18"
-gtk = "0.18"
+gtk = "0.19"
