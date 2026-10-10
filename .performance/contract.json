@@ -72,7 +72,7 @@
       },
       "correctnessEvidence": [
         "active units reach identical state at every unrelated population",
-        "every work counter except the declared linear movement visit scan is identical across populations",
+        "every work counter except the two declared linear unit scans (movement_unit_visits, unit_scan_visits) is identical across populations",
         "no whole unit-vector clone during recurring ticks"
       ],
       "metrics": [
@@ -82,7 +82,7 @@
           "direction": "lower",
           "signal": "operation-count",
           "blocking": false,
-          "notes": "Asserted to be zero by the integration test rather than emitted by the smoke command; adopt coding-tooling#300 growth declarations when available."
+          "notes": "Asserted to be zero for every counter except movement_unit_visits and unit_scan_visits, which are bounded per unit instead, by the integration test rather than emitted by the smoke command; adopt coding-tooling#300 growth declarations when available."
         }
       ]
     },

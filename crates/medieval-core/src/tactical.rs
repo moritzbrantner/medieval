@@ -1128,7 +1128,7 @@ impl TacticalBattle {
                 }
             }
             counters.unit_scan_visits += self.units.len() as u64;
-            self.clear_invalid_engagement_targets();
+            self.clear_invalid_engagement_targets(&mut counters);
             counters.unit_scan_visits += self.update_completion();
         }
         counters
@@ -1911,7 +1911,7 @@ impl TacticalBattle {
         }
     }
 
-    fn clear_invalid_engagement_targets(&mut self) {
+    fn clear_invalid_engagement_targets(&mut self, counters: &mut TacticalWorkCounters) {
         let units = &self.units;
         let invalid: Vec<usize> = (0..units.len())
             .filter(|&index| {
@@ -1920,14 +1920,12 @@ impl TacticalBattle {
                     return false;
                 };
                 unit.state != TacticalUnitState::Formed
-                    || units
-                        .binary_search_by(|candidate| candidate.id.as_str().cmp(target_id))
-                        .is_ok_and(|target| {
-                            matches!(
-                                units[target].state,
-                                TacticalUnitState::Destroyed | TacticalUnitState::Escaped { .. }
-                            )
-                        })
+                    || find_unit(units, target_id, counters).is_some_and(|target| {
+                        matches!(
+                            target.state,
+                            TacticalUnitState::Destroyed | TacticalUnitState::Escaped { .. }
+                        )
+                    })
             })
             .collect();
         for index in invalid {
