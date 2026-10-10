@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use medieval_core::{
     BattlePoint, BattleSide, FlatBattlefield, Formation, TacticalBattle, TacticalUnit,
+    TacticalWorkCounters,
 };
 
 const RUNS: usize = 3;
@@ -19,7 +20,7 @@ fn unit(id: String, side: BattleSide, x: u32, y: u32) -> TacticalUnit {
     )
 }
 
-fn run_battle() -> TacticalBattle {
+fn run_battle() -> (TacticalBattle, TacticalWorkCounters) {
     let battlefield = FlatBattlefield::new(300_000, 200_000);
     let mut units = Vec::new();
     for index in 0..UNITS_PER_SIDE {
@@ -48,8 +49,8 @@ fn run_battle() -> TacticalBattle {
             .issue_engagement_order(&format!("defender-{index}"), &format!("attacker-{index}"))
             .expect("defender engagement must remain valid");
     }
-    battle.advance_ticks(TICKS);
-    battle
+    let work = battle.advance_ticks_measured(TICKS);
+    (battle, work)
 }
 
 fn main() {
@@ -58,29 +59,33 @@ fn main() {
 
     for _ in 0..RUNS {
         let started = Instant::now();
-        let battle = run_battle();
+        let run = run_battle();
         elapsed_ns.push(started.elapsed().as_nanos());
         if let Some(reference) = &expected {
             assert_eq!(
-                &battle, reference,
+                &run, reference,
                 "medieval tactical benchmark became nondeterministic"
             );
         } else {
-            expected = Some(battle);
+            expected = Some(run);
         }
     }
 
     elapsed_ns.sort_unstable();
-    let battle = expected.expect("at least one run");
+    let (battle, work) = expected.expect("at least one run");
     let surviving = battle
         .units()
         .iter()
         .filter(|unit| !unit.is_destroyed())
         .count();
     println!(
-        "scenario=tactical-engagement units={} ticks={TICKS} runs={RUNS} median_elapsed_ns={} surviving_units={} deterministic=true timing=advisory-shared-runner",
+        "scenario=tactical-engagement units={} ticks={TICKS} runs={RUNS} median_elapsed_ns={} surviving_units={} unit_snapshot_clones={} unit_snapshot_copies={} target_lookup_evaluations={} indexed_unit_lookups={} deterministic=true timing=advisory-shared-runner",
         UNITS_PER_SIDE * 2,
         elapsed_ns[RUNS / 2],
         surviving,
+        work.snapshot_clones,
+        work.snapshot_unit_copies,
+        work.target_candidate_visits,
+        work.indexed_unit_lookups,
     );
 }

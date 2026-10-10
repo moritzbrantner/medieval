@@ -143,11 +143,11 @@ impl TacticalBattle {
         unit_id: &str,
         position: BattlePoint,
     ) -> Result<(), TacticalError> {
-        let unit = self
-            .units()
-            .iter()
-            .find(|unit| unit.id() == unit_id)
-            .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
+        let units = self.units();
+        let unit = units
+            .binary_search_by(|unit| unit.id().cmp(unit_id))
+            .map(|index| &units[index])
+            .map_err(|_| TacticalError::UnitNotFound(unit_id.to_owned()))?;
         let bounds = FormationFootprint::at(unit, position);
         let field = self.battlefield();
         let zone = DeploymentZone {

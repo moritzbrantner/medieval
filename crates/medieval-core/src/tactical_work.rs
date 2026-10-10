@@ -10,6 +10,7 @@ pub struct TacticalWorkCounters {
     pub snapshot_clones: u64,
     pub snapshot_unit_copies: u64,
     pub target_candidate_visits: u64,
+    pub indexed_unit_lookups: u64,
     pub proximity_queries: u64,
     pub physics_contact_queries: u64,
     pub path_requests: u64,
