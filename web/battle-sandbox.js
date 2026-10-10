@@ -282,6 +282,8 @@ function readableOrder(order) {
       return "Attack-move";
     case "engage":
       return `Engaging ${readableUnitName(order.targetUnitId)}`;
+    case "attackGate":
+      return "Attacking the gate";
     case "withdraw":
       return "Withdrawing";
     case "rout":

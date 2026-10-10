@@ -69,7 +69,7 @@ Speed and pause are sandbox presentation and scheduling state. They are reported
 The browser HUD only renders the Rust sandbox status and forwards input:
 
 - **Battle status** shows the run state, the player and opponent sides (`playerSide` / `opponentSide`: attacker or defender) and, only in a siege, a capture progress bar from `siege.capture.progress` out of `siegeCaptureMaxProgress` (core `SIEGE_CAPTURE_MAX_PROGRESS`). A terminal state with reason `siegeCapture` gets its own text, separate from a defeated force or a withdrawal.
-- **Selected units** shows one card per Rust-selected unit with its kind, soldiers, morale, fatigue, ammunition, formation and current order. The order is derived in Rust from core unit state (`order.kind`: `hold`, `move`, `attackMove`, `engage` with `targetUnitId`, `withdraw`, `rout`, `destroyed` or `escaped`).
+- **Selected units** shows one card per Rust-selected unit with its kind, soldiers, morale, fatigue, ammunition, formation and current order. The order is derived in Rust from core unit state (`order.kind`: `hold`, `move`, `attackMove`, `engage` with `targetUnitId`, `attackGate`, `withdraw`, `rout`, `destroyed` or `escaped`).
 - **Control groups** are shared `TacticalControls` state and are reported as `controlGroups`. As on desktop, Ctrl+1–9 assigns the selection, 1–9 recalls a group and Shift+1–9 adds it to the selection. Digit 0 stays bound to fit camera in the browser. Each group is a focusable button that recalls it. Resetting the battle clears the groups.
 
 ## Converged 3D foundations
@@ -309,6 +309,34 @@ starts 40 ticks of `recovering`; stopping, turning, changing formation or target
 cover, detours and interception interrupt momentum. Repeating the same engagement
 order does not restart momentum or recovery. Core serialization and browser status
 retain charge state; historical records lacking it do not acquire charge bonuses.
+
+## Siege gate assault
+
+A siege gate has core-owned integrity (`SiegeBattleState::gate_integrity`,
+serialized as `gateIntegrity`) out of `SIEGE_GATE_MAX_INTEGRITY` (1,000, the
+same thousandths scale as capture progress). Sieges recorded without the field
+load with an intact gate; a gate recorded as destroyed loads with zero.
+
+`TacticalBattle::issue_gate_attack_order(unit_id)` is the semantic attack-gate
+order. It is legal only for a formed attacker unit while the gate is closed; a
+defender, an open or destroyed gate, a field battle and a finished battle are
+rejected without changing the battle. Like an engagement order the unit
+approaches from any distance, to the gate's center line just outside the gate on
+its own side of the wall, and holds within reach
+(`COMBAT_CONTACT_DISTANCE_MM` of the gate footprint). A move, engagement,
+withdrawal, rout or destruction replaces the order. A unit pressed against the
+gate under any other order never damages it.
+
+On each combat pulse every formed attacker unit holding the order within reach
+deals its profile's gate damage: 100 for a palisade (one unit breaches it in
+10 s) and 50 for stone walls (20 s). Like capture it counts units, not soldiers.
+Integrity only falls, and on the pulse it reaches zero the gate becomes
+`SiegeGateState::Destroyed`, which is traversable through the existing siege
+pathing contract (`is_passable_at`, `movement_waypoint`); every gate-attack
+order then ends. The opponent planner gives an attacking unit whose nearest
+enemy is behind a closed gate the same order; defenders never target their own
+gate. The renderer keeps projecting `gate_traversable`, and the HUD shows the
+order as `attackGate`.
 
 ## Finite missile ammunition
 

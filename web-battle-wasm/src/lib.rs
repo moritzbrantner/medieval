@@ -228,6 +228,8 @@ fn unit_order_status(unit: &TacticalUnit) -> UnitOrderStatus {
         "rout"
     } else if unit.engagement_target().is_some() {
         "engage"
+    } else if unit.is_attacking_gate() {
+        "attackGate"
     } else if unit.destination().is_some() {
         match unit.movement_mode() {
             MovementMode::AttackMove => "attackMove",

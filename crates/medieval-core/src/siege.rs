@@ -8,6 +8,11 @@ use crate::{
 pub const SIEGE_CAPTURE_MAX_PROGRESS: u16 = 1_000;
 pub const SIEGE_CAPTURE_PROGRESS_PER_PULSE: u16 = 100;
 pub const SIEGE_TOWER_COUNT: usize = 4;
+/// Integrity of a standing gate. Integrity uses the same thousandths scale as
+/// capture progress; the gate is destroyed on the pulse it reaches zero.
+pub const SIEGE_GATE_MAX_INTEGRITY: u16 = 1_000;
+/// Distance from the gate footprint within which an ordered unit strikes it.
+pub const SIEGE_GATE_ATTACK_DISTANCE_MM: u32 = crate::tactical::COMBAT_CONTACT_DISTANCE_MM;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -110,6 +115,17 @@ impl SiegeProfile {
         match self {
             Self::PalisadeV1 => 1,
             Self::StoneWallsV1 => 2,
+        }
+    }
+
+    /// Gate damage one formed attacking unit deals per combat pulse. Like
+    /// capture progress it counts units, not soldiers: one unit breaches a
+    /// palisade gate in 10 pulses (10 s) and a stone gate in 20 pulses (20 s).
+    #[must_use]
+    pub const fn gate_damage_per_pulse(self) -> u16 {
+        match self {
+            Self::PalisadeV1 => 100,
+            Self::StoneWallsV1 => 50,
         }
     }
 
@@ -250,7 +266,15 @@ pub struct SiegeBattleState {
     pub profile: SiegeProfile,
     pub layout: SiegeLayout,
     pub gate_state: SiegeGateState,
+    /// Remaining gate integrity out of [`SIEGE_GATE_MAX_INTEGRITY`]. Sieges
+    /// recorded before gate assaults existed load with an intact gate.
+    #[serde(default = "full_gate_integrity")]
+    pub gate_integrity: u16,
     pub capture: SiegeCaptureState,
+}
+
+const fn full_gate_integrity() -> u16 {
+    SIEGE_GATE_MAX_INTEGRITY
 }
 
 impl SiegeBattleState {
@@ -266,6 +290,7 @@ impl SiegeBattleState {
             profile,
             layout: SiegeLayout::for_profile(battlefield, profile),
             gate_state: SiegeGateState::Closed,
+            gate_integrity: SIEGE_GATE_MAX_INTEGRITY,
             capture: SiegeCaptureState::default(),
         }
     }
@@ -324,6 +349,87 @@ impl SiegeBattleState {
         }
 
         BattlePoint::new(gate_center.x_mm, gate_center.y_mm)
+    }
+
+    /// Whether `point` is close enough to the gate footprint to strike it.
+    #[must_use]
+    pub fn within_gate_attack_distance(self, point: BattlePoint) -> bool {
+        let gate = self.layout.gate;
+        let dx = u128::from(
+            gate.min_x_mm
+                .saturating_sub(point.x_mm)
+                .max(point.x_mm.saturating_sub(gate.max_x_mm)),
+        );
+        let dy = u128::from(
+            gate.min_y_mm
+                .saturating_sub(point.y_mm)
+                .max(point.y_mm.saturating_sub(gate.max_y_mm)),
+        );
+        let reach = u128::from(SIEGE_GATE_ATTACK_DISTANCE_MM);
+        dx * dx + dy * dy <= reach * reach
+    }
+
+    /// Where a unit at `from` stands to strike the gate: just outside the gate
+    /// footprint on its own side of the wall, on the gate's center line. The
+    /// point is passable whatever the gate state, so the existing siege path
+    /// reaches it without crossing the wall.
+    #[must_use]
+    pub fn gate_attack_position(self, from: BattlePoint) -> BattlePoint {
+        let gate = self.layout.gate;
+        let center = gate.center();
+        let x_mm = if from.x_mm > center.x_mm {
+            gate.max_x_mm.saturating_add(1)
+        } else {
+            gate.min_x_mm.saturating_sub(1)
+        };
+        BattlePoint::new(x_mm, center.y_mm)
+    }
+
+    /// Whether a closed gate is all that separates `from` and `to` across the
+    /// wall line, so reaching `to` needs the gate breached or opened.
+    #[must_use]
+    pub fn closed_gate_separates(self, from: BattlePoint, to: BattlePoint) -> bool {
+        let gate = self.layout.gate;
+        self.gate_state == SiegeGateState::Closed
+            && matches!(
+                (
+                    wall_side(from.x_mm, gate.min_x_mm, gate.max_x_mm),
+                    wall_side(to.x_mm, gate.min_x_mm, gate.max_x_mm)
+                ),
+                (WallSide::Left, WallSide::Right) | (WallSide::Right, WallSide::Left)
+            )
+    }
+
+    /// Applies one combat pulse of gate damage. Only formed attacker units
+    /// under an explicit gate-attack order and within reach of the gate count;
+    /// defenders never damage their own gate. Integrity only falls, and the
+    /// gate becomes [`SiegeGateState::Destroyed`] on the pulse it reaches zero.
+    /// Returns whether this pulse destroyed the gate.
+    pub fn advance_gate_assault(&mut self, units: &[TacticalUnit]) -> bool {
+        if self.gate_state != SiegeGateState::Closed {
+            return false;
+        }
+        let attackers = units
+            .iter()
+            .filter(|unit| {
+                unit.side() == BattleSide::Attacker
+                    && unit.can_receive_orders()
+                    && unit.is_attacking_gate()
+                    && self.within_gate_attack_distance(unit.position())
+            })
+            .count();
+        if attackers == 0 {
+            return false;
+        }
+        let damage = u16::try_from(attackers)
+            .unwrap_or(u16::MAX)
+            .saturating_mul(self.profile.gate_damage_per_pulse());
+        self.gate_integrity = self.gate_integrity.saturating_sub(damage);
+        if self.gate_integrity == 0 {
+            self.gate_state = SiegeGateState::Destroyed;
+            return true;
+        }
+        false
     }
 
     /// Advances capture once per authoritative tactical combat pulse. Only
@@ -531,6 +637,37 @@ mod tests {
         }
         assert_eq!(siege.capture.progress, SIEGE_CAPTURE_MAX_PROGRESS);
         assert_eq!(siege.capture.captured_by, Some(BattleSide::Attacker));
+    }
+
+    #[test]
+    fn gate_assault_counts_only_ordered_attackers_in_reach_and_uses_profile_damage() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let mut palisade = SiegeBattleState::for_profile(battlefield, SiegeProfile::PalisadeV1);
+        let reach = palisade.gate_attack_position(BattlePoint::new(20_000, 10_000));
+        assert_eq!(reach, BattlePoint::new(49_499, 50_000));
+        assert!(palisade.within_gate_attack_distance(reach));
+        assert!(!palisade.within_gate_attack_distance(BattlePoint::new(40_000, 50_000)));
+
+        let ordered = unit("ram", BattleSide::Attacker, reach).with_gate_attack_order();
+        let unordered = unit("idle", BattleSide::Attacker, reach);
+        let defender = unit("defender", BattleSide::Defender, reach).with_gate_attack_order();
+        assert!(!palisade.advance_gate_assault(&[unordered, defender]));
+        assert_eq!(palisade.gate_integrity, SIEGE_GATE_MAX_INTEGRITY);
+
+        for pulse in 1..=10 {
+            let destroyed = palisade.advance_gate_assault(std::slice::from_ref(&ordered));
+            assert_eq!(destroyed, pulse == 10);
+        }
+        assert_eq!(palisade.gate_integrity, 0);
+        assert_eq!(palisade.gate_state, SiegeGateState::Destroyed);
+        assert!(!palisade.advance_gate_assault(std::slice::from_ref(&ordered)));
+
+        let mut stone = SiegeBattleState::test_siege(battlefield);
+        stone.advance_gate_assault(&[ordered.clone(), ordered]);
+        assert_eq!(
+            stone.gate_integrity,
+            SIEGE_GATE_MAX_INTEGRITY - 2 * SiegeProfile::StoneWallsV1.gate_damage_per_pulse()
+        );
     }
 
     #[test]
