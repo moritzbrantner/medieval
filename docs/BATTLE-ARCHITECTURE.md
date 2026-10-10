@@ -175,8 +175,9 @@ and autoresolving an already-reduced army again.
 ## Strategic tactical outcomes
 
 `CampaignState::apply_tactical_battle_result` commits casualty reconciliation and
-strategic consequences atomically. The currently supported field and prototype
-siege battles follow the existing campaign rule: an attacker victory captures
+strategic consequences atomically. Field battles and sieges on the versioned
+fortification profiles (see `docs/PROVINCE-DEFINITIONS.md`) follow the existing
+campaign rule: an attacker victory captures
 the target province and moves its surviving attacking army there. Capture cancels
 the former owner's recruitment in that province. Losing survivors retreat to a
 friendly neighbor of the battle province, preferring the attacker's entry province

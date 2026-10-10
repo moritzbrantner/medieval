@@ -85,8 +85,7 @@ sends `queue_construction` intents.
 Each level names a minimum current settlement level and any other building
 levels that must already stand. A level's income bonus replaces the lower
 level's. Barracks unlock units and deepen recruitment pools (see below); walls
-have no campaign effect yet until siege fortification profiles (#122) consume
-them. Every
+select the siege profile of battles for the province (see below). Every
 distinct building uses one of the settlement's building slots; raising a
 standing building to its next level needs no new slot.
 
@@ -129,6 +128,27 @@ with full pools. A captured province keeps its pool; the former owner's queued
 recruitment there is cancelled without refunding the batch. The AI recruits
 through the same options and commands. Numbers are a first pass for the V1
 balance pass (#174).
+
+## Fortification and siege profiles
+
+A province's fortification level is its standing walls level, or 2 for a
+settlement defined as `fortified` (stone walls), whichever is higher. Level 0
+is fought as a field battle; higher levels are sieges with a versioned,
+core-owned `medieval_core::SiegeProfile` that alone determines wall, gate,
+tower, and capture geometry (renderers only draw the resulting layout):
+
+| Level | Profile | Wall band (width) | Gate span (depth) | Tower radius | Capture point |
+| --- | --- | --- | --- | --- | --- |
+| 1 (Palisade) | `palisadeV1` | 49.5–50.5 % | 43–57 % | shorter side / 80 | 80 %, 50 %; shorter side / 20 |
+| 2 (Stone walls or defined fortified) | `stoneWallsV1` | 49–51 % | 45–55 % | shorter side / 50 | 80 %, 50 %; shorter side / 20 |
+
+Both profiles start with a closed gate and four towers at 15, 35, 65 and 85 %
+of the depth. `stoneWallsV1` is the original prototype layout. Campaign seeds
+record the profile as `battlefieldProfile.fortification` and battles retain it
+in their siege state; seeds and battles recorded before profiles existed load
+as `stoneWallsV1`, which is exactly the geometry they were fought on. The
+sandbox keeps choosing explicit fixtures (`deploy_siege_at_location` is the
+stone-walls fixture; `deploy_siege_with_profile` selects any profile).
 
 ## Versions and saved campaigns
 

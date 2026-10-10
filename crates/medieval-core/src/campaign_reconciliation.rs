@@ -133,7 +133,7 @@ impl CampaignState {
             || seed.attacker.faction_id != pending.attacker_faction
             || seed.defender.faction_id != pending.defender_faction
             || seed.attacker.source_army_ids != [pending.attacker_army_id.clone()]
-            || seed.battlefield_profile != province.battlefield.profile()
+            || seed.battlefield_profile != province.tactical_battlefield_profile()
             || province.owner != pending.defender_faction
         {
             return Err(CampaignError::TacticalResultMismatch);

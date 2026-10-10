@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::deployment::siege::SiegeBattleState;
+use crate::deployment::siege::{SiegeBattleState, SiegeProfile};
 use crate::{
     BattlePoint, BattleSide, BattlefieldLocation, DeploymentZone, FlatBattlefield,
     TACTICAL_TERRAIN_GRID_SIZE, TacticalError, TacticalTerrain, TacticalUnit,
@@ -16,8 +16,15 @@ const FORMATION_GAP_MM: i64 = 1_000;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TacticalBattlefieldProfile {
-    Field { location: BattlefieldLocation },
-    Siege { location: BattlefieldLocation },
+    Field {
+        location: BattlefieldLocation,
+    },
+    Siege {
+        location: BattlefieldLocation,
+        /// Seeds recorded before fortification profiles used stone walls.
+        #[serde(default)]
+        fortification: SiegeProfile,
+    },
 }
 
 impl Default for TacticalBattlefieldProfile {
@@ -29,6 +36,8 @@ impl Default for TacticalBattlefieldProfile {
 }
 
 /// Campaign-owned context. Missing historical metadata retains the legacy field.
+/// `fortified` marks a settlement defined with stone walls; walls built during
+/// the campaign are province buildings (see [`crate::Province::fortification_level`]).
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ProvinceBattlefieldContext {
@@ -37,16 +46,24 @@ pub struct ProvinceBattlefieldContext {
 }
 
 impl ProvinceBattlefieldContext {
+    /// The profile from definition data alone: stone walls when fortified.
     #[must_use]
     pub const fn profile(self) -> TacticalBattlefieldProfile {
-        if self.fortified {
-            TacticalBattlefieldProfile::Siege {
+        self.profile_for_fortification(if self.fortified { 2 } else { 0 })
+    }
+
+    /// The profile for a campaign fortification level: a field battle below a
+    /// palisade, otherwise a siege with that level's versioned profile.
+    #[must_use]
+    pub const fn profile_for_fortification(self, level: u8) -> TacticalBattlefieldProfile {
+        match SiegeProfile::for_fortification_level(level) {
+            Some(fortification) => TacticalBattlefieldProfile::Siege {
                 location: self.location,
-            }
-        } else {
-            TacticalBattlefieldProfile::Field {
+                fortification,
+            },
+            None => TacticalBattlefieldProfile::Field {
                 location: self.location,
-            }
+            },
         }
     }
 }
@@ -54,7 +71,17 @@ impl ProvinceBattlefieldContext {
 impl TacticalBattlefieldProfile {
     pub(crate) const fn location(self) -> BattlefieldLocation {
         match self {
-            Self::Field { location } | Self::Siege { location } => location,
+            Self::Field { location } | Self::Siege { location, .. } => location,
+        }
+    }
+
+    /// The siege state a battle on this profile starts with.
+    pub(crate) fn initial_siege(self, battlefield: FlatBattlefield) -> Option<SiegeBattleState> {
+        match self {
+            Self::Field { .. } => None,
+            Self::Siege { fortification, .. } => {
+                Some(SiegeBattleState::for_profile(battlefield, fortification))
+            }
         }
     }
 }
@@ -115,10 +142,7 @@ pub(crate) fn place_campaign_units(
     units: &mut [TacticalUnit],
 ) -> Result<(), TacticalError> {
     let terrain = TacticalTerrain::for_location(profile.location());
-    let siege = match profile {
-        TacticalBattlefieldProfile::Field { .. } => None,
-        TacticalBattlefieldProfile::Siege { .. } => Some(SiegeBattleState::test_siege(battlefield)),
-    };
+    let siege = profile.initial_siege(battlefield);
     let zones = siege.map_or_else(
         || standard_deployment_zones(battlefield),
         |siege| siege.layout.deployment_zones,

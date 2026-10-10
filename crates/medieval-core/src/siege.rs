@@ -75,6 +75,70 @@ impl SiegeCapturePoint {
     }
 }
 
+/// Versioned, core-owned fortification profiles. Each profile is the single
+/// source of its wall, gate, tower and capture geometry; renderers only draw
+/// the resulting [`SiegeLayout`]. Versions are never changed in place: a new
+/// geometry gets a new variant so retained battles and seeds stay exact.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SiegeProfile {
+    /// Timber palisade: a thin wall line, a wide gate, and small watchtowers.
+    PalisadeV1,
+    /// Stone curtain wall: thicker wall, narrower gate, and full towers. This is
+    /// the original deterministic siege layout, so battles and seeds recorded
+    /// before profiles existed load as stone walls.
+    #[default]
+    StoneWallsV1,
+}
+
+/// Geometry of one profile, as fractions of the battlefield.
+struct SiegeProfileGeometry {
+    /// Wall band across the battlefield width, in thousandths.
+    wall_permille: (u32, u32),
+    /// Gate span along the battlefield depth, in thousandths.
+    gate_permille: (u32, u32),
+    /// Tower radius as a divisor of the battlefield's shorter side.
+    tower_radius_divisor: u32,
+}
+
+impl SiegeProfile {
+    pub const ALL: [Self; 2] = [Self::PalisadeV1, Self::StoneWallsV1];
+
+    /// The fortification level this profile represents (1 = palisade, 2 = stone).
+    #[must_use]
+    pub const fn fortification_level(self) -> u8 {
+        match self {
+            Self::PalisadeV1 => 1,
+            Self::StoneWallsV1 => 2,
+        }
+    }
+
+    /// The profile for a campaign fortification level; `None` below a palisade.
+    #[must_use]
+    pub const fn for_fortification_level(level: u8) -> Option<Self> {
+        match level {
+            0 => None,
+            1 => Some(Self::PalisadeV1),
+            _ => Some(Self::StoneWallsV1),
+        }
+    }
+
+    const fn geometry(self) -> SiegeProfileGeometry {
+        match self {
+            Self::PalisadeV1 => SiegeProfileGeometry {
+                wall_permille: (495, 505),
+                gate_permille: (430, 570),
+                tower_radius_divisor: 80,
+            },
+            Self::StoneWallsV1 => SiegeProfileGeometry {
+                wall_permille: (490, 510),
+                gate_permille: (450, 550),
+                tower_radius_divisor: 50,
+            },
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SiegeLayout {
@@ -86,16 +150,23 @@ pub struct SiegeLayout {
 }
 
 impl SiegeLayout {
-    /// Deterministic first siege layout. The wall forms one vertical barrier
-    /// through the battlefield with a centered gate. Towers remain bounded to
-    /// the wall footprint; they are presentation/state anchors in this slice,
-    /// not independent destruction or collision systems.
+    /// The original deterministic siege layout, kept as the stone-walls profile.
     #[must_use]
     pub fn test_siege(battlefield: FlatBattlefield) -> Self {
-        let wall_min_x = scale(battlefield.width_mm, 49, 100);
-        let wall_max_x = scale(battlefield.width_mm, 51, 100);
-        let gate_min_y = scale(battlefield.depth_mm, 45, 100);
-        let gate_max_y = scale(battlefield.depth_mm, 55, 100);
+        Self::for_profile(battlefield, SiegeProfile::StoneWallsV1)
+    }
+
+    /// Deterministic layout of a fortification profile. The wall forms one
+    /// vertical barrier through the battlefield with a centered gate. Towers
+    /// remain bounded to the wall footprint; they are presentation/state
+    /// anchors in this slice, not independent destruction or collision systems.
+    #[must_use]
+    pub fn for_profile(battlefield: FlatBattlefield, profile: SiegeProfile) -> Self {
+        let geometry = profile.geometry();
+        let wall_min_x = scale(battlefield.width_mm, geometry.wall_permille.0, 1_000);
+        let wall_max_x = scale(battlefield.width_mm, geometry.wall_permille.1, 1_000);
+        let gate_min_y = scale(battlefield.depth_mm, geometry.gate_permille.0, 1_000);
+        let gate_max_y = scale(battlefield.depth_mm, geometry.gate_permille.1, 1_000);
         let gate = SiegeArea {
             min_x_mm: wall_min_x,
             max_x_mm: wall_max_x,
@@ -117,7 +188,8 @@ impl SiegeLayout {
             },
         ];
         let wall_center_x = wall_min_x + (wall_max_x - wall_min_x) / 2;
-        let tower_radius = battlefield.width_mm.min(battlefield.depth_mm) / 50;
+        let tower_radius =
+            battlefield.width_mm.min(battlefield.depth_mm) / geometry.tower_radius_divisor;
         let towers = [15_u32, 35, 65, 85].map(|percent_y| SiegeTower {
             center: BattlePoint::new(wall_center_x, scale(battlefield.depth_mm, percent_y, 100)),
             radius_mm: tower_radius,
@@ -173,6 +245,9 @@ pub struct SiegeCaptureState {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SiegeBattleState {
+    /// Battles recorded before profiles existed used the stone-walls layout.
+    #[serde(default)]
+    pub profile: SiegeProfile,
     pub layout: SiegeLayout,
     pub gate_state: SiegeGateState,
     pub capture: SiegeCaptureState,
@@ -181,8 +256,15 @@ pub struct SiegeBattleState {
 impl SiegeBattleState {
     #[must_use]
     pub fn test_siege(battlefield: FlatBattlefield) -> Self {
+        Self::for_profile(battlefield, SiegeProfile::StoneWallsV1)
+    }
+
+    /// A fresh siege of `profile`: closed gate, no capture progress.
+    #[must_use]
+    pub fn for_profile(battlefield: FlatBattlefield, profile: SiegeProfile) -> Self {
         Self {
-            layout: SiegeLayout::test_siege(battlefield),
+            profile,
+            layout: SiegeLayout::for_profile(battlefield, profile),
             gate_state: SiegeGateState::Closed,
             capture: SiegeCaptureState::default(),
         }
@@ -346,6 +428,47 @@ mod tests {
         let encoded = serde_json::to_string(&first).unwrap();
         let decoded: SiegeBattleState = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, first);
+    }
+
+    #[test]
+    fn fortification_profiles_have_distinct_documented_geometry() {
+        let battlefield = FlatBattlefield::new(100_000, 80_000);
+        let palisade = SiegeBattleState::for_profile(battlefield, SiegeProfile::PalisadeV1);
+        let stone = SiegeBattleState::for_profile(battlefield, SiegeProfile::StoneWallsV1);
+        assert_eq!(stone, SiegeBattleState::test_siege(battlefield));
+        assert_eq!(
+            (palisade.layout.gate.min_x_mm, palisade.layout.gate.max_x_mm),
+            (49_500, 50_500)
+        );
+        assert_eq!(
+            (palisade.layout.gate.min_y_mm, palisade.layout.gate.max_y_mm),
+            (34_400, 45_600)
+        );
+        assert_eq!(palisade.layout.towers[0].radius_mm, 1_000);
+        assert_eq!(stone.layout.towers[0].radius_mm, 1_600);
+        assert!(
+            palisade.layout.gate.max_y_mm - palisade.layout.gate.min_y_mm
+                > stone.layout.gate.max_y_mm - stone.layout.gate.min_y_mm
+        );
+        assert_eq!(palisade.layout.capture_point, stone.layout.capture_point);
+        assert_eq!(palisade.gate_state, SiegeGateState::Closed);
+        for profile in SiegeProfile::ALL {
+            assert_eq!(
+                SiegeProfile::for_fortification_level(profile.fortification_level()),
+                Some(profile)
+            );
+        }
+        assert_eq!(SiegeProfile::for_fortification_level(0), None);
+    }
+
+    #[test]
+    fn battles_recorded_before_profiles_load_as_stone_walls() {
+        let battlefield = FlatBattlefield::new(100_000, 80_000);
+        let mut document = serde_json::to_value(SiegeBattleState::test_siege(battlefield)).unwrap();
+        document.as_object_mut().unwrap().remove("profile");
+        let legacy: SiegeBattleState = serde_json::from_value(document).unwrap();
+        assert_eq!(legacy, SiegeBattleState::test_siege(battlefield));
+        assert_eq!(legacy.profile, SiegeProfile::StoneWallsV1);
     }
 
     #[test]

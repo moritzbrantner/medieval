@@ -163,7 +163,7 @@ const WALLS: BuildingSpec = BuildingSpec {
     building: BuildingId::Walls,
     category: BuildingCategory::Defense,
     label: "Walls",
-    role: "Fortification for future siege profiles.",
+    role: "Fortifies the settlement: a palisade or stone walls make assaults sieges.",
     levels: &[
         BuildingLevelSpec {
             level: 1,
@@ -231,6 +231,21 @@ impl Province {
             .iter()
             .find(|standing| standing.building == building)
             .map_or(0, |standing| standing.level)
+    }
+
+    /// Fortification level of the settlement: the standing walls level, or
+    /// stone walls (2) for a settlement defined as fortified.
+    #[must_use]
+    pub fn fortification_level(&self) -> u8 {
+        let defined = if self.battlefield.fortified { 2 } else { 0 };
+        self.building_level(BuildingId::Walls).max(defined)
+    }
+
+    /// The tactical battlefield a battle for this province is fought on.
+    #[must_use]
+    pub fn tactical_battlefield_profile(&self) -> crate::TacticalBattlefieldProfile {
+        self.battlefield
+            .profile_for_fortification(self.fortification_level())
     }
 
     /// Income added by the province's standing buildings.
