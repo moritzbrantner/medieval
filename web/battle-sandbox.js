@@ -10,6 +10,7 @@ import init, {
   battle_sandbox_set_formation,
   battle_sandbox_set_location,
   battle_sandbox_set_paused,
+  battle_sandbox_set_speed,
   battle_sandbox_start_at_location,
   battle_sandbox_start_campaign,
   battle_sandbox_status,
@@ -39,6 +40,17 @@ const armySetupReason = document.querySelector("#army-setup-reason");
 const armySetupError = document.querySelector("#army-setup-error");
 const startBattleButton = document.querySelector("#start-sandbox-battle");
 const locationSelect = document.querySelector("#battle-location");
+const battleSides = document.querySelector("#battle-sides");
+const playerSideText = battleSides.querySelector('[data-field="player-side"]');
+const opponentSideText = battleSides.querySelector('[data-field="opponent-side"]');
+const siegeCapture = document.querySelector("#siege-capture");
+const siegeCaptureText = document.querySelector("#siege-capture-text");
+const siegeCaptureProgress = document.querySelector("#siege-capture-progress");
+const speedInputs = [...document.querySelectorAll('input[name="simulation-speed"]')];
+const selectedUnitCards = document.querySelector("#selected-unit-cards");
+const selectedUnitsEmpty = document.querySelector("#selected-units-empty");
+const controlGroupList = document.querySelector("#control-group-list");
+const controlGroupsEmpty = document.querySelector("#control-groups-empty");
 const battleLocations = new Set(["mountainPass", "forestClearing", "riverFord"]);
 const requestedLocation = new URLSearchParams(window.location.search).get("location");
 if (battleLocations.has(requestedLocation)) locationSelect.value = requestedLocation;
@@ -53,6 +65,7 @@ let campaignResultSent = false;
 let wasmReady = false;
 let battleStarted = false;
 let lastStatusRefresh = 0;
+let renderedControlGroups = "";
 const armySelection = {
   levy: 0,
   spearmen: 1,
@@ -254,6 +267,128 @@ function readableRange(rangeMm) {
   return Number.isInteger(metres) ? `${metres} m` : `${metres.toFixed(1)} m`;
 }
 
+const UNIT_KIND_LABELS = { levy: "Levy", spearmen: "Spearmen", archers: "Archers", knights: "Knights" };
+const SIDE_LABELS = { attacker: "Attacker", defender: "Defender" };
+
+function readableSpeed(multiplier) {
+  return `${multiplier}×`;
+}
+
+function readableOrder(order) {
+  switch (order?.kind) {
+    case "move":
+      return "Move";
+    case "attackMove":
+      return "Attack-move";
+    case "engage":
+      return `Engaging ${readableUnitName(order.targetUnitId)}`;
+    case "withdraw":
+      return "Withdrawing";
+    case "rout":
+      return "Routed";
+    case "destroyed":
+      return "Destroyed";
+    case "escaped":
+      return "Escaped";
+    default:
+      return "Holding";
+  }
+}
+
+function renderBattleStatus(status) {
+  battleSides.hidden = false;
+  playerSideText.textContent = SIDE_LABELS[status.playerSide] ?? status.playerSide;
+  opponentSideText.textContent = SIDE_LABELS[status.opponentSide] ?? status.opponentSide;
+  for (const input of speedInputs) {
+    input.checked = Number(input.value) === status.speedMultiplier;
+  }
+
+  const capture = status.siege?.capture;
+  siegeCapture.hidden = !capture;
+  if (!capture) return;
+  siegeCaptureProgress.max = status.siegeCaptureMaxProgress;
+  siegeCaptureProgress.value = capture.progress;
+  const holder = capture.capturedBy ?? capture.capturingSide;
+  const action = capture.capturedBy ? "captured" : "capturing";
+  siegeCaptureText.textContent = holder
+    ? `Siege capture · ${SIDE_LABELS[holder] ?? holder} ${action} · ${capture.progress} / ${status.siegeCaptureMaxProgress}`
+    : `Siege capture · ${capture.progress} / ${status.siegeCaptureMaxProgress}`;
+}
+
+function cardField(label, field, value) {
+  const term = document.createElement("dt");
+  term.textContent = label;
+  const detail = document.createElement("dd");
+  detail.dataset.field = field;
+  detail.textContent = value;
+  return [term, detail];
+}
+
+function renderSelectedUnitCards(status) {
+  const fragment = document.createDocumentFragment();
+  for (const unitId of status.selectedUnits) {
+    const unit = status.units.find((candidate) => candidate.id === unitId);
+    if (!unit) continue;
+    const card = document.createElement("article");
+    card.className = "unit-card";
+    card.dataset.unitId = unit.id;
+    card.dataset.state = unitState(unit);
+
+    const heading = document.createElement("header");
+    const name = document.createElement("strong");
+    name.textContent = unit.sourceArmyId ?? readableUnitName(unit.id);
+    const kind = document.createElement("span");
+    kind.dataset.field = "kind";
+    kind.textContent = UNIT_KIND_LABELS[unit.unitKind] ?? "Legacy unit";
+    heading.append(name, kind);
+
+    const fields = document.createElement("dl");
+    fields.append(
+      ...cardField("Soldiers", "soldiers", String(unit.soldiers)),
+      ...cardField("Morale", "morale", String(unit.morale)),
+      ...cardField("Fatigue", "fatigue", String(unit.fatigue)),
+      ...cardField("Ammunition", "ammunition", Number.isInteger(unit.ammunition) ? `${unit.ammunition} volleys` : "—"),
+      ...cardField("Formation", "formation", readableFormation(unit)),
+      ...cardField("Order", "order", readableOrder(unit.order)),
+    );
+    card.append(heading, fields);
+    fragment.append(card);
+  }
+  selectedUnitsEmpty.hidden = fragment.childNodes.length > 0;
+  selectedUnitCards.replaceChildren(fragment);
+}
+
+function renderControlGroups(status) {
+  const groups = status.controlGroups ?? [];
+  // Rebuild only when Rust group state changes so a focused group button keeps focus.
+  const signature = JSON.stringify(groups);
+  if (signature === renderedControlGroups) return;
+  renderedControlGroups = signature;
+  const focusedGroup = document.activeElement?.closest?.("[data-control-group]")?.dataset.controlGroup;
+
+  const fragment = document.createDocumentFragment();
+  for (const { group, unitIds } of groups) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary control-group";
+    button.dataset.controlGroup = String(group);
+    const count = `${unitIds.length} unit${unitIds.length === 1 ? "" : "s"}`;
+    button.setAttribute("aria-label", `Control group ${group}, ${count}: ${unitIds.map(readableUnitName).join(", ")}`);
+    const number = document.createElement("strong");
+    number.textContent = String(group);
+    const detail = document.createElement("span");
+    detail.textContent = count;
+    button.append(number, detail);
+    button.addEventListener("click", () => runControl({ kind: "recallControlGroup", group }));
+    fragment.append(button);
+  }
+  controlGroupsEmpty.hidden = groups.length > 0;
+  controlGroupList.replaceChildren(fragment);
+  if (focusedGroup !== undefined) {
+    controlGroupList.querySelector(`[data-control-group="${focusedGroup}"]`)?.focus();
+  }
+}
+
 function renderStatus(rawStatus) {
   currentStatus = typeof rawStatus === "string" ? JSON.parse(rawStatus) : rawStatus;
   if (campaignMode && currentStatus.outcome && !campaignResultSent) {
@@ -266,13 +401,17 @@ function renderStatus(rawStatus) {
   const withdrawalText = reason === "withdrawal"
     ? { playerVictory: "Victory — the opposing force withdrew.", playerDefeat: "Your force withdrew from the battlefield." }[currentStatus.outcome]
     : reason === "mutualWithdrawal" ? "Both forces withdrew from the battlefield." : null;
-  const outcomeText = withdrawalText ?? {
+  const captureText = reason === "siegeCapture"
+    ? { playerVictory: "Victory — your force captured the stronghold.", playerDefeat: "Defeat — the enemy captured the stronghold." }[currentStatus.outcome]
+    : null;
+  const outcomeText = withdrawalText ?? captureText ?? {
     playerVictory: "Victory — the opposing force can no longer fight.",
     playerDefeat: "Defeat — your force can no longer fight.",
     draw: "Battle ended with neither side able to continue.",
   }[currentStatus.outcome];
   stateText.textContent = outcomeText
-    ?? `${currentStatus.paused ? "Paused" : "Running"} · simulation tick ${currentStatus.tick}`;
+    ?? `${currentStatus.paused ? "Paused" : "Running"} · ${readableSpeed(currentStatus.speedMultiplier)} · simulation tick ${currentStatus.tick}`;
+  renderBattleStatus(currentStatus);
 
   selectionText.textContent = currentStatus.selectedUnits.length
     ? `Selected: ${currentStatus.selectedUnits.map(readableUnitName).join(", ")}`
@@ -286,6 +425,8 @@ function renderStatus(rawStatus) {
   document.querySelector("#attack-move").disabled = selectionDisabled;
   lineFormationButton.disabled = selectionDisabled;
   columnFormationButton.disabled = selectionDisabled;
+  renderSelectedUnitCards(currentStatus);
+  renderControlGroups(currentStatus);
 
   const fragment = document.createDocumentFragment();
   for (const unit of currentStatus.units) {
@@ -306,7 +447,7 @@ function renderStatus(rawStatus) {
     const order = unit.engagementTarget
       ? ` · engaging ${readableUnitName(unit.engagementTarget)}`
       : "";
-    const kind = { levy: "Levy", spearmen: "Spearmen", archers: "Archers", knights: "Knights" }[unit.unitKind] ?? "Legacy unit";
+    const kind = UNIT_KIND_LABELS[unit.unitKind] ?? "Legacy unit";
     const ammunition = unit.ammunition === 0 ? " · ammunition exhausted" : Number.isInteger(unit.ammunition) ? ` · ammunition ${unit.ammunition} volleys` : "";
     detail.textContent = `${kind} · ${unitState(unit)} · ${unit.soldiers} soldiers · ${readableFormation(unit)} · range ${readableRange(unit.attackRangeMm)} · morale ${unit.morale} · fatigue ${unit.fatigue}${ammunition}${order}`;
 
@@ -352,6 +493,16 @@ function setFormation(kind) {
   }
 }
 
+function setSpeed(multiplier) {
+  if (!currentStatus) return;
+  clearError();
+  try {
+    renderStatus(battle_sandbox_set_speed(multiplier));
+  } catch (error) {
+    reportError(error);
+  }
+}
+
 function togglePause() {
   if (!currentStatus || currentStatus.outcome) return;
   clearError();
@@ -383,7 +534,9 @@ function animate(timestamp) {
 canvas.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 && event.button !== 2) return;
   event.preventDefault();
-  canvas.focus();
+  // Focusing must not scroll the page under the pointer: the click position is
+  // measured against the canvas where the player clicked.
+  canvas.focus({ preventScroll: true });
   const rect = canvas.getBoundingClientRect();
   clearError();
   try {
@@ -437,12 +590,23 @@ const battleInputBindings = attachBattleInputBindings({
     runControl({ kind: "fitCamera" });
   },
   togglePause,
+  assignControlGroup(group) {
+    runControl({ kind: "assignControlGroup", group });
+  },
+  recallControlGroup(group, additive) {
+    runControl({ kind: "recallControlGroup", group, additive });
+  },
 });
 window.addEventListener("pagehide", () => battleInputBindings.destroy(), { once: true });
 
 withdrawButton.addEventListener("click", () => runControl({ kind: "withdraw" }));
 
 pauseButton.addEventListener("click", togglePause);
+for (const input of speedInputs) {
+  input.addEventListener("change", () => {
+    if (input.checked) setSpeed(Number(input.value));
+  });
+}
 stopButton.addEventListener("click", () => runControl({ kind: "stopSelected" }));
 document.querySelector("#attack-move").addEventListener("click", () => runControl({ kind: "armAttackMove" }));
 document.querySelector("#set-frontage").addEventListener("click", () => {
