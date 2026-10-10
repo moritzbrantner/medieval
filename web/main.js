@@ -44,6 +44,9 @@ let recruitmentProvinceId;
 let settlementOption;
 let construction;
 let recruitmentRequestId = 0;
+let pendingSiegeKey;
+let pendingSiegeProfile = null;
+let pendingSiegeEpoch = 0;
 let campaignBusy = false;
 
 function showView(name) {
@@ -421,14 +424,54 @@ function renderPendingBattle() {
   fightBattleButton.textContent = campaign.pendingTacticalResult ? "Apply battle outcome" : "Fight";
 
   pendingBattleDetail.append(text, note);
-  const target = campaign.provinces.find((province) => province.id === battle.targetProvince);
-  if (!campaign.pendingTacticalResult && target?.battlefield?.fortified) {
+  if (campaign.pendingTacticalResult) return;
+  // Whether this is a siege comes from the Rust battle seed, which derives the
+  // fortification profile from the province's walls and definition.
+  const key = pendingBattleKey(battle);
+  if (pendingSiegeKey !== key) {
+    refreshPendingSiegeProfile(key);
+    return;
+  }
+  if (pendingSiegeProfile) {
     const siege = document.createElement("p");
     siege.className = "battle-note";
     siege.dataset.siegeLimitation = "closed-gate";
+    siege.dataset.siegeProfile = pendingSiegeProfile;
     siege.textContent = `${provinceName(battle.targetProvince)} is fortified and its gate stays closed: assaults cannot breach it yet, so a played siege can only be withdrawn. Auto-resolve decides the siege.`;
     pendingBattleDetail.append(siege);
   }
+}
+
+// A replaced campaign may repeat the same battle identity with other walls.
+function resetPendingSiegeProfile() {
+  pendingSiegeEpoch += 1;
+  pendingSiegeKey = undefined;
+  pendingSiegeProfile = null;
+}
+
+function pendingBattleKey(battle) {
+  return `${campaign.turn}:${battle.attackerArmyId}:${battle.fromProvince}:${battle.targetProvince}`;
+}
+
+async function refreshPendingSiegeProfile(key) {
+  const epoch = pendingSiegeEpoch;
+  let seed;
+  try {
+    seed = await invoke("pending_tactical_battle_seed");
+  } catch {
+    return;
+  }
+  const battle = campaign.pendingBattle;
+  if (
+    epoch !== pendingSiegeEpoch ||
+    !battle ||
+    campaign.pendingTacticalResult ||
+    pendingBattleKey(battle) !== key
+  ) return;
+  const profile = seed.battlefieldProfile;
+  pendingSiegeProfile = profile?.kind === "siege" ? profile.fortification : null;
+  pendingSiegeKey = key;
+  renderPendingBattle();
 }
 
 function renderBattleReport() {
@@ -812,6 +855,7 @@ async function loadCampaign() {
   errorBox.hidden = true;
   try {
     campaign = await invoke("load_campaign");
+    resetPendingSiegeProfile();
     [playerFaction, campaignWinner] = await Promise.all([
       invoke("campaign_player_faction"),
       invoke("campaign_winner"),
@@ -863,6 +907,7 @@ async function startNewCampaign() {
   errorBox.hidden = true;
   try {
     campaign = await invoke("start_new_campaign", { playerFaction: requestedFaction });
+    resetPendingSiegeProfile();
     playerFaction = requestedFaction;
     campaignWinner = undefined;
     clearMovementSelection();

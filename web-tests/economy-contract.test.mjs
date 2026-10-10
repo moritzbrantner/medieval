@@ -75,3 +75,12 @@ test("buildings, prerequisites, and construction rules come from Rust", () => {
   assert.doesNotMatch(script, /\.buildings\s*(=(?!=)|\.push)|usedSlots\s*[-+]?=(?!=)|currentLevel\s*[-+]?=(?!=)/);
   assert.doesNotMatch(script, /buildingCosts|costByBuilding|prerequisites/);
 });
+
+test("siege presentation follows the Rust battle seed, not province fields", () => {
+  assert.match(script, /invoke\("pending_tactical_battle_seed"\)/);
+  assert.match(script, /profile\?\.kind === "siege" \? profile\.fortification : null/);
+  assert.doesNotMatch(script, /battlefield\?\.fortified/);
+  assert.match(script, /invoke\("load_campaign"\);\n\s*resetPendingSiegeProfile\(\);/);
+  assert.match(script, /invoke\("start_new_campaign"[^\n]*\n\s*resetPendingSiegeProfile\(\);/);
+  assert.doesNotMatch(script, /Walls[^\n]*siege|palisadeV1|stoneWallsV1/);
+});

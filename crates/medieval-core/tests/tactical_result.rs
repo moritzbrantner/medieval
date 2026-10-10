@@ -339,6 +339,7 @@ fn siege_capture_records_the_target_province_and_winning_faction() {
     let mut seed = seed();
     seed.battlefield_profile = TacticalBattlefieldProfile::Siege {
         location: BattlefieldLocation::ForestClearing,
+        fortification: medieval_core::SiegeProfile::StoneWallsV1,
     };
     let mut document = serde_json::to_value(battle(seed)).unwrap();
     for unit in document["units"].as_array_mut().unwrap() {

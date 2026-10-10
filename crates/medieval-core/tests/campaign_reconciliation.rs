@@ -478,3 +478,43 @@ fn strip_settlement_levels(document: &mut serde_json::Value, expected: &mut Camp
         province.recruitment_pool = province.full_recruitment_pool();
     }
 }
+
+#[test]
+fn pre_profile_saves_keep_a_staged_field_result_in_a_walled_province() {
+    let mut campaign = campaign();
+    let result = combat_result(&campaign);
+    campaign.reconcile_tactical_casualties(&result).unwrap();
+    // Before schema 6 a palisade did not make a siege, so this staged result
+    // was fought as a field battle.
+    let paris = campaign
+        .provinces
+        .iter_mut()
+        .find(|province| province.id == "paris")
+        .unwrap();
+    paris.buildings.push(medieval_core::ProvinceBuilding {
+        building: medieval_core::BuildingId::Walls,
+        level: 1,
+    });
+    let mut document = serde_json::to_value(CampaignSave {
+        schema_version: medieval_core::CAMPAIGN_SAVE_SCHEMA_VERSION,
+        player_faction: "england".into(),
+        campaign: campaign.clone(),
+    })
+    .unwrap();
+    document["schemaVersion"] = serde_json::json!(5);
+    let migrated = CampaignSave::from_json(&document.to_string()).unwrap();
+    let pending = migrated.campaign.pending_battle.as_ref().unwrap();
+    assert_eq!(
+        pending.legacy_battlefield_profile,
+        Some(result.seed.battlefield_profile)
+    );
+    let reloaded = CampaignSave::from_json(&migrated.to_json().unwrap()).unwrap();
+    assert_eq!(reloaded, migrated);
+    let mut finished = migrated.campaign;
+    finished.apply_tactical_battle_result(&result).unwrap();
+    assert!(finished.pending_battle.is_none());
+
+    // A current save cannot reinterpret the staged result.
+    document["schemaVersion"] = serde_json::json!(medieval_core::CAMPAIGN_SAVE_SCHEMA_VERSION);
+    assert!(CampaignSave::from_json(&document.to_string()).is_err());
+}
