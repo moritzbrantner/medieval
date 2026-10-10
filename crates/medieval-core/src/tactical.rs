@@ -6,7 +6,7 @@ use std::{
 use physics_engine::{Collider, ColliderShape, Vec3i, collider_contact};
 use serde::{Deserialize, Serialize};
 
-use crate::deployment::siege::{SiegeBattleState, SiegeGateState};
+use crate::deployment::siege::{SiegeBattleState, SiegeGateState, SiegeProfile};
 use crate::deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
 use crate::terrain::{BattlefieldLocation, COMBAT_FACTOR_BASE_MILLI, TacticalTerrain};
 use crate::{TacticalWorkCounters, UnitKind};
@@ -752,13 +752,23 @@ impl TacticalBattle {
         Self::deploy_siege_at_location(battlefield, units, BattlefieldLocation::MountainPass)
     }
 
+    /// Development fixture: the stone-walls profile at `location`.
     pub fn deploy_siege_at_location(
         battlefield: FlatBattlefield,
         units: Vec<TacticalUnit>,
         location: BattlefieldLocation,
     ) -> Result<Self, TacticalError> {
+        Self::deploy_siege_with_profile(battlefield, units, location, SiegeProfile::StoneWallsV1)
+    }
+
+    pub fn deploy_siege_with_profile(
+        battlefield: FlatBattlefield,
+        units: Vec<TacticalUnit>,
+        location: BattlefieldLocation,
+        profile: SiegeProfile,
+    ) -> Result<Self, TacticalError> {
         let mut battle = Self::new_at_location(battlefield, units, location)?;
-        let siege = SiegeBattleState::test_siege(battlefield);
+        let siege = SiegeBattleState::for_profile(battlefield, profile);
         for unit in &battle.units {
             let zone = siege
                 .layout

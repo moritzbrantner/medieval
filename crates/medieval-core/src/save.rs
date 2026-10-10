@@ -11,7 +11,11 @@ use crate::CampaignState;
 /// versions must not contain either and load without buildings.
 /// Version 5 adds per-province recruitment pools; older versions must not
 /// contain them and load with every unlocked pool full.
-pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 5;
+/// Version 6 derives battlefields from fortification levels (walls make a
+/// siege). An older save whose staged tactical result was fought as a field
+/// battle in a walled province keeps that battlefield as the pending battle's
+/// `legacyBattlefieldProfile`; older versions must not contain that field.
+pub const CAMPAIGN_SAVE_SCHEMA_VERSION: u32 = 6;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -130,6 +134,9 @@ impl CampaignSave {
                 province.recruitment_pool = province.full_recruitment_pool();
             }
         }
+        if header.schema_version < 6 {
+            save.campaign.migrate_legacy_staged_battlefield()?;
+        }
         save.schema_version = CAMPAIGN_SAVE_SCHEMA_VERSION;
         save.validate()?;
         Ok(save)
@@ -238,6 +245,14 @@ impl CampaignSave {
             }
         }
 
+        if campaign.pending_tactical_result.is_none()
+            && campaign
+                .pending_battle
+                .as_ref()
+                .is_some_and(|pending| pending.legacy_battlefield_profile.is_some())
+        {
+            return invalid("a legacy battlefield profile requires a staged tactical result");
+        }
         campaign
             .validate_reconciled_tactical_state()
             .map_err(|error| SaveError::InvalidState(error.to_string()))?;

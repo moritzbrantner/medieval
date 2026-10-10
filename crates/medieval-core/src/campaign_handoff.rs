@@ -94,9 +94,10 @@ impl TacticalBattle {
             crate::TacticalBattlefieldProfile::Field { location } => {
                 Self::deploy_at_location(battlefield, units, location)
             }
-            crate::TacticalBattlefieldProfile::Siege { location } => {
-                Self::deploy_siege_at_location(battlefield, units, location)
-            }
+            crate::TacticalBattlefieldProfile::Siege {
+                location,
+                fortification,
+            } => Self::deploy_siege_with_profile(battlefield, units, location, fortification),
         }?;
         battle.campaign_seed = Some(seed);
         Ok(battle.start())
@@ -250,7 +251,7 @@ impl CampaignState {
             attacker_army_id: pending.attacker_army_id.clone(),
             from_province: pending.from_province.clone(),
             target_province: pending.target_province.clone(),
-            battlefield_profile: province.battlefield.profile(),
+            battlefield_profile: province.tactical_battlefield_profile(),
             attacker,
             defender,
         })

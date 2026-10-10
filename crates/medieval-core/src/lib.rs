@@ -30,6 +30,7 @@ pub use province_definitions::{
 };
 pub use recruitment::{RecruitmentOption, RecruitmentPool, UnitUnlock};
 mod save;
+pub use deployment::siege::SiegeProfile;
 mod settlement;
 pub use settlement::{
     SETTLEMENT_LEVELS, SettlementLevel, SettlementLevelSpec, SettlementUpgradeOption,
@@ -153,6 +154,11 @@ pub struct PendingBattle {
     pub from_province: String,
     pub target_province: String,
     pub defender_faction: String,
+    /// Battlefield a tactical result staged by a save from before siege
+    /// profiles was fought on, when it differs from the profile the province
+    /// now derives. Only migrated saves carry it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_battlefield_profile: Option<TacticalBattlefieldProfile>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -522,6 +528,7 @@ impl CampaignState {
                 from_province: self.armies[army_index].province.clone(),
                 target_province: destination.to_owned(),
                 defender_faction: destination_owner,
+                legacy_battlefield_profile: None,
             });
             self.log.push(format!(
                 "Turn {}: {} marches from {} into hostile {}. Battle pending.",
@@ -846,6 +853,7 @@ mod tests {
                 from_province: "normandy".into(),
                 target_province: "brittany".into(),
                 defender_faction: "france".into(),
+                legacy_battlefield_profile: None,
             })
         );
         assert!(matches!(

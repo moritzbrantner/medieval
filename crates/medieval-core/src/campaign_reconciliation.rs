@@ -1,6 +1,6 @@
 use crate::{
-    Army, BattleSide, CampaignError, CampaignState, TacticalArmyResult, TacticalArmySeed,
-    TacticalBattleResult, TacticalBattleSeed, UNIT_KINDS, UnitKind,
+    Army, BattleSide, CampaignError, CampaignState, SaveError, TacticalArmyResult,
+    TacticalArmySeed, TacticalBattleResult, TacticalBattleSeed, UNIT_KINDS, UnitKind,
 };
 
 impl CampaignState {
@@ -57,6 +57,40 @@ impl CampaignState {
         next.pending_tactical_result = Some(result.clone());
         next.validate_reconciled_tactical_state()?;
         *self = next;
+        Ok(())
+    }
+
+    /// Before schema 6, walls did not make a siege. A staged result fought as
+    /// the definition-only battlefield keeps it when the province now derives
+    /// another profile.
+    pub(crate) fn migrate_legacy_staged_battlefield(&mut self) -> Result<(), SaveError> {
+        if self
+            .pending_battle
+            .as_ref()
+            .is_some_and(|pending| pending.legacy_battlefield_profile.is_some())
+        {
+            return Err(SaveError::InvalidState(
+                "saves before version 6 cannot contain a legacy battlefield profile".into(),
+            ));
+        }
+        let (Some(result), Some(pending)) = (&self.pending_tactical_result, &self.pending_battle)
+        else {
+            return Ok(());
+        };
+        let Some(province) = self
+            .provinces
+            .iter()
+            .find(|province| province.id == pending.target_province)
+        else {
+            return Ok(());
+        };
+        let legacy = province.battlefield.profile();
+        if result.seed.battlefield_profile == legacy
+            && legacy != province.tactical_battlefield_profile()
+            && let Some(pending) = &mut self.pending_battle
+        {
+            pending.legacy_battlefield_profile = Some(legacy);
+        }
         Ok(())
     }
 
@@ -133,7 +167,10 @@ impl CampaignState {
             || seed.attacker.faction_id != pending.attacker_faction
             || seed.defender.faction_id != pending.defender_faction
             || seed.attacker.source_army_ids != [pending.attacker_army_id.clone()]
-            || seed.battlefield_profile != province.battlefield.profile()
+            || seed.battlefield_profile
+                != pending
+                    .legacy_battlefield_profile
+                    .unwrap_or_else(|| province.tactical_battlefield_profile())
             || province.owner != pending.defender_faction
         {
             return Err(CampaignError::TacticalResultMismatch);

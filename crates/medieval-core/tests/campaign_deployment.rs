@@ -1,6 +1,6 @@
 use medieval_core::{
-    BattleSide, BattlefieldLocation, FlatBattlefield, TacticalBattle, TacticalBattlefieldProfile,
-    TacticalError,
+    BattleSide, BattlefieldLocation, FlatBattlefield, SiegeProfile, TacticalBattle,
+    TacticalBattlefieldProfile, TacticalError,
 };
 
 fn seed() -> medieval_core::TacticalBattleSeed {
@@ -12,10 +12,12 @@ fn seed() -> medieval_core::TacticalBattleSeed {
 #[test]
 fn every_field_and_siege_profile_deploys_complete_nonoverlapping_formations() {
     for location in BattlefieldLocation::ALL {
-        for profile in [
-            TacticalBattlefieldProfile::Field { location },
-            TacticalBattlefieldProfile::Siege { location },
-        ] {
+        let sieges = SiegeProfile::ALL.map(|fortification| TacticalBattlefieldProfile::Siege {
+            location,
+            fortification,
+        });
+        for profile in std::iter::once(TacticalBattlefieldProfile::Field { location }).chain(sieges)
+        {
             let field = FlatBattlefield::new(120_000, 80_000);
             let battle =
                 TacticalBattle::from_campaign_seed_with_profile(field, seed(), profile).unwrap();
