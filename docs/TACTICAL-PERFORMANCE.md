@@ -40,6 +40,11 @@ advancing one tick at a time.
 
 - `ticks` and `movementUnitVisits` count executed ticks and the movement phase's
   unit visits, including units that require no movement.
+- `unitScanVisits` counts per-unit visits of the other full unit scans: queued
+  order promotion, attack-move acquisition, the charge pass, target clearing
+  and completion checks every tick, plus the combat pulse's pair, volley and
+  charge-recovery loops and siege capture. Like `movementUnitVisits`, it is a
+  declared linear cost in total units.
 - `snapshotClones` counts whole unit-vector clones during tick advancement and
   must stay zero. `snapshotUnitCopies` counts individual units copied by the
   movement phase's copy-on-write before-state: a unit is copied right before
@@ -76,7 +81,8 @@ composition growth without duplicating upstream microbenchmarks.
 in contact and one marching unit — and adds 8, 64, and 256 idle unrelated
 units. For movement ticks, the combat-pulse tick, and the tick after one
 retarget, every counter except `movementUnitVisits` must be identical across
-populations, no whole unit vector is cloned, only active units are copied, and
+populations (`movementUnitVisits` and `unitScanVisits` are the declared linear
+scans and are bounded per unit instead), no whole unit vector is cloned, only active units are copied, and
 the active units reach identical state. A regression back to whole-battle
 clones or linear id lookups fails these assertions.
 

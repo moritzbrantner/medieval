@@ -4,8 +4,8 @@
 //! Every fixture keeps the same active set — one melee engagement already in
 //! contact and one marching unit — and adds idle, order-free units far from
 //! it. Movement, combat-pulse and order-change work must then be identical at
-//! every population; only the per-tick movement visit scan is declared linear
-//! in total units.
+//! every population; only the per-tick unit visit scans (movement visits and
+//! the other full unit scans) are declared linear in total units.
 use medieval_core::{
     BattlePoint, BattleSide, BattlefieldLocation, FlatBattlefield, Formation, MovementOrder,
     TacticalBattle, TacticalUnit, TacticalWorkCounters, UnitCombatProfile, UnitKind,
@@ -91,6 +91,7 @@ fn operations(idle_pairs: u32) -> [(&'static str, TacticalWorkCounters); 3] {
 
 fn without_linear_visit_scan(mut counters: TacticalWorkCounters) -> TacticalWorkCounters {
     counters.movement_unit_visits = 0;
+    counters.unit_scan_visits = 0;
     counters
 }
 
@@ -141,11 +142,18 @@ fn recurring_actions_never_materialize_the_whole_unit_vector() {
 }
 
 #[test]
-fn the_movement_visit_scan_is_the_declared_linear_cost() {
+fn unit_visit_scans_are_the_declared_linear_cost() {
     for idle_pairs in POPULATIONS {
         let units = u64::from(3 + 2 * idle_pairs);
         for (name, work) in operations(idle_pairs) {
             assert_eq!(work.movement_unit_visits, work.ticks * units, "{name}");
+            // Order promotion, acquisition, charge pass, target clearing and
+            // at most two completion scans per tick; three combat loops and
+            // siege capture per pulse.
+            let per_tick = 7 * work.ticks * units;
+            let per_pulse = 4 * work.combat_pulses * units;
+            assert!(work.unit_scan_visits >= 4 * work.ticks * units, "{name}");
+            assert!(work.unit_scan_visits <= per_tick + per_pulse, "{name}");
         }
     }
 }

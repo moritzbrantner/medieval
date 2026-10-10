@@ -1113,11 +1113,13 @@ impl TacticalBattle {
             {
                 self.resolve_combat_pulse(&mut counters);
                 if let Some(siege) = &mut self.siege {
+                    counters.unit_scan_visits += self.units.len() as u64;
                     siege.advance_capture(&self.units);
                 }
             }
+            counters.unit_scan_visits += self.units.len() as u64;
             self.clear_invalid_engagement_targets();
-            self.update_completion();
+            counters.unit_scan_visits += self.update_completion();
         }
         counters
     }
@@ -1129,18 +1131,21 @@ impl TacticalBattle {
         }
     }
 
-    fn update_completion(&mut self) {
+    /// Returns the units visited by the completion scans.
+    fn update_completion(&mut self) -> u64 {
+        let visits = std::cell::Cell::new(0_u64);
         if self.completion_rules.is_none() || self.ensure_running().is_err() {
-            return;
+            return 0;
         }
         let captured_by = self.siege.and_then(|siege| siege.capture.captured_by);
         let result = if let Some(winner) = captured_by {
             Some((Some(winner), TacticalFinishReason::SiegeCapture))
         } else if let Some(withdrawal) = self.withdrawal {
             let pending = |side| {
-                self.units
-                    .iter()
-                    .any(|unit| unit.side == side && unit.is_withdrawing())
+                self.units.iter().any(|unit| {
+                    visits.set(visits.get() + 1);
+                    unit.side == side && unit.is_withdrawing()
+                })
             };
             match (withdrawal.attacker, withdrawal.defender) {
                 (true, true)
@@ -1159,6 +1164,7 @@ impl TacticalBattle {
         } else {
             let active = |side| {
                 self.units.iter().any(|unit| {
+                    visits.set(visits.get() + 1);
                     unit.side == side
                         && unit.soldiers > 0
                         && unit.state == TacticalUnitState::Formed
@@ -1184,6 +1190,7 @@ impl TacticalBattle {
                 reason,
             };
         }
+        visits.get()
     }
 
     fn unit_index(&self, unit_id: &str) -> Option<usize> {
@@ -1228,6 +1235,9 @@ impl TacticalBattle {
     }
 
     fn advance_movement_orders(&mut self, counters: &mut TacticalWorkCounters) {
+        // Queued-waypoint promotion and attack-move acquisition each visit
+        // every unit once.
+        counters.unit_scan_visits += 2 * self.units.len() as u64;
         for unit in &mut self.units {
             if unit.state == TacticalUnitState::Formed
                 && unit.destination.is_none()
@@ -1343,6 +1353,7 @@ impl TacticalBattle {
                 TacticalUnitState::Escaped { .. } | TacticalUnitState::Destroyed => {}
             }
         }
+        counters.unit_scan_visits += self.units.len() as u64;
         for index in 0..self.units.len() {
             if before.unit(&self.units, index).charge.is_some() {
                 let charge = self.next_charge(counters, index, &before);
@@ -1614,6 +1625,9 @@ impl TacticalBattle {
         counters.combat_pulses += 1;
         let snapshot = &self.units;
         let mut pairs = BTreeSet::new();
+        // Pair collection, the volley loop, and charge recovery each visit
+        // every unit once.
+        counters.unit_scan_visits += 3 * snapshot.len() as u64;
         for unit in snapshot {
             if unit.state != TacticalUnitState::Formed {
                 continue;
