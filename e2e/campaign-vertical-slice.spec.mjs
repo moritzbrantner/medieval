@@ -59,6 +59,8 @@ test("recruit, physically fight, capture and reload the reconciled campaign", as
   await page.locator("#fight-battle").click();
   const battle = page.frameLocator("#campaign-battle-frame");
   await expect(battle.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  // #94: the campaign battle opens in deployment; start the clock first.
+  await battle.getByRole("button", { name: "Start battle", exact: true }).click();
   await battle.getByRole("button", { name: "Pause", exact: true }).click();
   const frame = page.frames().find((candidate) => candidate.url().includes("battle.html?campaign"));
   if (!frame) throw new Error("campaign frame did not open");

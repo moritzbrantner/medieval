@@ -1,11 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+use crate::tactical::DeploymentEdit;
 use crate::{
     BattlePoint, BattleSide, DeploymentZone, Facing, Formation, FormationFootprint, MovementOrder,
-    TacticalBattle, TacticalError,
+    TacticalBattle, TacticalBattleState, TacticalError,
 };
 
 /// Semantic formation commands. A batch either commits every command or none.
+///
+/// During deployment every command applies in place under the deployment
+/// placement rule: Rotate and Turn change only the facing, Frontage only the
+/// formation, and MoveAndFace places the formation instantly (no march).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -37,13 +42,95 @@ impl TacticalBattle {
         &mut self,
         orders: &[FormationOrder],
     ) -> Result<(), TacticalError> {
-        self.ensure_running()?;
+        let deploying = self.state() == TacticalBattleState::Deployment;
+        if !deploying {
+            self.ensure_running()?;
+        }
         let mut candidate = self.clone();
         for order in orders {
-            candidate.apply_formation_order(order)?;
+            if deploying {
+                candidate.apply_deployment_formation_order(order)?;
+            } else {
+                candidate.apply_formation_order(order)?;
+            }
         }
         *self = candidate;
         Ok(())
+    }
+
+    fn apply_deployment_formation_order(
+        &mut self,
+        order: &FormationOrder,
+    ) -> Result<(), TacticalError> {
+        let (unit_id, edit) = match order {
+            FormationOrder::Rotate { unit_id, facing } => (
+                unit_id,
+                DeploymentEdit {
+                    facing: Some(*facing),
+                    ..DeploymentEdit::default()
+                },
+            ),
+            FormationOrder::Turn {
+                unit_id,
+                quarter_turns,
+            } => (
+                unit_id,
+                DeploymentEdit {
+                    facing: Some(self.turned_facing(unit_id, *quarter_turns)?),
+                    ..DeploymentEdit::default()
+                },
+            ),
+            FormationOrder::MoveAndFace {
+                unit_id,
+                destination,
+                facing,
+            } => (
+                unit_id,
+                DeploymentEdit {
+                    position: Some(*destination),
+                    facing: Some(match facing {
+                        Some(facing) => *facing,
+                        None => self.order_facing(unit_id)?,
+                    }),
+                    ..DeploymentEdit::default()
+                },
+            ),
+            FormationOrder::Frontage { unit_id, width_mm } => (
+                unit_id,
+                DeploymentEdit {
+                    formation: Some(Formation::Line {
+                        files: self.frontage_files(unit_id, *width_mm)?,
+                    }),
+                    ..DeploymentEdit::default()
+                },
+            ),
+        };
+        self.edit_deployed_formation(unit_id, edit)
+    }
+
+    fn turned_facing(&self, unit_id: &str, quarter_turns: i8) -> Result<Facing, TacticalError> {
+        let mut direction = self.order_facing(unit_id)?.direction();
+        for _ in 0..quarter_turns.rem_euclid(4) {
+            direction = [-direction[1], direction[0]];
+        }
+        Ok(Facing::new(direction[0], direction[1])
+            .expect("quarter turns preserve a valid direction"))
+    }
+
+    /// Files for a requested line frontage, bounded by the unit's soldiers.
+    fn frontage_files(&self, unit_id: &str, width_mm: u32) -> Result<u16, TacticalError> {
+        let unit = self
+            .units()
+            .iter()
+            .find(|unit| unit.id() == unit_id)
+            .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
+        if width_mm < 1_000 {
+            return Err(TacticalError::InvalidFormation(unit_id.to_owned()));
+        }
+        Ok(
+            u16::try_from((width_mm / 1_000).min(u32::from(unit.soldiers())).max(1))
+                .expect("files are bounded by soldiers"),
+        )
     }
 
     fn apply_formation_order(&mut self, order: &FormationOrder) -> Result<(), TacticalError> {
@@ -53,15 +140,8 @@ impl TacticalBattle {
                 unit_id,
                 quarter_turns,
             } => {
-                let mut direction = self.order_facing(unit_id)?.direction();
-                for _ in 0..quarter_turns.rem_euclid(4) {
-                    direction = [-direction[1], direction[0]];
-                }
-                self.rotate_formation(
-                    unit_id,
-                    Facing::new(direction[0], direction[1])
-                        .expect("quarter turns preserve a valid direction"),
-                )
+                let facing = self.turned_facing(unit_id, *quarter_turns)?;
+                self.rotate_formation(unit_id, facing)
             }
             FormationOrder::MoveAndFace {
                 unit_id,
@@ -80,17 +160,12 @@ impl TacticalBattle {
                 self.set_arrival_facing(unit_id, facing)
             }
             FormationOrder::Frontage { unit_id, width_mm } => {
+                let files = self.frontage_files(unit_id, *width_mm)?;
                 let unit = self
                     .units()
                     .iter()
                     .find(|unit| unit.id() == unit_id)
                     .ok_or_else(|| TacticalError::UnitNotFound(unit_id.clone()))?;
-                if *width_mm < 1_000 {
-                    return Err(TacticalError::InvalidFormation(unit_id.clone()));
-                }
-                let files =
-                    u16::try_from((width_mm / 1_000).min(u32::from(unit.soldiers())).max(1))
-                        .expect("files are bounded by soldiers");
                 let position = unit.position();
                 let destination = unit.destination();
                 let queued = unit

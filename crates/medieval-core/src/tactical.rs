@@ -17,6 +17,11 @@ use crate::siege_engine::{
 use crate::terrain::{BattlefieldLocation, COMBAT_FACTOR_BASE_MILLI, TacticalTerrain};
 use crate::{TacticalWorkCounters, UnitKind};
 
+#[path = "tactical_deployment.rs"]
+mod deployment_phase;
+pub(crate) use deployment_phase::DeploymentEdit;
+pub use deployment_phase::DeploymentRejection;
+
 pub const TACTICAL_TICKS_PER_SECOND: u32 = 20;
 pub const MAX_TACTICAL_FATIGUE: u16 = 1_000;
 pub const MAX_TACTICAL_MORALE: u16 = 1_000;
@@ -113,6 +118,11 @@ pub enum TacticalFinishReason {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "phase", rename_all = "camelCase")]
 pub enum TacticalBattleState {
+    /// Pre-battle deployment: formations are arranged inside their own zones
+    /// under the footprint rule, and no tick runs until
+    /// [`TacticalBattle::begin_battle`]. Entered with
+    /// [`TacticalBattle::into_deployment`].
+    Deployment,
     #[default]
     Running,
     Finished {
@@ -1281,6 +1291,10 @@ impl TacticalBattle {
     /// inside its wall need a traversable gate. Repeated intents are idempotent.
     pub fn withdraw(&mut self, side: BattleSide) -> Result<(), TacticalError> {
         self.validate_withdrawal(side)?;
+        if self.state == TacticalBattleState::Deployment {
+            self.withdraw_before_start(side);
+            return Ok(());
+        }
         if self
             .withdrawal
             .is_some_and(|withdrawal| withdrawal.contains(side))
@@ -1320,7 +1334,10 @@ impl TacticalBattle {
     }
 
     fn validate_withdrawal(&self, side: BattleSide) -> Result<(), TacticalError> {
-        self.ensure_running()?;
+        // Withdrawing is the one order a side may give before the start.
+        if self.state != TacticalBattleState::Deployment {
+            self.ensure_running()?;
+        }
         if self.completion_rules.is_none() {
             return Err(TacticalError::WithdrawalRequiresStartedBattle);
         }
@@ -1487,6 +1504,18 @@ impl TacticalBattle {
         unit_id: &str,
         formation: Formation,
     ) -> Result<(), TacticalError> {
+        if self.state == TacticalBattleState::Deployment {
+            if formation.files() == 0 {
+                return Err(TacticalError::InvalidFormation(unit_id.to_owned()));
+            }
+            return self.edit_deployed_formation(
+                unit_id,
+                DeploymentEdit {
+                    formation: Some(formation),
+                    ..DeploymentEdit::default()
+                },
+            );
+        }
         self.ensure_running()?;
         let unit_index = self
             .unit_index(unit_id)
@@ -1565,6 +1594,7 @@ impl TacticalBattle {
     pub(crate) fn ensure_running(&self) -> Result<(), TacticalError> {
         match self.state {
             TacticalBattleState::Running => Ok(()),
+            TacticalBattleState::Deployment => Err(TacticalError::BattleNotStarted),
             TacticalBattleState::Finished { .. } => Err(TacticalError::BattleFinished),
         }
     }
@@ -2719,6 +2749,15 @@ pub enum TacticalError {
         side: BattleSide,
     },
     BattleFinished,
+    /// An order other than Withdraw was given during deployment.
+    BattleNotStarted,
+    /// A deployment edit or start after the battle has already begun.
+    DeploymentClosed,
+    /// A deployment edit whose resulting footprint breaks the placement rule.
+    InvalidDeploymentPlacement {
+        unit_id: String,
+        reason: DeploymentRejection,
+    },
     WithdrawalRequiresStartedBattle,
     WithdrawalNoSurvivors(BattleSide),
     WithdrawalBlockedBySiege(BattleSide),
@@ -2843,6 +2882,24 @@ impl fmt::Display for TacticalError {
                 write!(formatter, "tactical unit {unit_id} has escaped")
             }
             Self::BattleFinished => write!(formatter, "the tactical battle has finished"),
+            Self::BattleNotStarted => write!(
+                formatter,
+                "the battle has not started: arrange your formations, then Start battle"
+            ),
+            Self::DeploymentClosed => write!(
+                formatter,
+                "deployment is over: the battle has already started"
+            ),
+            Self::InvalidDeploymentPlacement { unit_id, reason } => match reason {
+                DeploymentRejection::OutsideZone => write!(
+                    formatter,
+                    "{unit_id} cannot deploy there: its whole formation footprint must lie inside its own deployment zone"
+                ),
+                DeploymentRejection::FriendlyOverlap => write!(
+                    formatter,
+                    "{unit_id} cannot deploy there: its formation footprint would overlap another friendly formation"
+                ),
+            },
             Self::EmptyUnitId => write!(formatter, "tactical unit IDs must not be empty"),
             Self::DuplicateUnitId(unit_id) => {
                 write!(formatter, "tactical unit ID {unit_id} is duplicated")

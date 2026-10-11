@@ -5,6 +5,8 @@ for (const location of ["mountainPass", "forestClearing", "riverFord"]) {
     await page.goto(`/battle.html?e2e-controls=1&location=${location}`);
     await page.getByRole("button", { name: "Enter battle" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+    // #94: battles open in deployment; start the clock first.
+    await page.getByRole("button", { name: "Start battle", exact: true }).click();
     await page.getByRole("button", { name: "Pause", exact: true }).click();
     const status=()=>page.evaluate(()=>window.__medievalControlsE2E.status());
     const before=await status();

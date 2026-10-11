@@ -70,6 +70,12 @@ impl NativeBattleSession {
         let Some(previous) = self.last_tick_at.replace(now) else {
             return;
         };
+        if self.battle.state() == TacticalBattleState::Deployment {
+            // No tick runs before the start, and the time spent deploying is
+            // not owed to the simulation afterwards.
+            self.tick_remainder = Duration::ZERO;
+            return;
+        }
         self.tick_remainder = self
             .tick_remainder
             .saturating_add(now.saturating_duration_since(previous))
@@ -79,6 +85,12 @@ impl NativeBattleSession {
             .expect("a one-second frame interval fits in u32 ticks");
         self.tick_remainder -= Duration::from_nanos(u64::from(ticks) * tick_nanos);
         let previous_tick = self.battle.tick();
+        if self.battle.campaign_seed().is_some() && previous_tick == 0 {
+            // The opponent plans its first orders on the deployed layout.
+            self.battle
+                .plan_opponent_orders(BattleSide::Defender)
+                .expect("core opponent planning uses only valid active units");
+        }
         self.battle.advance_ticks(ticks);
         let plan_interval = u64::from(TACTICAL_TICKS_PER_SECOND);
         if self.battle.campaign_seed().is_some()
@@ -417,11 +429,11 @@ pub async fn open_native_campaign_battle(
     state: State<'_, NativeBattleState>,
     seed: TacticalBattleSeed,
 ) -> Result<NativeBattleOpenResult, String> {
-    let mut battle =
-        TacticalBattle::from_campaign_seed(FlatBattlefield::new(120_000, 80_000), seed)
-            .map_err(|error| error.to_string())?;
-    battle
-        .plan_opponent_orders(BattleSide::Defender)
+    // The campaign battle opens in deployment; the opponent plans its first
+    // orders when the player starts it (Enter in the battle window).
+    let battle = TacticalBattle::from_campaign_seed(FlatBattlefield::new(120_000, 80_000), seed)
+        .map_err(|error| error.to_string())?
+        .into_deployment()
         .map_err(|error| error.to_string())?;
     let player_side = BattleSide::Attacker;
     let controls = TacticalControls::new(&battle, player_side);
@@ -695,7 +707,7 @@ fn sample_session(location: BattlefieldLocation) -> NativeBattleSession {
                 "attacker-spears",
                 BattleSide::Attacker,
                 80,
-                BattlePoint::new(30_000, 50_000),
+                BattlePoint::new(16_000, 50_000),
                 Formation::Line { files: 20 },
                 1_000,
             )
@@ -704,7 +716,7 @@ fn sample_session(location: BattlefieldLocation) -> NativeBattleSession {
                 "defender-spears",
                 BattleSide::Defender,
                 80,
-                BattlePoint::new(70_000, 50_000),
+                BattlePoint::new(84_000, 50_000),
                 Formation::Column { files: 16 },
                 1_000,
             )
@@ -713,7 +725,8 @@ fn sample_session(location: BattlefieldLocation) -> NativeBattleSession {
         location,
     )
     .expect("native renderer sample battle is valid")
-    .start();
+    .into_deployment()
+    .expect("native renderer sample layout is legally deployed");
     let player_side = BattleSide::Attacker;
     let mut controls = TacticalControls::new(&battle, player_side);
     controls
@@ -842,9 +855,94 @@ mod tests {
         );
     }
 
+    fn start_battle(session: &mut NativeBattleSession) {
+        session
+            .controls
+            .apply_request(
+                &mut session.battle,
+                TacticalControlRequest {
+                    kind: "startBattle".to_owned(),
+                    ..TacticalControlRequest::default()
+                },
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn native_battles_open_in_deployment_and_start_once_through_shared_controls() {
+        let mut session = sample_session(BattlefieldLocation::ForestClearing);
+        assert_eq!(session.battle.state(), TacticalBattleState::Deployment);
+        let start = Instant::now();
+        session.advance_to(start);
+        session.advance_to(start + Duration::from_secs(1));
+        assert_eq!(session.battle.tick(), 0, "no tick runs during deployment");
+        assert_eq!(session.tick_remainder, Duration::ZERO);
+
+        start_battle(&mut session);
+        assert_eq!(session.battle.state(), TacticalBattleState::Running);
+        assert!(
+            session
+                .controls
+                .apply_request(
+                    &mut session.battle,
+                    TacticalControlRequest {
+                        kind: "startBattle".to_owned(),
+                        ..TacticalControlRequest::default()
+                    },
+                )
+                .is_err(),
+            "a second start is refused"
+        );
+        session.advance_to(start + Duration::from_millis(1_100));
+        assert_eq!(session.battle.tick(), 2, "deployment time is not replayed");
+    }
+
+    #[test]
+    fn native_campaign_battle_opens_in_a_legal_deployment() {
+        let mut campaign = medieval_core::new_campaign();
+        campaign.move_army("england-main", "paris").unwrap();
+        let battle = TacticalBattle::from_campaign_seed(
+            FlatBattlefield::new(120_000, 80_000),
+            campaign.pending_tactical_battle_seed().unwrap(),
+        )
+        .unwrap()
+        .into_deployment()
+        .unwrap();
+        let mut session = NativeBattleSession {
+            controls: TacticalControls::new(&battle, BattleSide::Attacker),
+            battle,
+            player_side: BattleSide::Attacker,
+            input: DesktopInputState::default(),
+            last_tick_at: None,
+            tick_remainder: Duration::ZERO,
+        };
+        let start = Instant::now();
+        session.advance_to(start);
+        session.advance_to(start + Duration::from_secs(1));
+        assert_eq!(session.battle.tick(), 0);
+        assert!(
+            session
+                .battle
+                .units()
+                .iter()
+                .all(|unit| unit.engagement_target().is_none())
+        );
+        start_battle(&mut session);
+        session.advance_to(start + Duration::from_secs(2));
+        assert!(
+            session
+                .battle
+                .units()
+                .iter()
+                .filter(|unit| unit.side() == BattleSide::Defender)
+                .all(|unit| unit.engagement_target().is_some())
+        );
+    }
+
     #[test]
     fn native_clock_preserves_fractional_ticks() {
         let mut session = sample_session(BattlefieldLocation::MountainPass);
+        start_battle(&mut session);
         let start = Instant::now();
         session.advance_to(start);
         assert_eq!(session.battle.tick(), 0);

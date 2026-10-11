@@ -80,6 +80,12 @@
         </div>
 
         <aside class="sandbox-sidebar" aria-label="Battle sandbox controls">
+          <section id="deployment-panel" class="deployment-panel" aria-label="Deployment" hidden>
+            <p class="eyebrow">Deployment</p>
+            <p class="hud-hint">Arrange your formations before the clock starts. Select a formation and <strong>right click</strong> to place it; <strong>Q / E</strong>, line, column and frontage change it in place. Each whole formation must stay inside your deployment zone without overlapping another of yours.</p>
+            <button id="start-deployed-battle" class="start-battle-button" type="button">Start battle</button>
+          </section>
+
           <section>
             <label class="eyebrow" for="battle-location">Battlefield</label>
             <select id="battle-location" class="battle-location-select">
@@ -135,6 +141,7 @@
           <details class="instructions">
             <summary class="eyebrow">Controls</summary>
             <p><strong>Left click</strong> anywhere on a player formation to select it. Hold <strong>Shift</strong> to add or remove a unit.</p>
+            <p>The battle opens in <strong>deployment</strong>: right click places the selected formations instantly inside your zone, and nothing moves until <strong>Start battle</strong>. Withdraw is available throughout.</p>
             <p>Gold markers show formation facing. <strong>F, then right click</strong> orders attack-move. <strong>Ctrl + right click</strong> queues a waypoint. Group movement preserves formation spacing. <strong>Q / E</strong> turn left or right. <strong>Shift + right click</strong> moves while keeping the current facing on arrival.</p>
             <p><strong>Right click</strong> the field to move selected units, or an opponent unit to engage it. Archers stop and fire once their target is in range.</p>
             <p><strong>L / C</strong> switch selected units to line or column formation. <strong>WASD / arrows</strong> pan. <strong>Mouse wheel / + / −</strong> zoom. <strong>Space</strong> stops selected units. <strong>0</strong> fits the camera. <strong>P</strong> pauses.</p>
