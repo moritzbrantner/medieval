@@ -1,18 +1,23 @@
 // Source contracts for issue #94 (tactical deployment phase). The browser
-// journeys in e2e/tactical-deployment.spec.mjs prove behaviour; these checks
-// keep deployment-zone legality and the phase gate in Rust, keep the browser
-// and desktop on the shared Rust controls, and keep the contract documented.
+// journeys in e2e/tactical-deployment.spec.mjs and the Rust tests in
+// crates/medieval-core/tests/tactical_deployment.rs and
+// crates/medieval-renderer/tests/shared_deployment_controls.rs prove
+// behaviour; these checks keep the footprint rule (owner decision 2026-10-11,
+// option A) and the phase gate in Rust, keep the browser and desktop on the
+// shared Rust controls, and keep the contract documented.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
-const [html, script, bindings, sharedControls, architecture] = await Promise.all([
+const [html, script, bindings, sharedControls, architecture, nativeBattle, nativeInput] = await Promise.all([
   read("web/battle.html"),
   read("web/battle-sandbox.js"),
   read("web/battle-input-bindings.js"),
   read("shared/tactical_controls.rs"),
   read("docs/BATTLE-ARCHITECTURE.md"),
+  read("src-tauri/src/native_battle.rs"),
+  read("src-tauri/src/native_battle/input.rs"),
 ]);
 
 test("the deployment phase and Start battle are documented as Rust-owned", () => {
@@ -28,6 +33,19 @@ test("the deployment phase and Start battle are documented as Rust-owned", () =>
     /deployment phase[\s\S]{0,1500}(?:exactly once|only once|second start|no-op)/i,
     "docs state that the start happens exactly once",
   );
+});
+
+test("the footprint placement rule and its scoped defaults are documented", () => {
+  // Owner decision 2026-10-11: whole footprint inside the own zone, no
+  // friendly overlap, for moves, rotations and frontage changes, in Rust.
+  assert.match(architecture, /deployment phase[\s\S]{0,2500}footprint/i, "docs name the footprint rule");
+  assert.match(architecture, /deployment phase[\s\S]{0,2500}overlap/i, "docs name the no-overlap rule");
+  assert.match(
+    architecture,
+    /deployment phase[\s\S]{0,2500}(?:rotat|facing)[\s\S]{0,600}frontage|deployment phase[\s\S]{0,2500}frontage[\s\S]{0,600}(?:rotat|facing)/i,
+    "docs apply the rule to facing and frontage edits",
+  );
+  assert.match(architecture, /deployment phase[\s\S]{0,3000}withdraw/i, "docs state that Withdraw is allowed during deployment");
 });
 
 test("battle page offers a Deployment region with a Start battle button", () => {
@@ -57,12 +75,21 @@ test("JavaScript does not gate the simulation clock itself during deployment", (
   assert.doesNotMatch(script, /battle_sandbox_set_paused\(\s*true\s*\)/, "deployment is not a JavaScript pause");
 });
 
-test("deployment placement is a shared Rust tactical control, so browser and desktop share it", () => {
+test("deployment placement and Start battle are shared Rust tactical controls", () => {
   // shared/tactical_controls.rs is compiled into both web-battle-wasm and
-  // src-tauri; a deployment intent there is the same semantics on both surfaces.
-  assert.match(
-    sharedControls,
-    /"[a-zA-Z]*[dD]eploy[a-zA-Z]*"\s*(?:\|[^=]*)?=>/,
-    "shared tactical controls accept a deployment request kind",
-  );
+  // src-tauri; deployment intents there are the same semantics on both surfaces.
+  assert.match(sharedControls, /"deploySelected"\s*(?:\|[^=]*)?=>/, "shared controls accept deploySelected");
+  assert.match(sharedControls, /"startBattle"\s*(?:\|[^=]*)?=>/, "shared controls accept startBattle");
+  assert.match(sharedControls, /\.deploy_formation\(/, "deploySelected uses the core placement API");
+  assert.match(sharedControls, /\.begin_battle\(/, "startBattle uses the core start API");
+});
+
+test("desktop battles open in deployment and the native window has a minimal Start control", () => {
+  // Scoped default: desktop shares the Rust semantics and gets a minimal
+  // Start control; a full desktop deployment editor is a follow-up.
+  const desktop = `${nativeBattle}\n${nativeInput}`;
+  const entries = nativeBattle.match(/\.into_deployment\(\)/g) ?? [];
+  assert.ok(entries.length >= 2, "both the desktop sandbox and the desktop campaign battle enter deployment");
+  assert.doesNotMatch(nativeBattle, /\.start\(\);/, "the desktop sandbox no longer starts at construction");
+  assert.match(desktop, /"startBattle"|begin_battle\(/, "the native battle window can start the battle");
 });
