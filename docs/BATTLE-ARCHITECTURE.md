@@ -430,6 +430,88 @@ ladders keep the exact pre-ladder document. Presentation never reads the climb
 time rule; ladder drawing in 3D and opponent-AI ladder use (#128) are
 follow-ups, and withdrawal still needs a traversable gate.
 
+## Siege engines
+
+Siege depth 5 (#126) adds a battering ram and one ranged engine, a catapult
+(`SiegeEngineKind::{BatteringRam, Catapult}`). Like ladders, engines are not
+free entities: each is crewed by one existing attacker unit, stands wherever
+its crew stands, moves only with the crew's ordinary movement and is used only
+through orders issued to the crew.
+
+**Availability is explicit.** Only
+`TacticalBattle::deploy_siege_with_engines(battlefield, units, location,
+profile, Vec<SiegeEngineSetup>)` assigns engines. A crew must be a formed
+attacker foot unit (never a defender or mounted `Knights`) and one unit crews
+at most one engine; an unknown crew is `UnitNotFound` and every other invalid
+setup is `SiegeEngineUnavailable(crew)`. An empty setup is exactly
+`deploy_siege_with_profile`, and every other construction path (sandbox
+`deploy_siege*`, campaign seeds) has no engines. Choosing equipment in the
+browser or sandbox UI is a follow-up. Engine crews do not climb ladders
+(`LadderUnavailable`, and they never route over placed ladders).
+
+**Battering ram.** `issue_ram_order(unit)` is the gate-attack order for the
+formed crew of a ram (`SiegeEngineUnavailable` for any other unit, then the
+usual gate-attack legality: closed gate, attacker, running battle). The crew
+approaches from any distance and on every combat pulse within
+`SIEGE_GATE_ATTACK_DISTANCE_MM` deals `SiegeProfile::ram_damage_per_pulse`
+instead of the unit gate damage; a ram crew under a plain gate-attack order
+also brings its ram. The order ends with the gate, a move or engagement order,
+rout or destruction, exactly like a gate assault.
+
+**Catapult.** `issue_siege_engine_fire_order(unit, SiegeEngineTarget)` holds
+the crew in place and fires at the closed gate (aimed at its center) or a
+formed enemy unit. It is legal only for the formed crew of a catapult with
+stones left (`SiegeEngineUnavailable` otherwise), against a closed gate
+(`SiegeGateNotClosed`) or a formed enemy (`UnitNotFound`,
+`InvalidSiegeEngineTarget`), within
+`CATAPULT_MIN_RANGE_MM..=CATAPULT_MAX_RANGE_MM` of the crew (Euclidean,
+inclusive; `SiegeEngineTargetOutOfRange`). Walls never block the indirect
+shot. On each combat pulse a formed crew first reloads one pulse; a loaded
+catapult then fires if its order is still valid and the target in range, spends
+one stone, records `last_shot_tick` and waits exactly `CATAPULT_RELOAD_PULSES`
+pulses. Engines start loaded, so the first shot lands on the first pulse after
+the order. A gate hit removes exactly `SiegeProfile::catapult_gate_damage_per_shot`
+(gate and ram damage of one pulse add up; the gate is destroyed on the pulse
+integrity reaches zero). A unit hit reuses the tower volley rule with the crew
+as shooter (`CATAPULT_SHOT_FRONTAGE` = 60 frontage slots, elevation, ground
+cover and armor, `RANGED_CASUALTY_DIVISOR`), removes at least one soldier and
+joins the pulse's shared casualty and morale resolution. A move, engagement,
+gate-attack or ladder order, rout, withdrawal or destruction of the crew, a gate
+that is no longer closed or a target that is no longer formed ends the fire
+order; an empty catapult neither fires nor accepts orders. Rejected orders
+change nothing.
+
+| Rule | `PalisadeV1` | `StoneWallsV1` |
+| --- | --- | --- |
+| Unit `gate_damage_per_pulse` | 100 (10 pulses) | 50 (20 pulses) |
+| `ram_damage_per_pulse` | 250 (4 pulses) | 125 (8 pulses) |
+| `catapult_gate_damage_per_shot` | 200 (5 stones) | 100 (10 stones) |
+
+| Catapult constant | Value |
+| --- | --- |
+| `CATAPULT_MIN_RANGE_MM` | 30 000 (30 m) |
+| `CATAPULT_MAX_RANGE_MM` | 150 000 (150 m, beyond tower and archer reach) |
+| `CATAPULT_RELOAD_PULSES` | 5 (5 s between shots) |
+| `CATAPULT_AMMUNITION` | 12 stones (enough for either gate) |
+| Unit hit on an unarmored target | 5 soldiers |
+
+A ram is the fast close breach that exposes its crew at the gate; the catapult
+is the slow stand-off option (a stone gate in 46 s from out of tower range).
+
+**Read model and persistence.** `TacticalBattle::siege_engines()` returns
+`SiegeEngineStatus { kind, crew_unit_id, position, ammunition (None for a ram),
+pulses_until_loaded, last_shot_tick }` in setup order, or `None` outside a
+siege. Engine state serializes as `siegeEngines` and a pending fire order as
+the unit's `siegeEngineFire`, both omitted while empty, so battles without
+engines keep the exact pre-engine document; a save made mid-reload continues
+identically. Loading clamps stones and reload to the rule bounds and drops
+engines from field battles. The renderer copies the read model into
+`BattleRenderSnapshot::siege_engines` (`RenderSiegeEngine { kind, position,
+ammunition, last_shot_tick }`) and draws a wooden body per engine and a raised
+catapult arm for a moment after `last_shot_tick`; presentation never reads the
+range, reload, ammunition or damage rules. Tower integrity, engine destruction
+by enemy fire, opponent-AI engine use and the browser setup UI are out of scope.
+
 ## Finite missile ammunition
 
 New V1 missile formations initialize the core profile's volley budget (30 for

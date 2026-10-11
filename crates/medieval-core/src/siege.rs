@@ -203,6 +203,27 @@ impl SiegeProfile {
         }
     }
 
+    /// Gate damage a battering-ram crew deals per combat pulse in place of
+    /// [`Self::gate_damage_per_pulse`]: 2.5 times one unit, so a ram breaches
+    /// a palisade gate in 4 pulses and a stone gate in 8.
+    #[must_use]
+    pub const fn ram_damage_per_pulse(self) -> u16 {
+        match self {
+            Self::PalisadeV1 => 250,
+            Self::StoneWallsV1 => 125,
+        }
+    }
+
+    /// Gate integrity one catapult stone removes: a palisade gate falls to 5
+    /// stones and a stone gate to 10, within one catapult's ammunition.
+    #[must_use]
+    pub const fn catapult_gate_damage_per_shot(self) -> u16 {
+        match self {
+            Self::PalisadeV1 => 200,
+            Self::StoneWallsV1 => 100,
+        }
+    }
+
     /// Reach of a staffed tower, from the tower center to the target unit
     /// position (inclusive). Stone towers stand taller than palisade
     /// watchtowers; both stay near V1 archer range (25 m).
@@ -737,10 +758,20 @@ impl SiegeBattleState {
     /// gate becomes [`SiegeGateState::Destroyed`] on the pulse it reaches zero.
     /// Returns whether this pulse destroyed the gate.
     pub fn advance_gate_assault(&mut self, units: &[TacticalUnit]) -> bool {
+        self.advance_gate_assault_with_rams(units, |_| false)
+    }
+
+    /// [`Self::advance_gate_assault`] where a unit for which `has_ram` holds
+    /// deals [`SiegeProfile::ram_damage_per_pulse`] instead of the unit damage.
+    pub(crate) fn advance_gate_assault_with_rams(
+        &mut self,
+        units: &[TacticalUnit],
+        has_ram: impl Fn(&TacticalUnit) -> bool,
+    ) -> bool {
         if self.gate_state != SiegeGateState::Closed {
             return false;
         }
-        let attackers = units
+        let damage = units
             .iter()
             .filter(|unit| {
                 unit.side() == BattleSide::Attacker
@@ -748,13 +779,22 @@ impl SiegeBattleState {
                     && unit.is_attacking_gate()
                     && self.within_gate_attack_distance(unit.position())
             })
-            .count();
-        if attackers == 0 {
+            .fold(0_u16, |damage, unit| {
+                damage.saturating_add(if has_ram(unit) {
+                    self.profile.ram_damage_per_pulse()
+                } else {
+                    self.profile.gate_damage_per_pulse()
+                })
+            });
+        self.damage_gate(damage)
+    }
+
+    /// Removes `damage` integrity from a closed gate, destroying it on the
+    /// pulse integrity reaches zero. Returns whether this destroyed the gate.
+    pub(crate) fn damage_gate(&mut self, damage: u16) -> bool {
+        if self.gate_state != SiegeGateState::Closed || damage == 0 {
             return false;
         }
-        let damage = u16::try_from(attackers)
-            .unwrap_or(u16::MAX)
-            .saturating_mul(self.profile.gate_damage_per_pulse());
         self.gate_integrity = self.gate_integrity.saturating_sub(damage);
         if self.gate_integrity == 0 {
             self.gate_state = SiegeGateState::Destroyed;
