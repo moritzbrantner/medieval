@@ -261,6 +261,12 @@ impl DesktopInputState {
                 kind: "withdraw".to_owned(),
                 ..TacticalControlRequest::default()
             }),
+            // The minimal desktop Start control: the shared Rust start, so a
+            // second press is refused exactly as in the browser.
+            "Enter" | "NumpadEnter" => Some(TacticalControlRequest {
+                kind: "startBattle".to_owned(),
+                ..TacticalControlRequest::default()
+            }),
             "KeyF" => Some(TacticalControlRequest {
                 kind: "armAttackMove".to_owned(),
                 ..TacticalControlRequest::default()
@@ -712,6 +718,8 @@ pub fn install_linux_input(
             Some("KeyR")
         } else if key == constants::Escape {
             Some("Escape")
+        } else if key == constants::Return || key == constants::KP_Enter {
+            Some("Enter")
         } else if key == constants::f || key == constants::F {
             Some("KeyF")
         } else if key == constants::q || key == constants::Q {
@@ -895,7 +903,7 @@ fn finish_native_input(
 
 #[cfg(test)]
 mod tests {
-    use medieval_core::{FlatBattlefield, Formation, TacticalUnit};
+    use medieval_core::{FlatBattlefield, Formation, TacticalBattleState, TacticalUnit};
 
     use super::*;
 
@@ -1313,6 +1321,49 @@ mod tests {
                 .engagement_target(),
             Some("defender")
         );
+    }
+
+    #[test]
+    fn enter_is_the_minimal_desktop_start_control() {
+        let mut session = session();
+        session.battle = TacticalBattle::new(
+            FlatBattlefield::new(100_000, 100_000),
+            vec![
+                unit("attacker-a", BattleSide::Attacker, 15_000, 50_000),
+                unit("defender", BattleSide::Defender, 85_000, 50_000),
+            ],
+        )
+        .unwrap()
+        .into_deployment()
+        .unwrap();
+        let mut input = DesktopInputState::default();
+        let enter = || DesktopInput::KeyDown {
+            code: "Enter".to_owned(),
+            modifiers: InputModifiers::default(),
+        };
+        input
+            .apply(
+                &mut session.battle,
+                &mut session.controls,
+                session.player_side,
+                enter(),
+            )
+            .unwrap();
+        assert_eq!(session.battle.state(), TacticalBattleState::Running);
+        assert_eq!(session.battle.tick(), 0);
+        let started = session.battle.clone();
+        assert!(
+            input
+                .apply(
+                    &mut session.battle,
+                    &mut session.controls,
+                    session.player_side,
+                    enter(),
+                )
+                .is_err(),
+            "Rust refuses a second start"
+        );
+        assert_eq!(session.battle, started);
     }
 
     #[test]
