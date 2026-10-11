@@ -72,6 +72,9 @@ impl RenderSiegeArea {
 pub struct RenderSiegeTower {
     pub center: BattlePoint,
     pub radius_mm: u32,
+    /// Copied from core `SiegeTowerActivity::staffed`; presentation never
+    /// decides tower targets or casualties.
+    pub active: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -196,10 +199,17 @@ impl BattleRenderSnapshot {
                 max_y_mm: siege.layout.gate.max_y_mm,
             },
             gate_traversable: siege.gate_state.is_traversable(),
-            towers: siege.layout.towers.map(|tower| RenderSiegeTower {
-                center: tower.center,
-                radius_mm: tower.radius_mm,
-            }),
+            towers: {
+                let activity = battle.siege_tower_activity().unwrap_or_default();
+                std::array::from_fn(|index| {
+                    let tower = siege.layout.towers[index];
+                    RenderSiegeTower {
+                        center: tower.center,
+                        radius_mm: tower.radius_mm,
+                        active: activity.get(index).is_some_and(|tower| tower.staffed),
+                    }
+                })
+            },
             capture: RenderSiegeCapture {
                 center: siege.layout.capture_point.center,
                 radius_mm: siege.layout.capture_point.radius_mm,

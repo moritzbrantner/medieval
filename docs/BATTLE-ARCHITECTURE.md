@@ -338,6 +338,45 @@ enemy is behind a closed gate the same order; defenders never target their own
 gate. The renderer keeps projecting `gate_traversable`, and the HUD shows the
 order as `attackGate`.
 
+## Siege walls and towers
+
+Walls are core-owned barriers for movement and melee. No wall-access mechanic
+exists yet, so a wall position is never a legal destination and formed units on
+opposite sides of the wall line do not fight in melee or pursue through it,
+even across the 1 m palisade (thinner than `COMBAT_CONTACT_DISTANCE_MM`)
+(`SiegeBattleState::wall_separates`). They meet only where the line between them
+crosses the wall line inside an open or destroyed gate; a closed gate separates
+them too and is attacked through the gate assault order instead. A melee unit
+whose engagement target stands across a wall keeps following the siege path
+toward the gate instead of holding against the wall. Missiles still fly over
+walls, and an archer pressed against the wall is not in melee contact, so it
+keeps firing.
+
+A siege tower is *staffed* while at least one formed defender unit stands inside
+its footprint circle, the same position count the capture point uses; attackers
+never staff it. On each authoritative combat pulse a staffed tower fires one
+volley at the nearest formed attacker unit within `SiegeProfile::tower_range_mm`
+of the tower center (ties broken by unit id). The volley uses the stat-profile
+ranged rule with the tower as the shooter: the profile's volley frontage at
+base missile damage, elevation from the tower to the target, the target's
+ground cover and the target's armor, with fractional damage carried per tower
+and target (`towerDamageCredit`, omitted while empty, so older saves load
+unchanged). Losses are capped per tower per pulse, flow through the normal
+casualty, morale and rout application, never hit defenders, and never spend the
+staffing unit's ammunition or fatigue it.
+
+| Profile | Range | Volley frontage | Cap per pulse |
+| --- | --- | --- | --- |
+| `PalisadeV1` | 20 m | 12 slots (≈1 unarmored soldier per pulse) | 2 |
+| `StoneWallsV1` | 30 m | 24 slots (≈2 unarmored soldiers per pulse) | 3 |
+
+For comparison, a 10-file V1 archer line fires 10 slots up to 25 m. Tower
+activity is derived from authoritative unit state, so it needs no stored state:
+`TacticalBattle::siege_tower_activity()` returns one `SiegeTowerActivity`
+(`staffed`, `target_unit_id`) per layout tower, or `None` outside a siege. The
+renderer copies `staffed` into `RenderSiegeTower::active`; presentation never
+reads the tower range or casualty rules.
+
 ## Finite missile ammunition
 
 New V1 missile formations initialize the core profile's volley budget (30 for

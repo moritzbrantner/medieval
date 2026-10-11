@@ -572,6 +572,9 @@ pub struct TacticalBattle {
     ranged_damage_credit: BTreeMap<String, BTreeMap<String, CombatDamageCredit>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     melee_damage_credit: BTreeMap<String, BTreeMap<String, CombatDamageCredit>>,
+    /// Fractional siege tower damage per tower index and target unit.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    tower_damage_credit: BTreeMap<u8, BTreeMap<String, CombatDamageCredit>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -617,6 +620,9 @@ struct TacticalBattleWire {
     ranged_damage_credit: BTreeMap<String, BTreeMap<String, CombatDamageCredit>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     melee_damage_credit: BTreeMap<String, BTreeMap<String, CombatDamageCredit>>,
+    /// Fractional siege tower damage per tower index and target unit.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    tower_damage_credit: BTreeMap<u8, BTreeMap<String, CombatDamageCredit>>,
 }
 
 impl From<TacticalBattleWire> for TacticalBattle {
@@ -639,6 +645,7 @@ impl From<TacticalBattleWire> for TacticalBattle {
             withdrawal: wire.withdrawal,
             ranged_damage_credit: wire.ranged_damage_credit,
             melee_damage_credit: wire.melee_damage_credit,
+            tower_damage_credit: wire.tower_damage_credit,
             units: wire.units,
         }
     }
@@ -738,6 +745,7 @@ impl TacticalBattle {
             withdrawal: None,
             ranged_damage_credit: BTreeMap::new(),
             melee_damage_credit: BTreeMap::new(),
+            tower_damage_credit: BTreeMap::new(),
             units,
         })
     }
@@ -853,6 +861,21 @@ impl TacticalBattle {
     #[must_use]
     pub const fn siege_snapshot(&self) -> Option<SiegeBattleState> {
         self.siege
+    }
+
+    /// Core-owned activity of every siege tower in layout order: whether a
+    /// formed defender staffs it and which formed attacker it fires at on the
+    /// next combat pulse. `None` outside a siege.
+    #[must_use]
+    pub fn siege_tower_activity(&self) -> Option<Vec<crate::SiegeTowerActivity>> {
+        self.siege.map(|siege| siege.tower_activity(&self.units))
+    }
+
+    /// Whether a siege wall stands between two positions, so formed units
+    /// there cannot fight in melee.
+    fn wall_separates(&self, left: BattlePoint, right: BattlePoint) -> bool {
+        self.siege
+            .is_some_and(|siege| siege.wall_separates(left, right))
     }
 
     pub fn open_siege_gate(&mut self) -> Result<(), TacticalError> {
@@ -1597,8 +1620,13 @@ impl TacticalBattle {
         let holding_at_gate = unit.destination.is_none()
             && unit.engagement_target.is_none()
             && gate_attack_position == Some(unit.position);
+        // A melee unit next to its target across a wall is not in contact; it
+        // keeps following the siege path toward the gate instead of holding.
+        let blocked_by_wall = engagement_stop_distance <= COMBAT_CONTACT_DISTANCE_MM
+            && self.wall_separates(unit.position, destination);
         if holding_at_gate
             || (unit.engagement_target.is_some()
+                && !blocked_by_wall
                 && measured_points_within_distance(
                     counters,
                     unit.position,
@@ -1765,6 +1793,7 @@ impl TacticalBattle {
                         right.position,
                         COMBAT_CONTACT_DISTANCE_MM,
                     )
+                    && !self.wall_separates(left.position, right.position)
             })
             .fold(
                 BTreeMap::<String, u16>::new(),
@@ -1796,17 +1825,19 @@ impl TacticalBattle {
             if target.state != TacticalUnitState::Formed || target.side == attacker.side {
                 continue;
             }
-            if measured_points_within_distance(
+            if (measured_points_within_distance(
                 counters,
                 attacker.position,
                 target.position,
                 COMBAT_CONTACT_DISTANCE_MM,
-            ) || !measured_points_within_distance(
-                counters,
-                attacker.position,
-                target.position,
-                attacker.attack_range_mm(),
-            ) {
+            ) && !self.wall_separates(attacker.position, target.position))
+                || !measured_points_within_distance(
+                    counters,
+                    attacker.position,
+                    target.position,
+                    attacker.attack_range_mm(),
+                )
+            {
                 continue;
             }
             if attacker.ammunition.is_some() {
@@ -1837,6 +1868,41 @@ impl TacticalBattle {
             }
         }
 
+        if let Some(siege) = self.siege {
+            // One scan resolves the staffing and target of every tower.
+            counters.unit_scan_visits += snapshot.len() as u64;
+            for (tower_index, (_, target_index)) in
+                siege.tower_targets(snapshot).into_iter().enumerate()
+            {
+                let Some(target) = target_index.map(|index| &snapshot[index]) else {
+                    continue;
+                };
+                let tower = siege.layout.towers[tower_index];
+                counters.ranged_volleys += 1;
+                let damage = tower_volley_damage_milli(
+                    siege.profile,
+                    tower.center,
+                    target,
+                    self.terrain,
+                    self.battlefield,
+                );
+                let credit = self
+                    .tower_damage_credit
+                    .entry(u8::try_from(tower_index).expect("four towers fit u8"))
+                    .or_default()
+                    .entry(target.id.clone())
+                    .or_default();
+                let total = damage.saturating_add(u32::from(credit.0));
+                credit.0 = u16::try_from(total % 1_000).expect("fractional damage fits u16");
+                let losses = (total / 1_000)
+                    .min(u32::from(siege.profile.tower_max_casualties_per_pulse()))
+                    .min(u32::from(target.soldiers));
+                if losses > 0 {
+                    *casualties.entry(target.id.clone()).or_default() += losses;
+                }
+            }
+        }
+
         let mut contacts_assigned = BTreeMap::<String, u16>::new();
         for (left_id, right_id) in pairs {
             let left = find_work_target(snapshot, &left_id, counters).unwrap();
@@ -1848,7 +1914,7 @@ impl TacticalBattle {
                         left.position,
                         right.position,
                         COMBAT_CONTACT_DISTANCE_MM,
-                    ) =>
+                    ) && !self.wall_separates(left.position, right.position) =>
                 {
                     counters.melee_contacts += 1;
                     let left_frontage = allocated_frontage(
@@ -1901,7 +1967,8 @@ impl TacticalBattle {
                         left.position,
                         right.position,
                         PURSUIT_DISTANCE_MM,
-                    ) =>
+                    )
+                    && !self.wall_separates(left.position, right.position) =>
                 {
                     counters.pursuit_contacts += 1;
                     *casualties.entry(right.id.clone()).or_default() += u32::from(
@@ -1918,7 +1985,8 @@ impl TacticalBattle {
                         left.position,
                         right.position,
                         PURSUIT_DISTANCE_MM,
-                    ) =>
+                    )
+                    && !self.wall_separates(left.position, right.position) =>
                 {
                     counters.pursuit_contacts += 1;
                     *casualties.entry(left.id.clone()).or_default() += u32::from(
@@ -2471,6 +2539,33 @@ fn ranged_damage_milli(
             .map_or(0, |stats| u64::from(stats.armor_milli));
     u32::try_from(frontage * attack / resistance / u64::from(RANGED_CASUALTY_DIVISOR))
         .expect("bounded frontage and stat factors fit u32 damage")
+}
+
+/// Damage of one staffed siege tower volley, in thousandths of a soldier.
+/// It follows the stat-profile ranged rule with the tower as the shooter: the
+/// profile's volley frontage at full fatigue and morale and base missile
+/// damage, elevation from the tower to the target, the target's ground cover,
+/// and the target's armor.
+fn tower_volley_damage_milli(
+    profile: SiegeProfile,
+    tower: BattlePoint,
+    defender: &TacticalUnit,
+    terrain: TacticalTerrain,
+    battlefield: FlatBattlefield,
+) -> u32 {
+    let frontage = u64::from(profile.tower_volley_frontage()) * 1_000;
+    let frontage = frontage
+        * u64::from(terrain.elevation_damage_factor_milli(battlefield, tower, defender.position))
+        / 1_000;
+    let frontage = frontage
+        * u64::from(terrain.ranged_target_damage_factor_milli(battlefield, defender.position))
+        / 1_000;
+    let resistance = 1_000
+        + defender
+            .stats()
+            .map_or(0, |stats| u64::from(stats.armor_milli));
+    u32::try_from(frontage * 1_000 / resistance / u64::from(RANGED_CASUALTY_DIVISOR))
+        .expect("bounded tower frontage fits u32 damage")
 }
 
 fn stat_adjusted_frontage(

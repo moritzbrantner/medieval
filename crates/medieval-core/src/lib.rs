@@ -30,7 +30,9 @@ pub use province_definitions::{
 };
 pub use recruitment::{RecruitmentOption, RecruitmentPool, UnitUnlock};
 mod save;
-pub use deployment::siege::{SIEGE_CAPTURE_MAX_PROGRESS, SIEGE_GATE_MAX_INTEGRITY, SiegeProfile};
+pub use deployment::siege::{
+    SIEGE_CAPTURE_MAX_PROGRESS, SIEGE_GATE_MAX_INTEGRITY, SiegeProfile, SiegeTowerActivity,
+};
 mod settlement;
 pub use settlement::{
     SETTLEMENT_LEVELS, SettlementLevel, SettlementLevelSpec, SettlementUpgradeOption,
