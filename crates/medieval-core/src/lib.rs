@@ -64,9 +64,9 @@ pub use campaign_resolution::{
 pub use deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
 pub use save::{CAMPAIGN_SAVE_SCHEMA_VERSION, CampaignSave, SaveError};
 pub use tactical::{
-    BattlePoint, BattleSide, FlatBattlefield, Formation, MovementOrder, TACTICAL_TICKS_PER_SECOND,
-    TacticalBattle, TacticalBattleState, TacticalError, TacticalFinishReason, TacticalUnit,
-    TacticalUnitProvenance,
+    BattlePoint, BattleSide, DeploymentRejection, FlatBattlefield, Formation, MovementOrder,
+    TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalBattleState, TacticalError,
+    TacticalFinishReason, TacticalUnit, TacticalUnitProvenance,
 };
 pub use tactical_result::{
     TACTICAL_BATTLE_RESULT_SCHEMA_VERSION, TacticalAmmunitionResult, TacticalArmyResult,
