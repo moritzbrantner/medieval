@@ -550,7 +550,7 @@ fn single_point_run(profile: SiegeProfile) -> (TacticalBattle, Option<Value>, Ve
     let mut mid = None;
     while battle.state() == TacticalBattleState::Running && battle.tick() < 20_000 {
         battle.advance_ticks(1);
-        if battle.tick() % PULSE == 0 {
+        if battle.tick().is_multiple_of(PULSE) {
             let capture = battle.siege_snapshot().unwrap().capture;
             timeline.push(serde_json::json!([
                 battle.tick(),
