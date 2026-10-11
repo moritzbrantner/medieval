@@ -46,6 +46,7 @@ const opponentSideText = battleSides.querySelector('[data-field="opponent-side"]
 const siegeCapture = document.querySelector("#siege-capture");
 const siegeCaptureText = document.querySelector("#siege-capture-text");
 const siegeCaptureProgress = document.querySelector("#siege-capture-progress");
+const siegeObjectives = document.querySelector("#siege-objectives");
 const speedInputs = [...document.querySelectorAll('input[name="simulation-speed"]')];
 const selectedUnitCards = document.querySelector("#selected-unit-cards");
 const selectedUnitsEmpty = document.querySelector("#selected-units-empty");
@@ -315,6 +316,36 @@ function renderBattleStatus(status) {
   siegeCaptureText.textContent = holder
     ? `Siege capture · ${SIDE_LABELS[holder] ?? holder} ${action} · ${capture.progress} / ${status.siegeCaptureMaxProgress}`
     : `Siege capture · ${capture.progress} / ${status.siegeCaptureMaxProgress}`;
+  renderSiegeObjectives(status);
+}
+
+// Lists the core objectives (status.siegeObjectives, outer to inner) exactly
+// as core reports them; capture, unlocking and victory are decided in Rust.
+function renderSiegeObjectives(status) {
+  const objectives = status.siegeObjectives ?? [];
+  siegeObjectives.hidden = objectives.length < 2;
+  if (siegeObjectives.hidden) {
+    siegeObjectives.replaceChildren();
+    return;
+  }
+  const items = objectives.map((objective, index) => {
+    const item = document.createElement("li");
+    const holder = objective.capturedBy ?? objective.capturingSide;
+    let state;
+    if (!objective.unlocked) {
+      state = "locked";
+    } else if (objective.capturedBy) {
+      state = `captured by ${SIDE_LABELS[objective.capturedBy] ?? objective.capturedBy}`;
+    } else if (holder) {
+      state = `${SIDE_LABELS[holder] ?? holder} capturing · ${objective.progress} / ${status.siegeCaptureMaxProgress}`;
+    } else {
+      state = `open · ${objective.progress} / ${status.siegeCaptureMaxProgress}`;
+    }
+    item.dataset.unlocked = String(objective.unlocked);
+    item.textContent = `Objective ${index + 1}${index === objectives.length - 1 ? " (final)" : ""} · ${state}`;
+    return item;
+  });
+  siegeObjectives.replaceChildren(...items);
 }
 
 function cardField(label, field, value) {

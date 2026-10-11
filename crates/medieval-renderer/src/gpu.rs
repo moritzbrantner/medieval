@@ -743,10 +743,10 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     let deployment_capacity = (2 * TERRAIN_GRID_SIZE) as usize;
     let forest_capacity = snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize;
     let river_capacity = snapshot.river_cells.len();
-    let siege_capacity = snapshot.siege.map_or(0, |siege| {
+    let siege_capacity = snapshot.siege.as_ref().map_or(0, |siege| {
         (siege.wall_segments.len() + 1) * (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE) as usize
             + siege.towers.len()
-            + 1
+            + siege.objectives.len()
     });
     let mut world =
         Vec::with_capacity(deployment_capacity + forest_capacity + river_capacity + siege_capacity);
@@ -783,7 +783,7 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
         }
     }
 
-    if let Some(siege) = snapshot.siege {
+    if let Some(siege) = &snapshot.siege {
         for wall in siege.wall_segments {
             world.extend(GpuWorldInstance::siege_area_segments(
                 snapshot.terrain,
@@ -807,11 +807,11 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
         world.extend(siege.towers.into_iter().map(|tower| {
             GpuWorldInstance::siege_tower(snapshot.terrain, tower, snapshot.battlefield)
         }));
-        world.push(GpuWorldInstance::siege_capture(
-            snapshot.terrain,
-            siege.capture,
-            snapshot.battlefield,
-        ));
+        // One marker per core objective; a single-point siege has exactly
+        // its capture point.
+        world.extend(siege.objectives.iter().map(|objective| {
+            GpuWorldInstance::siege_capture(snapshot.terrain, *objective, snapshot.battlefield)
+        }));
     }
 
     // Siege engines are drawn where core places their crews. A catapult raises
@@ -1181,7 +1181,7 @@ mod tests {
         let base_world_count = (2 * TERRAIN_GRID_SIZE) as usize
             + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
             + snapshot.river_cells.len();
-        let siege = snapshot.siege.expect("siege snapshot");
+        let siege = snapshot.siege.clone().expect("siege snapshot");
         let expected_wall_count = siege
             .wall_segments
             .into_iter()

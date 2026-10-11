@@ -986,6 +986,15 @@ impl TacticalBattle {
         self.siege.map(|siege| siege.tower_activity(&self.units))
     }
 
+    /// Core-owned siege capture objectives in order, outer to inner, with
+    /// their progress and whether each is unlocked. Single-point profiles have
+    /// one objective mirroring `layout.capture_point` and `capture`. `None`
+    /// outside a siege.
+    #[must_use]
+    pub fn siege_objectives(&self) -> Option<Vec<crate::SiegeObjectiveStatus>> {
+        self.siege.map(SiegeBattleState::objectives)
+    }
+
     /// Placed siege ladders in placement order, with whether a formed
     /// defender holds each one's top. `None` outside a siege.
     #[must_use]
@@ -1566,7 +1575,9 @@ impl TacticalBattle {
         if self.completion_rules.is_none() || self.ensure_running().is_err() {
             return 0;
         }
-        let captured_by = self.siege.and_then(|siege| siege.capture.captured_by);
+        let captured_by = self
+            .siege
+            .and_then(SiegeBattleState::final_objective_captured_by);
         let result = if let Some(winner) = captured_by {
             Some((Some(winner), TacticalFinishReason::SiegeCapture))
         } else if let Some(withdrawal) = self.withdrawal {

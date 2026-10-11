@@ -2,9 +2,9 @@ use std::{cell::RefCell, cmp::Ordering, collections::BTreeSet};
 
 use medieval_core::{
     BattlePoint, BattleSide, BattlefieldLocation, DeploymentZone, FlatBattlefield, Formation,
-    MovementMode, SIEGE_CAPTURE_MAX_PROGRESS, TACTICAL_TICKS_PER_SECOND, TacticalBattle,
-    TacticalBattleState, TacticalGroundCover, TacticalTerrainCell, TacticalTerrainProfile,
-    TacticalUnit, UnitKind,
+    MovementMode, SIEGE_CAPTURE_MAX_PROGRESS, SiegeObjectiveStatus, TACTICAL_TICKS_PER_SECOND,
+    TacticalBattle, TacticalBattleState, TacticalGroundCover, TacticalTerrainCell,
+    TacticalTerrainProfile, TacticalUnit, UnitKind,
 };
 use medieval_renderer::{BattleRenderSnapshot, GpuBattleRenderer};
 use serde::{Deserialize, Serialize};
@@ -197,6 +197,9 @@ struct SandboxStatus {
     river_cells: Vec<TacticalTerrainCell>,
     river_crossing_cells: Vec<TacticalTerrainCell>,
     siege: Option<serde_json::Value>,
+    /// Core `TacticalBattle::siege_objectives`, outer to inner; the HUD only
+    /// renders it.
+    siege_objectives: Option<Vec<SiegeObjectiveStatus>>,
     siege_capture_max_progress: u16,
     camera: CameraStatus,
     units: Vec<UnitStatus>,
@@ -712,6 +715,7 @@ impl BrowserSandbox {
             river_cells: terrain.river_cells().to_vec(),
             river_crossing_cells: terrain.river_crossing_cells().to_vec(),
             siege,
+            siege_objectives: self.battle.siege_objectives(),
             siege_capture_max_progress: SIEGE_CAPTURE_MAX_PROGRESS,
             camera: CameraStatus {
                 target_x_mm: snapshot.camera.target_x_mm(),

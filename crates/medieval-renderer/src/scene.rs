@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 
 use medieval_core::{
     BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation, SiegeEngineKind,
-    TacticalBattle, TacticalBattleState, TacticalTerrain, TacticalTerrainCell, UnitKind,
+    SiegeObjectiveStatus, TacticalBattle, TacticalBattleState, TacticalTerrain,
+    TacticalTerrainCell, UnitKind,
 };
 
 use crate::{Camera3d, terrain::terrain_height_mm};
@@ -84,15 +85,82 @@ pub struct RenderSiegeCapture {
     pub progress: u16,
     pub capturing_side: Option<BattleSide>,
     pub captured_by: Option<BattleSide>,
+    /// Copied from core `SiegeObjectiveStatus::unlocked`.
+    pub unlocked: bool,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+impl From<SiegeObjectiveStatus> for RenderSiegeCapture {
+    fn from(objective: SiegeObjectiveStatus) -> Self {
+        Self {
+            center: objective.center,
+            radius_mm: objective.radius_mm,
+            progress: objective.progress,
+            capturing_side: objective.capturing_side,
+            captured_by: objective.captured_by,
+            unlocked: objective.unlocked,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderSiegeSnapshot {
     pub wall_segments: [RenderSiegeArea; 2],
     pub gate: RenderSiegeArea,
     pub gate_traversable: bool,
     pub towers: [RenderSiegeTower; 4],
+    /// The active objective (core `SiegeBattleState::active_objective`):
+    /// the single capture point of a one-objective profile.
     pub capture: RenderSiegeCapture,
+    /// Every core objective in core order (outer to inner), copied from
+    /// `TacticalBattle::siege_objectives`; presentation never decides
+    /// capture, unlocking or victory.
+    pub objectives: RenderSiegeObjectives,
+}
+
+/// The ordered siege objectives of a render snapshot, copied from core
+/// `TacticalBattle::siege_objectives` (outer to inner). Read-only: iterate or
+/// index it; presentation never adds, removes or reorders objectives.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RenderSiegeObjectives(Vec<RenderSiegeCapture>);
+
+impl RenderSiegeObjectives {
+    /// The objectives in core order.
+    pub fn iter(&self) -> std::slice::Iter<'_, RenderSiegeCapture> {
+        self.0.iter()
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl FromIterator<RenderSiegeCapture> for RenderSiegeObjectives {
+    fn from_iter<I: IntoIterator<Item = RenderSiegeCapture>>(objectives: I) -> Self {
+        Self(objectives.into_iter().collect())
+    }
+}
+
+impl std::ops::Index<usize> for RenderSiegeObjectives {
+    type Output = RenderSiegeCapture;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl<'a> IntoIterator for &'a RenderSiegeObjectives {
+    type Item = &'a RenderSiegeCapture;
+    type IntoIter = std::slice::Iter<'a, RenderSiegeCapture>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
 }
 
 /// One siege engine, copied from core `SiegeEngineStatus` in core order.
@@ -223,13 +291,13 @@ impl BattleRenderSnapshot {
                     }
                 })
             },
-            capture: RenderSiegeCapture {
-                center: siege.layout.capture_point.center,
-                radius_mm: siege.layout.capture_point.radius_mm,
-                progress: siege.capture.progress,
-                capturing_side: siege.capture.capturing_side,
-                captured_by: siege.capture.captured_by,
-            },
+            capture: RenderSiegeCapture::from(siege.active_objective()),
+            objectives: battle
+                .siege_objectives()
+                .unwrap_or_default()
+                .into_iter()
+                .map(RenderSiegeCapture::from)
+                .collect(),
         });
         let siege_engines = battle
             .siege_engines()
