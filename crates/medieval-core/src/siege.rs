@@ -935,7 +935,9 @@ impl SiegeBattleState {
         let active = Self::active_objective_index(&captures);
         advance_objective(&mut captures[active], points[active], units);
         self.objective_captures = Some(captures);
-        self.capture = captures[active];
+        // Re-resolve after advancing: capturing a non-final objective makes
+        // the next one active on this same pulse, and the mirror follows it.
+        self.capture = captures[Self::active_objective_index(&captures)];
     }
 }
 
@@ -1101,6 +1103,21 @@ mod tests {
             );
         }
         assert_eq!(SiegeProfile::for_fortification_level(0), None);
+    }
+
+    #[test]
+    fn legacy_capture_mirrors_the_next_objective_on_the_pulse_an_earlier_one_falls() {
+        let battlefield = FlatBattlefield::new(100_000, 80_000);
+        let mut siege = SiegeBattleState::for_profile(battlefield, SiegeProfile::StagedKeepV1);
+        let first = siege.layout.staged_objectives.unwrap()[0];
+        let attackers = [unit("attacker", BattleSide::Attacker, first.center)];
+        while siege.objective_captures.unwrap()[0].captured_by.is_none() {
+            siege.advance_capture(&attackers);
+        }
+        let captures = siege.objective_captures.unwrap();
+        assert_eq!(captures[0].captured_by, Some(BattleSide::Attacker));
+        assert_eq!(SiegeBattleState::active_objective_index(&captures), 1);
+        assert_eq!(siege.capture, captures[1]);
     }
 
     #[test]
