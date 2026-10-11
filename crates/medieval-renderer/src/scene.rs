@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use medieval_core::{
-    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation, TacticalBattle,
-    TacticalBattleState, TacticalTerrain, TacticalTerrainCell, UnitKind,
+    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation, SiegeEngineKind,
+    TacticalBattle, TacticalBattleState, TacticalTerrain, TacticalTerrainCell, UnitKind,
 };
 
 use crate::{Camera3d, terrain::terrain_height_mm};
@@ -95,6 +95,17 @@ pub struct RenderSiegeSnapshot {
     pub capture: RenderSiegeCapture,
 }
 
+/// One siege engine, copied from core `SiegeEngineStatus` in core order.
+/// Presentation never decides range, reload, ammunition or damage; shot
+/// trajectories and effects are decoration keyed on `last_shot_tick`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RenderSiegeEngine {
+    pub kind: SiegeEngineKind,
+    pub position: BattlePoint,
+    pub ammunition: Option<u16>,
+    pub last_shot_tick: Option<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderUnitInstance {
     pub unit_id: String,
@@ -140,6 +151,8 @@ pub struct BattleRenderSnapshot {
     pub river_cells: Vec<TacticalTerrainCell>,
     pub river_crossing_cells: Vec<TacticalTerrainCell>,
     pub siege: Option<RenderSiegeSnapshot>,
+    /// Siege engines in core order; empty outside a siege or without engines.
+    pub siege_engines: Vec<RenderSiegeEngine>,
     pub camera: Camera3d,
     pub units: Vec<RenderUnitInstance>,
 }
@@ -218,6 +231,17 @@ impl BattleRenderSnapshot {
                 captured_by: siege.capture.captured_by,
             },
         });
+        let siege_engines = battle
+            .siege_engines()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|engine| RenderSiegeEngine {
+                kind: engine.kind,
+                position: engine.position,
+                ammunition: engine.ammunition,
+                last_shot_tick: engine.last_shot_tick,
+            })
+            .collect();
         Self {
             tick: battle.tick(),
             battle_state: battle.state(),
@@ -228,6 +252,7 @@ impl BattleRenderSnapshot {
             river_cells: battle.terrain().river_cells().to_vec(),
             river_crossing_cells: battle.terrain().river_crossing_cells().to_vec(),
             siege,
+            siege_engines,
             camera: view.camera,
             units,
         }

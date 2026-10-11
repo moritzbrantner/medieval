@@ -10,6 +10,10 @@ use crate::deployment::siege::{
     SiegeBattleState, SiegeGateState, SiegeLadder, SiegeLadderPlacement, SiegeProfile,
 };
 use crate::deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
+use crate::siege_engine::{
+    CATAPULT_MAX_RANGE_MM, CATAPULT_MIN_RANGE_MM, CATAPULT_RELOAD_PULSES, CATAPULT_SHOT_FRONTAGE,
+    SiegeEngineKind, SiegeEngineSetup, SiegeEngineState, SiegeEngineStatus, SiegeEngineTarget,
+};
 use crate::terrain::{BattlefieldLocation, COMBAT_FACTOR_BASE_MILLI, TacticalTerrain};
 use crate::{TacticalWorkCounters, UnitKind};
 
@@ -210,6 +214,10 @@ pub struct TacticalUnit {
     /// only while set so documents without ladders keep their exact shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ladder_order: Option<BattlePoint>,
+    /// Standing fire order of this unit's catapult. Serialized only while set
+    /// so documents without engines keep their exact shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    siege_engine_fire: Option<SiegeEngineTarget>,
     fatigue: u16,
     morale: u16,
     state: TacticalUnitState,
@@ -277,6 +285,7 @@ impl TacticalUnit {
             engagement_target: None,
             gate_attack: false,
             ladder_order: None,
+            siege_engine_fire: None,
             fatigue: 0,
             morale: MAX_TACTICAL_MORALE,
             state: TacticalUnitState::Formed,
@@ -497,10 +506,18 @@ impl TacticalUnit {
         self.side == BattleSide::Attacker && self.unit_kind() != Some(UnitKind::Knights)
     }
 
-    /// Ends every standing siege order (gate assault or ladder placement).
-    const fn clear_siege_orders(&mut self) {
+    /// The target of this unit's standing catapult fire order.
+    #[must_use]
+    pub const fn siege_engine_fire_target(&self) -> Option<&SiegeEngineTarget> {
+        self.siege_engine_fire.as_ref()
+    }
+
+    /// Ends every standing siege order (gate assault, ladder placement or
+    /// engine fire).
+    fn clear_siege_orders(&mut self) {
         self.gate_attack = false;
         self.ladder_order = None;
+        self.siege_engine_fire = None;
     }
 
     #[cfg(test)]
@@ -605,6 +622,10 @@ pub struct TacticalBattle {
     /// battles without ladders keep their exact document shape.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     siege_ladders: Vec<SiegeLadderPlacement>,
+    /// Siege engines in setup order, omitted while empty so battles without
+    /// engines keep their exact document shape.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    siege_engines: Vec<SiegeEngineState>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -655,6 +676,8 @@ struct TacticalBattleWire {
     tower_damage_credit: BTreeMap<u8, BTreeMap<String, CombatDamageCredit>>,
     #[serde(default)]
     siege_ladders: Vec<SiegeLadderPlacement>,
+    #[serde(default)]
+    siege_engines: Vec<SiegeEngineState>,
 }
 
 impl From<TacticalBattleWire> for TacticalBattle {
@@ -683,14 +706,24 @@ impl From<TacticalBattleWire> for TacticalBattle {
             } else {
                 Vec::new()
             },
+            siege_engines: if wire.siege.is_some() {
+                wire.siege_engines
+                    .into_iter()
+                    .map(SiegeEngineState::normalized)
+                    .collect()
+            } else {
+                Vec::new()
+            },
             units: if wire.siege.is_some() {
                 wire.units
             } else {
-                // A field battle has no wall to climb: pending ladder orders go too.
+                // A field battle has no wall to climb and no engines: pending
+                // ladder and engine orders go too.
                 wire.units
                     .into_iter()
                     .map(|mut unit| {
                         unit.ladder_order = None;
+                        unit.siege_engine_fire = None;
                         unit
                     })
                     .collect()
@@ -795,6 +828,7 @@ impl TacticalBattle {
             melee_damage_credit: BTreeMap::new(),
             tower_damage_credit: BTreeMap::new(),
             siege_ladders: Vec::new(),
+            siege_engines: Vec::new(),
             units,
         })
     }
@@ -874,6 +908,38 @@ impl TacticalBattle {
         Ok(battle)
     }
 
+    /// A profiled siege with explicit pre-battle equipment. Each engine is
+    /// crewed by one formed attacker foot unit (never a defender or mounted
+    /// `Knights`), and one unit crews at most one engine. Engines are listed
+    /// in setup order; catapults start loaded with full ammunition. An empty
+    /// setup is exactly [`Self::deploy_siege_with_profile`].
+    pub fn deploy_siege_with_engines(
+        battlefield: FlatBattlefield,
+        units: Vec<TacticalUnit>,
+        location: BattlefieldLocation,
+        profile: SiegeProfile,
+        engines: Vec<SiegeEngineSetup>,
+    ) -> Result<Self, TacticalError> {
+        let mut battle = Self::deploy_siege_with_profile(battlefield, units, location, profile)?;
+        let mut crews = HashSet::with_capacity(engines.len());
+        for setup in &engines {
+            let index = battle
+                .unit_index(&setup.crew_unit_id)
+                .ok_or_else(|| TacticalError::UnitNotFound(setup.crew_unit_id.clone()))?;
+            let crew = &battle.units[index];
+            if !crew.can_use_ladders()
+                || !crew.can_receive_orders()
+                || !crews.insert(setup.crew_unit_id.as_str())
+            {
+                return Err(TacticalError::SiegeEngineUnavailable(
+                    setup.crew_unit_id.clone(),
+                ));
+            }
+        }
+        battle.siege_engines = engines.into_iter().map(SiegeEngineState::new).collect();
+        Ok(battle)
+    }
+
     #[must_use]
     pub fn deployment_zones(&self) -> [DeploymentZone; 2] {
         self.siege.map_or_else(
@@ -936,6 +1002,40 @@ impl TacticalBattle {
         )
     }
 
+    /// Core-owned state of every siege engine in setup order, at its crew's
+    /// position. `None` outside a siege; empty without explicit setup.
+    #[must_use]
+    pub fn siege_engines(&self) -> Option<Vec<SiegeEngineStatus>> {
+        self.siege?;
+        Some(
+            self.siege_engines
+                .iter()
+                .filter_map(|engine| {
+                    let crew = self.unit_index(&engine.crew_unit_id)?;
+                    Some(engine.status(self.units[crew].position))
+                })
+                .collect(),
+        )
+    }
+
+    /// The engine crewed by `unit_id`, if any.
+    fn siege_engine_of(&self, unit_id: &str) -> Option<&SiegeEngineState> {
+        self.siege_engines
+            .iter()
+            .find(|engine| engine.crew_unit_id == unit_id)
+    }
+
+    fn has_siege_engine(&self, unit_id: &str, kind: SiegeEngineKind) -> bool {
+        self.siege_engine_of(unit_id)
+            .is_some_and(|engine| engine.kind == kind)
+    }
+
+    /// Whether `unit` climbs ladders: an eligible unit that does not crew a
+    /// siege engine (an engine does not climb walls).
+    fn climbs_ladders(&self, unit: &TacticalUnit) -> bool {
+        unit.can_use_ladders() && self.siege_engine_of(&unit.id).is_none()
+    }
+
     /// Whether a siege wall stands between two positions, so formed units
     /// there cannot fight in melee. Placed ladders open their own cells.
     fn wall_separates(&self, left: BattlePoint, right: BattlePoint) -> bool {
@@ -989,7 +1089,96 @@ impl TacticalBattle {
         unit.arrival_facing = None;
         unit.engagement_target = None;
         unit.ladder_order = None;
+        unit.siege_engine_fire = None;
         unit.gate_attack = true;
+        Ok(())
+    }
+
+    /// Orders the crew of a battering ram to assault the closed gate with it.
+    /// Legality is the gate-attack order's plus the ram: only the formed
+    /// crew of a ram may use it ([`TacticalError::SiegeEngineUnavailable`]
+    /// otherwise). The crew approaches from any distance and, on each combat
+    /// pulse within reach, deals [`SiegeProfile::ram_damage_per_pulse`]
+    /// instead of the unit gate damage. A rejected order changes nothing.
+    pub fn issue_ram_order(&mut self, unit_id: &str) -> Result<(), TacticalError> {
+        self.ensure_running()?;
+        if self.siege.is_none() {
+            return Err(TacticalError::NotSiegeBattle);
+        }
+        let index = self
+            .unit_index(unit_id)
+            .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
+        self.ensure_can_receive_orders(index)?;
+        if !self.has_siege_engine(unit_id, SiegeEngineKind::BatteringRam) {
+            return Err(TacticalError::SiegeEngineUnavailable(unit_id.to_owned()));
+        }
+        self.issue_gate_attack_order(unit_id)
+    }
+
+    /// Orders the crew of a loaded-or-reloading catapult with stones left to
+    /// hold in place and fire at `target`: the closed gate (aimed at its
+    /// center) or a formed enemy unit, within
+    /// `CATAPULT_MIN_RANGE_MM..=CATAPULT_MAX_RANGE_MM` of the crew (Euclidean,
+    /// inclusive; walls do not block the indirect shot). The engine fires on
+    /// every combat pulse it is loaded and the target is still valid and in
+    /// range. A rejected order changes nothing.
+    pub fn issue_siege_engine_fire_order(
+        &mut self,
+        unit_id: &str,
+        target: SiegeEngineTarget,
+    ) -> Result<(), TacticalError> {
+        self.ensure_running()?;
+        let Some(siege) = self.siege else {
+            return Err(TacticalError::NotSiegeBattle);
+        };
+        let index = self
+            .unit_index(unit_id)
+            .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
+        self.ensure_can_receive_orders(index)?;
+        if !self.siege_engine_of(unit_id).is_some_and(|engine| {
+            engine.kind == SiegeEngineKind::Catapult && engine.ammunition.unwrap_or(0) > 0
+        }) {
+            return Err(TacticalError::SiegeEngineUnavailable(unit_id.to_owned()));
+        }
+        let crew = &self.units[index];
+        let aim = match &target {
+            SiegeEngineTarget::Gate => {
+                if siege.gate_state != SiegeGateState::Closed {
+                    return Err(TacticalError::SiegeGateNotClosed);
+                }
+                siege.layout.gate.center()
+            }
+            SiegeEngineTarget::Unit(target_id) => {
+                let target_unit = self
+                    .unit_index(target_id)
+                    .map(|target_index| &self.units[target_index])
+                    .ok_or_else(|| TacticalError::UnitNotFound(target_id.clone()))?;
+                if target_unit.side == crew.side || !target_unit.can_receive_orders() {
+                    return Err(TacticalError::InvalidSiegeEngineTarget {
+                        unit_id: unit_id.to_owned(),
+                        target_unit_id: target_id.clone(),
+                    });
+                }
+                target_unit.position
+            }
+        };
+        if !within_catapult_range(crew.position, aim) {
+            return Err(TacticalError::SiegeEngineTargetOutOfRange(
+                unit_id.to_owned(),
+            ));
+        }
+        let unit = &mut self.units[index];
+        if unit.siege_engine_fire.is_none() {
+            unit.interrupt_charge();
+        }
+        unit.destination = None;
+        unit.queued_movements.clear();
+        unit.movement_mode = crate::MovementMode::March;
+        unit.arrival_facing = None;
+        unit.engagement_target = None;
+        unit.gate_attack = false;
+        unit.ladder_order = None;
+        unit.siege_engine_fire = Some(target);
         Ok(())
     }
 
@@ -1012,7 +1201,7 @@ impl TacticalBattle {
             .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
         self.ensure_can_receive_orders(index)?;
         let unit = &self.units[index];
-        if !unit.can_use_ladders()
+        if !self.climbs_ladders(unit)
             || !siege.supports_ladders()
             || self
                 .siege_ladders
@@ -1040,6 +1229,7 @@ impl TacticalBattle {
         unit.arrival_facing = None;
         unit.engagement_target = None;
         unit.gate_attack = false;
+        unit.siege_engine_fire = None;
         unit.ladder_order = Some(at);
         Ok(())
     }
@@ -1068,6 +1258,9 @@ impl TacticalBattle {
         if gate_state != SiegeGateState::Closed {
             for unit in &mut self.units {
                 unit.gate_attack = false;
+                if unit.siege_engine_fire == Some(SiegeEngineTarget::Gate) {
+                    unit.siege_engine_fire = None;
+                }
             }
         }
         Ok(())
@@ -1338,7 +1531,14 @@ impl TacticalBattle {
                 self.resolve_combat_pulse(&mut counters);
                 if let Some(siege) = &mut self.siege {
                     counters.unit_scan_visits += 2 * self.units.len() as u64;
-                    if siege.advance_gate_assault(&self.units) {
+                    let engines = &self.siege_engines;
+                    let has_ram = |unit: &TacticalUnit| {
+                        engines.iter().any(|engine| {
+                            engine.kind == SiegeEngineKind::BatteringRam
+                                && engine.crew_unit_id == unit.id
+                        })
+                    };
+                    if siege.advance_gate_assault_with_rams(&self.units, has_ram) {
                         for unit in &mut self.units {
                             unit.gate_attack = false;
                         }
@@ -1467,7 +1667,7 @@ impl TacticalBattle {
     /// ladder cell for a unit that can climb ladders.
     fn unit_may_stand_at(&self, unit: &TacticalUnit, point: BattlePoint) -> bool {
         self.is_passable_at(point)
-            || (unit.can_use_ladders()
+            || (self.climbs_ladders(unit)
                 && self.terrain.is_passable_at(self.battlefield, point)
                 && self
                     .siege_ladders
@@ -1506,7 +1706,7 @@ impl TacticalBattle {
             ),
             _ => destination,
         };
-        if !unit.can_use_ladders() {
+        if !self.climbs_ladders(unit) {
             let waypoint = self.measured_movement_waypoint(counters, from, destination);
             return move_point_toward(from, waypoint, speed);
         }
@@ -2162,6 +2362,8 @@ impl TacticalBattle {
             }
         }
 
+        let engine_pulse = self.resolve_siege_engine_shots(counters, &mut casualties);
+
         let mut contacts_assigned = BTreeMap::<String, u16>::new();
         for (left_id, right_id) in pairs {
             let left = find_work_target(snapshot, &left_id, counters).unwrap();
@@ -2256,6 +2458,8 @@ impl TacticalBattle {
                 _ => {}
             }
         }
+
+        self.apply_siege_engine_pulse(engine_pulse);
 
         for attacker_id in spent_ammunition {
             if let Some(index) = self.unit_index(&attacker_id)
@@ -2360,7 +2564,132 @@ impl TacticalBattle {
                 unit.ladder_order = None;
             }
         }
+        // A catapult order ends with a routed or destroyed crew, a gate that
+        // is no longer closed, or a target that is no longer formed.
+        let units = &self.units;
+        let invalid_fire: Vec<usize> = (0..units.len())
+            .filter(|&index| {
+                let unit = &units[index];
+                match &unit.siege_engine_fire {
+                    None => false,
+                    Some(_) if unit.state != TacticalUnitState::Formed => true,
+                    Some(SiegeEngineTarget::Gate) => !gate_closed,
+                    Some(SiegeEngineTarget::Unit(target_id)) => {
+                        find_unit(units, target_id, counters)
+                            .is_none_or(|target| target.state != TacticalUnitState::Formed)
+                    }
+                }
+            })
+            .collect();
+        for index in invalid_fire {
+            self.units[index].siege_engine_fire = None;
+        }
     }
+
+    /// Resolves every catapult for this combat pulse against the pulse-start
+    /// unit state, in setup order. A formed crew reloads one pulse; a loaded
+    /// catapult with stones left fires at its ordered target if that target
+    /// is still valid and in range. Unit hits add to `casualties` and flow
+    /// through the shared casualty and morale path; gate hits are returned.
+    fn resolve_siege_engine_shots(
+        &self,
+        counters: &mut TacticalWorkCounters,
+        casualties: &mut BTreeMap<String, u32>,
+    ) -> SiegeEnginePulse {
+        let mut pulse = SiegeEnginePulse::default();
+        let Some(siege) = self.siege else {
+            return pulse;
+        };
+        let snapshot = &self.units;
+        for (engine_index, engine) in self.siege_engines.iter().enumerate() {
+            if engine.kind != SiegeEngineKind::Catapult {
+                continue;
+            }
+            let Some(crew) = find_work_target(snapshot, &engine.crew_unit_id, counters) else {
+                continue;
+            };
+            if crew.state != TacticalUnitState::Formed {
+                continue;
+            }
+            let pulses_until_loaded = engine.pulses_until_loaded.saturating_sub(1);
+            let fired = pulses_until_loaded == 0
+                && engine.ammunition.unwrap_or(0) > 0
+                && match &crew.siege_engine_fire {
+                    None => false,
+                    Some(SiegeEngineTarget::Gate) => {
+                        let hit = siege.gate_state == SiegeGateState::Closed
+                            && within_catapult_range(crew.position, siege.layout.gate.center());
+                        if hit {
+                            pulse.gate_damage = pulse
+                                .gate_damage
+                                .saturating_add(siege.profile.catapult_gate_damage_per_shot());
+                        }
+                        hit
+                    }
+                    Some(SiegeEngineTarget::Unit(target_id)) => {
+                        let target =
+                            find_work_target(snapshot, target_id, counters).filter(|target| {
+                                target.state == TacticalUnitState::Formed
+                                    && target.side != crew.side
+                                    && within_catapult_range(crew.position, target.position)
+                            });
+                        if let Some(target) = target {
+                            let damage = catapult_shot_damage_milli(
+                                crew.position,
+                                target,
+                                self.terrain,
+                                self.battlefield,
+                            );
+                            let losses = (damage / 1_000).max(1).min(u32::from(target.soldiers));
+                            *casualties.entry(target.id.clone()).or_default() += losses;
+                        }
+                        target.is_some()
+                    }
+                };
+            if fired {
+                counters.ranged_volleys += 1;
+            }
+            pulse
+                .engines
+                .push((engine_index, pulses_until_loaded, fired));
+        }
+        pulse
+    }
+
+    /// Applies the reload, spent stones and gate damage of one engine pulse.
+    fn apply_siege_engine_pulse(&mut self, pulse: SiegeEnginePulse) {
+        for (engine_index, pulses_until_loaded, fired) in pulse.engines {
+            let engine = &mut self.siege_engines[engine_index];
+            engine.pulses_until_loaded = pulses_until_loaded;
+            if fired {
+                engine.pulses_until_loaded = CATAPULT_RELOAD_PULSES;
+                engine.ammunition = engine.ammunition.map(|stones| stones.saturating_sub(1));
+                engine.last_shot_tick = Some(self.tick);
+            }
+        }
+        if let Some(siege) = &mut self.siege
+            && siege.damage_gate(pulse.gate_damage)
+        {
+            for unit in &mut self.units {
+                unit.gate_attack = false;
+            }
+        }
+    }
+}
+
+/// Engine effects of one combat pulse: per catapult (setup index, new reload
+/// count, whether it fired) and the summed gate damage.
+#[derive(Default)]
+struct SiegeEnginePulse {
+    engines: Vec<(usize, u16, bool)>,
+    gate_damage: u16,
+}
+
+/// Whether `target` lies within the catapult's inclusive Euclidean range of
+/// `from`.
+fn within_catapult_range(from: BattlePoint, target: BattlePoint) -> bool {
+    let distance = point_distance_squared(from, target);
+    square_u32(CATAPULT_MIN_RANGE_MM) <= distance && distance <= square_u32(CATAPULT_MAX_RANGE_MM)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2446,6 +2775,16 @@ pub enum TacticalError {
         unit_id: String,
         position: BattlePoint,
     },
+    /// The unit does not crew a usable engine of the ordered kind: no engine,
+    /// another kind, or an empty catapult. Also an invalid pre-battle crew.
+    SiegeEngineUnavailable(String),
+    /// A catapult fires only at formed enemy units.
+    InvalidSiegeEngineTarget {
+        unit_id: String,
+        target_unit_id: String,
+    },
+    /// The target lies outside the catapult's minimum and maximum range.
+    SiegeEngineTargetOutOfRange(String),
 }
 
 impl fmt::Display for TacticalError {
@@ -2596,6 +2935,21 @@ impl fmt::Display for TacticalError {
                 formatter,
                 "tactical unit {unit_id} cannot place a ladder at ({}, {}) mm",
                 position.x_mm, position.y_mm
+            ),
+            Self::SiegeEngineUnavailable(unit_id) => write!(
+                formatter,
+                "tactical unit {unit_id} has no usable siege engine for this order"
+            ),
+            Self::InvalidSiegeEngineTarget {
+                unit_id,
+                target_unit_id,
+            } => write!(
+                formatter,
+                "the siege engine of {unit_id} cannot fire at {target_unit_id}"
+            ),
+            Self::SiegeEngineTargetOutOfRange(unit_id) => write!(
+                formatter,
+                "the siege engine target of {unit_id} is out of range"
             ),
         }
     }
@@ -2844,6 +3198,31 @@ fn tower_volley_damage_milli(
             .map_or(0, |stats| u64::from(stats.armor_milli));
     u32::try_from(frontage * 1_000 / resistance / u64::from(RANGED_CASUALTY_DIVISOR))
         .expect("bounded tower frontage fits u32 damage")
+}
+
+/// Damage of one catapult stone hitting a unit, in thousandths of a soldier.
+/// It reuses the tower volley rule with the crew position as the shooter:
+/// [`CATAPULT_SHOT_FRONTAGE`] at base missile damage, elevation from the crew
+/// to the target, the target's ground cover, and the target's armor.
+fn catapult_shot_damage_milli(
+    crew: BattlePoint,
+    defender: &TacticalUnit,
+    terrain: TacticalTerrain,
+    battlefield: FlatBattlefield,
+) -> u32 {
+    let frontage = u64::from(CATAPULT_SHOT_FRONTAGE) * 1_000;
+    let frontage = frontage
+        * u64::from(terrain.elevation_damage_factor_milli(battlefield, crew, defender.position))
+        / 1_000;
+    let frontage = frontage
+        * u64::from(terrain.ranged_target_damage_factor_milli(battlefield, defender.position))
+        / 1_000;
+    let resistance = 1_000
+        + defender
+            .stats()
+            .map_or(0, |stats| u64::from(stats.armor_milli));
+    u32::try_from(frontage * 1_000 / resistance / u64::from(RANGED_CASUALTY_DIVISOR))
+        .expect("bounded catapult frontage fits u32 damage")
 }
 
 fn stat_adjusted_frontage(
@@ -3121,7 +3500,6 @@ fn point_distance_squared(left: BattlePoint, right: BattlePoint) -> u128 {
     )
 }
 
-#[cfg(test)]
 const fn square_u32(value: u32) -> u128 {
     let value = value as u128;
     value * value

@@ -35,9 +35,14 @@ pub use deployment::siege::{
     SiegeTowerActivity,
 };
 mod settlement;
+mod siege_engine;
 pub use settlement::{
     SETTLEMENT_LEVELS, SettlementLevel, SettlementLevelSpec, SettlementUpgradeOption,
     SettlementUpgradeOrder, SettlementUpgradeRequirement,
+};
+pub use siege_engine::{
+    CATAPULT_AMMUNITION, CATAPULT_MAX_RANGE_MM, CATAPULT_MIN_RANGE_MM, CATAPULT_RELOAD_PULSES,
+    SiegeEngineKind, SiegeEngineSetup, SiegeEngineStatus, SiegeEngineTarget,
 };
 mod tactical;
 mod tactical_opponent;
