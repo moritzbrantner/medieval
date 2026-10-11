@@ -74,6 +74,8 @@ async function enterBattle(page, location) {
   await page.getByRole("button", { name: "Enter battle" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
   await expect(page.locator("#battle-error")).toBeHidden();
+  // #94: battles open in deployment; start the clock first.
+  await page.getByRole("button", { name: "Start battle", exact: true }).click();
 }
 
 function speedGroup(page) {
@@ -172,6 +174,8 @@ async function selectSpeed(page, multiplier) {
 async function resetBattle(page) {
   await page.getByRole("button", { name: "Reset battle" }).click();
   expect((await authoritativeStatus(page)).tick).toBe(0);
+  // #94: a reset battle is back in deployment.
+  await page.getByRole("button", { name: "Start battle", exact: true }).click();
 }
 
 test.describe("simulation speed and deterministic pause", () => {

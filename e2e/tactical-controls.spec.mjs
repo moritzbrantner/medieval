@@ -84,6 +84,8 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
   await expect(page.getByRole("button", { name: "Enter battle" })).toBeEnabled();
   await page.getByRole("button", { name: "Enter battle" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  // #94: battles open in deployment; start the clock first.
+  await page.getByRole("button", { name: "Start battle", exact: true }).click();
   await expect(page.locator("#battle-error")).toBeHidden();
 
   let current = await status(page);
@@ -245,7 +247,9 @@ test("physical tactical controls reach Rust-owned battle state", async ({ page }
   });
   const resetSpears = current.units.find((unit) => unit.id === "attacker-spears");
   expect(resetSpears).toMatchObject({
-    xMm: 22_000,
+    // #94: the sandbox spears now open legally deployed at x = 16 m (the old
+    // 22 m anchor let their footprint overhang the zone edge).
+    xMm: 16_000,
     yMm: 10_000,
     formation: "line",
     formationFiles: 28,
@@ -272,6 +276,8 @@ test("withdrawal preserves escaped soldiers and projects the core terminal resul
   await page.goto("/battle.html?e2e-controls=1");
   await page.getByRole("button", { name: "Enter battle" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  // #94: battles open in deployment; start the clock first.
+  await page.getByRole("button", { name: "Start battle", exact: true }).click();
   await page.getByRole("button", { name: "Pause", exact: true }).click();
   const before = await status(page);
   await page.getByRole("button", { name: "Withdraw", exact: true }).click();
@@ -298,10 +304,15 @@ test("formation facing follows physical movement and appears in the battlefield"
   await page.goto("/battle.html?e2e-controls=1");
   await page.getByRole("button", { name: "Enter battle" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  // #94: battles open in deployment; start the clock first.
+  await page.getByRole("button", { name: "Start battle", exact: true }).click();
   await page.getByRole("button", { name: "Pause", exact: true }).click();
-  expect((await status(page)).units.find(unit => unit.id === "attacker-spears").facing).toEqual({ x: 1, y: 0 });
+  const spears = (await status(page)).units.find(unit => unit.id === "attacker-spears");
+  expect(spears.facing).toEqual({ x: 1, y: 0 });
   await clickUnit(page, "attacker-spears");
-  const ground = await canvasPoint(page, "groundViewport", 22_000, 30_000);
+  // #94: march straight down the field from the spears' own line (their
+  // legal opening anchor moved from x = 22 m to x = 16 m).
+  const ground = await canvasPoint(page, "groundViewport", spears.xMm, 30_000);
   await page.mouse.click(ground.x, ground.y, { button: "right" });
   await page.getByRole("button", { name: "Resume", exact: true }).click();
   await expect.poll(async () => (await status(page)).units.find(unit => unit.id === "attacker-spears").facing).toEqual({ x: 0, y: 1 });
@@ -314,6 +325,8 @@ test("physical facing and frontage orders validate the complete formation", asyn
   await page.goto("/battle.html?e2e-controls=1&location=forestClearing");
   await page.getByRole("button", { name: "Enter battle" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  // #94: battles open in deployment; start the clock first.
+  await page.getByRole("button", { name: "Start battle", exact: true }).click();
   await page.getByRole("button", { name: "Pause" , exact: true }).click();
   await clickUnit(page, "attacker-spears");
   await page.keyboard.press("KeyQ");
@@ -341,6 +354,8 @@ test("physical group movement, queued waypoints and attack-move reach the core",
   await page.goto("/battle.html?e2e-controls=1&location=forestClearing");
   await page.getByRole("button", { name: "Enter battle" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  // #94: battles open in deployment; start the clock first.
+  await page.getByRole("button", { name: "Start battle", exact: true }).click();
   await page.getByRole("button", { name: "Pause", exact: true }).click();
   await clickUnit(page,"attacker-spears");
   await clickUnit(page,"attacker-archers",{shift:true});
@@ -390,6 +405,8 @@ test("battlefield dropdown commits keyboard choices while simulation refreshes",
   await page.goto("/battle.html?e2e-controls=1");
   await page.getByRole("button", { name: "Enter battle" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-controls-e2e-ready", "true");
+  // #94: battles open in deployment; start the clock first.
+  await page.getByRole("button", { name: "Start battle", exact: true }).click();
   const selector=page.locator("#battle-location");
   const tick=(await status(page)).tick;
   await selector.click();
