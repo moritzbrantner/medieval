@@ -247,6 +247,13 @@ canvas:focus-visible {
   font-weight: 700;
 }
 
+.deployment-panel {
+  padding: 0.7rem;
+  border: 1px solid #8a6f3c;
+  border-radius: 6px;
+  background: rgb(58 45 22 / 0.55);
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.48;

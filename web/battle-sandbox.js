@@ -39,6 +39,8 @@ const armyRemaining = document.querySelector("#army-remaining");
 const armySetupReason = document.querySelector("#army-setup-reason");
 const armySetupError = document.querySelector("#army-setup-error");
 const startBattleButton = document.querySelector("#start-sandbox-battle");
+const deploymentPanel = document.querySelector("#deployment-panel");
+const startDeployedButton = document.querySelector("#start-deployed-battle");
 const locationSelect = document.querySelector("#battle-location");
 const battleSides = document.querySelector("#battle-sides");
 const playerSideText = battleSides.querySelector('[data-field="player-side"]');
@@ -442,8 +444,14 @@ function renderStatus(rawStatus) {
     playerDefeat: "Defeat — your force can no longer fight.",
     draw: "Battle ended with neither side able to continue.",
   }[currentStatus.outcome];
+  // Rust reports the phase; the page only mirrors it.
+  const deploying = currentStatus.battleState?.phase === "deployment";
+  deploymentPanel.hidden = !deploying;
+  startDeployedButton.disabled = !deploying;
   stateText.textContent = outcomeText
-    ?? `${currentStatus.paused ? "Paused" : "Running"} · ${readableSpeed(currentStatus.speedMultiplier)} · simulation tick ${currentStatus.tick}`;
+    ?? (deploying
+      ? "Deployment · arrange your formations, then Start battle"
+      : `${currentStatus.paused ? "Paused" : "Running"} · ${readableSpeed(currentStatus.speedMultiplier)} · simulation tick ${currentStatus.tick}`);
   renderBattleStatus(currentStatus);
 
   selectionText.textContent = currentStatus.selectedUnits.length
@@ -451,7 +459,7 @@ function renderStatus(rawStatus) {
     : "No units selected.";
   locationSelect.value = currentStatus.battlefieldLocation;
   pauseButton.textContent = currentStatus.paused && !currentStatus.outcome ? "Resume" : "Pause";
-  pauseButton.disabled = Boolean(currentStatus.outcome);
+  pauseButton.disabled = Boolean(currentStatus.outcome) || deploying;
   withdrawButton.disabled = !currentStatus.canWithdraw;
   const selectionDisabled = currentStatus.selectedUnits.length === 0 || Boolean(currentStatus.outcome);
   stopButton.disabled = selectionDisabled;
@@ -482,7 +490,12 @@ function renderStatus(rawStatus) {
       : "";
     const kind = UNIT_KIND_LABELS[unit.unitKind] ?? "Legacy unit";
     const ammunition = unit.ammunition === 0 ? " · ammunition exhausted" : Number.isInteger(unit.ammunition) ? ` · ammunition ${unit.ammunition} volleys` : "";
-    detail.textContent = `${kind} · ${unitState(unit)} · ${unit.soldiers} soldiers · ${readableFormation(unit)} · range ${readableRange(unit.attackRangeMm)} · morale ${unit.morale} · fatigue ${unit.fatigue}${ammunition}${order}`;
+    // Fog (#132 B): before a campaign battle starts, opponent strength stays
+    // an estimate, so the page does not print the exact count.
+    const strength = campaignMode && deploying && unit.side === "opponent"
+      ? "strength not scouted"
+      : `${unit.soldiers} soldiers`;
+    detail.textContent = `${kind} · ${unitState(unit)} · ${strength} · ${readableFormation(unit)} · range ${readableRange(unit.attackRangeMm)} · morale ${unit.morale} · fatigue ${unit.fatigue}${ammunition}${order}`;
 
     row.append(name, side, detail);
     fragment.append(row);
@@ -633,6 +646,13 @@ const battleInputBindings = attachBattleInputBindings({
 window.addEventListener("pagehide", () => battleInputBindings.destroy(), { once: true });
 
 withdrawButton.addEventListener("click", () => runControl({ kind: "withdraw" }));
+startDeployedButton.addEventListener("click", () => {
+  // A stale click after the start is ignored here; Rust refuses a second
+  // start anyway.
+  if (currentStatus?.battleState?.phase !== "deployment") return;
+  runControl({ kind: "startBattle" });
+  canvas.focus();
+});
 
 pauseButton.addEventListener("click", togglePause);
 for (const input of speedInputs) {

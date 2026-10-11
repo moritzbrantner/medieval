@@ -27,9 +27,13 @@ const ARCHER_RANGE_MM: u32 = 25_000;
 const CAMERA_PAN_MM: f32 = 5_000.0;
 const SANDBOX_ARMY_BUDGET: u32 = 1_500;
 const MAX_SANDBOX_BATTALIONS: u32 = 12;
-const PLAYER_DEPLOYMENT_X_MM: u32 = 22_000;
-const PLAYER_DEPLOYMENT_FIRST_Y_MM: u32 = 10_000;
-const PLAYER_DEPLOYMENT_ROW_SPACING_MM: u32 = 7_000;
+/// Sandbox player rows: anchors on one line, each footprint fully inside the
+/// attacker zone (the widest battalion, 30 levy files, spans 1–31 m), the
+/// first footprint starting 8 m from the near edge and a 3 m gap between
+/// neighbouring footprints, so every legal muster opens legally deployed.
+const PLAYER_DEPLOYMENT_X_MM: u32 = 16_000;
+const PLAYER_DEPLOYMENT_FIRST_EDGE_MM: i64 = 8_000;
+const PLAYER_DEPLOYMENT_ROW_GAP_MM: i64 = 3_000;
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.055,
     g: 0.047,
@@ -268,6 +272,9 @@ struct ViewportPoint {
 #[serde(rename_all = "camelCase")]
 struct UnitStatus {
     id: String,
+    /// The core `FormationFootprint` the deployment rule checks; the page
+    /// never computes it.
+    footprint: medieval_core::FormationFootprint,
     side: &'static str,
     soldiers: u16,
     unit_kind: Option<UnitKind>,
@@ -364,6 +371,7 @@ impl BrowserSandbox {
                 FlatBattlefield::new(120_000, 80_000),
                 seed.clone(),
             )
+            .and_then(TacticalBattle::into_deployment)
             .map_err(|error| error.to_string())?,
             None => sample_battle(initial_army, location)?,
         };
@@ -417,7 +425,11 @@ impl BrowserSandbox {
             return Err("animation timestamp must be finite".to_owned());
         }
         let previous = self.last_frame_ms.replace(timestamp_ms);
-        if !self.paused
+        if self.battle.state() == TacticalBattleState::Deployment {
+            // The core runs no tick before the start; wall time spent
+            // deploying is not owed to the simulation afterwards.
+            self.tick_accumulator = 0.0;
+        } else if !self.paused
             && let Some(previous) = previous
         {
             let elapsed_ms = (timestamp_ms - previous).clamp(0.0, MAX_FRAME_DELTA_MS);
@@ -441,9 +453,18 @@ impl BrowserSandbox {
     }
 
     fn apply_control(&mut self, request: TacticalControlRequest) -> Result<(), String> {
+        let deploying = self.battle.state() == TacticalBattleState::Deployment;
         self.controls
             .apply_request(&mut self.battle, request)
             .map_err(|error| error.to_string())?;
+        if deploying && self.battle.state() == TacticalBattleState::Running {
+            // Start battle: the opponent plans its first orders on the
+            // deployed tick-0 layout, and the 1x schedule starts fresh.
+            drive_opponent(&mut self.battle)?;
+            self.last_opponent_plan_tick = self.battle.tick();
+            self.tick_accumulator = 0.0;
+            self.last_frame_ms = None;
+        }
         self.render()
     }
 
@@ -599,7 +620,7 @@ impl BrowserSandbox {
 
     fn outcome(&self) -> Option<&'static str> {
         match self.battle.state() {
-            TacticalBattleState::Running => None,
+            TacticalBattleState::Deployment | TacticalBattleState::Running => None,
             TacticalBattleState::Finished {
                 winner: Some(BattleSide::Attacker),
                 ..
@@ -646,6 +667,7 @@ impl BrowserSandbox {
                     });
                 UnitStatus {
                     id: unit.id().to_owned(),
+                    footprint: unit.formation_footprint(),
                     side: side_name(unit.side()),
                     soldiers: unit.soldiers(),
                     unit_kind: unit.unit_kind(),
@@ -790,26 +812,33 @@ fn sample_battle(
             TacticalBattle::deploy_at_location(battlefield, units, location)
         }
     }
-    .map(TacticalBattle::start)
+    .and_then(TacticalBattle::into_deployment)
     .map_err(|error| error.to_string())
 }
 
+/// Stacks the muster front to back along the deployment line: each row's
+/// core footprint starts a fixed gap after the previous one ends.
 fn player_units(selection: SandboxArmySelection) -> Vec<TacticalUnit> {
     let mut units = Vec::new();
-    let mut deployment_slot = 0_u16;
+    let mut next_edge_mm = PLAYER_DEPLOYMENT_FIRST_EDGE_MM;
     for (kind, count) in selection.entries() {
         for index in 0..count {
-            let y_mm = PLAYER_DEPLOYMENT_FIRST_Y_MM
-                + u32::from(deployment_slot) * PLAYER_DEPLOYMENT_ROW_SPACING_MM;
-            if index == 0 {
-                if let Some(unit) = canonical_player_unit(kind, y_mm) {
-                    units.push(unit);
-                    deployment_slot = deployment_slot.saturating_add(1);
-                    continue;
+            let at = |y_mm| {
+                if index == 0 {
+                    canonical_player_unit(kind, y_mm)
+                } else {
+                    None
                 }
-            }
-            units.push(extra_player_unit(kind, index, y_mm));
-            deployment_slot = deployment_slot.saturating_add(1);
+                .unwrap_or_else(|| extra_player_unit(kind, index, y_mm))
+            };
+            // Built at y = 0, the footprint reports its extent below and
+            // above the anchor directly.
+            let extent = at(0).formation_footprint();
+            let y_mm = next_edge_mm - extent.min_y_mm;
+            next_edge_mm = y_mm + extent.max_y_mm + PLAYER_DEPLOYMENT_ROW_GAP_MM;
+            units.push(at(
+                u32::try_from(y_mm).expect("sandbox rows lie on the battlefield")
+            ));
         }
     }
     units
@@ -896,7 +925,7 @@ fn opponent_units() -> Vec<TacticalUnit> {
             UnitKind::Spearmen,
             BattleSide::Defender,
             110,
-            78_000,
+            83_000,
             24_000,
             Formation::Line { files: 28 },
             430,
@@ -906,7 +935,7 @@ fn opponent_units() -> Vec<TacticalUnit> {
             UnitKind::Archers,
             BattleSide::Defender,
             80,
-            82_000,
+            84_000,
             50_000,
             Formation::Line { files: 24 },
             400,
@@ -917,7 +946,7 @@ fn opponent_units() -> Vec<TacticalUnit> {
             UnitKind::Knights,
             BattleSide::Defender,
             44,
-            78_000,
+            80_000,
             76_000,
             Formation::Column { files: 12 },
             800,
@@ -1497,7 +1526,7 @@ mod tests {
     }
 
     #[test]
-    fn maximum_wide_battalions_get_distinct_in_bounds_rows() {
+    fn maximum_wide_battalions_get_distinct_legal_rows() {
         let units = player_units(SandboxArmySelection {
             levy: MAX_SANDBOX_BATTALIONS as u16,
             spearmen: 0,
@@ -1506,19 +1535,57 @@ mod tests {
         });
 
         assert_eq!(units.len(), MAX_SANDBOX_BATTALIONS as usize);
-        for (slot, unit) in units.iter().enumerate() {
+        for unit in &units {
             assert_eq!(unit.position().x_mm, PLAYER_DEPLOYMENT_X_MM);
-            assert_eq!(
-                unit.position().y_mm,
-                PLAYER_DEPLOYMENT_FIRST_Y_MM + slot as u32 * PLAYER_DEPLOYMENT_ROW_SPACING_MM
-            );
-            assert!(unit.position().y_mm < 100_000);
+            assert!(unit.formation_footprint().max_y_mm < 100_000);
         }
         for pair in units.windows(2) {
-            assert!(
-                pair[1].position().y_mm - pair[0].position().y_mm
-                    >= PLAYER_DEPLOYMENT_ROW_SPACING_MM
+            assert_eq!(
+                pair[1].formation_footprint().min_y_mm - pair[0].formation_footprint().max_y_mm,
+                PLAYER_DEPLOYMENT_ROW_GAP_MM
             );
+        }
+    }
+
+    #[test]
+    fn every_affordable_muster_opens_in_a_legal_deployment() {
+        let costs = [
+            UnitKind::Levy,
+            UnitKind::Spearmen,
+            UnitKind::Archers,
+            UnitKind::Knights,
+        ]
+        .map(UnitKind::recruitment_cost);
+        let max = MAX_SANDBOX_BATTALIONS as u16;
+        for levy in 0..=max {
+            for spearmen in 0..=max - levy {
+                for archers in 0..=max - levy - spearmen {
+                    for knights in 0..=max - levy - spearmen - archers {
+                        let selection = SandboxArmySelection {
+                            levy,
+                            spearmen,
+                            archers,
+                            knights,
+                        };
+                        let spent: u32 = selection
+                            .entries()
+                            .iter()
+                            .zip(costs)
+                            .map(|((_, count), cost)| u32::from(*count) * cost)
+                            .sum();
+                        if selection.battalion_count() == 0 || spent > SANDBOX_ARMY_BUDGET {
+                            continue;
+                        }
+                        for location in BattlefieldLocation::ALL {
+                            let battle =
+                                sample_battle(selection, location).unwrap_or_else(|error| {
+                                    panic!("{location:?} rejected {selection:?}: {error}")
+                                });
+                            assert_eq!(battle.state(), TacticalBattleState::Deployment);
+                        }
+                    }
+                }
+            }
         }
     }
 }
