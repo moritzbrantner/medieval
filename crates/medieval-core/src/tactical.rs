@@ -683,7 +683,18 @@ impl From<TacticalBattleWire> for TacticalBattle {
             } else {
                 Vec::new()
             },
-            units: wire.units,
+            units: if wire.siege.is_some() {
+                wire.units
+            } else {
+                // A field battle has no wall to climb: pending ladder orders go too.
+                wire.units
+                    .into_iter()
+                    .map(|mut unit| {
+                        unit.ladder_order = None;
+                        unit
+                    })
+                    .collect()
+            },
         }
     }
 }
@@ -1002,6 +1013,7 @@ impl TacticalBattle {
         self.ensure_can_receive_orders(index)?;
         let unit = &self.units[index];
         if !unit.can_use_ladders()
+            || !siege.supports_ladders()
             || self
                 .siege_ladders
                 .iter()
@@ -3445,6 +3457,30 @@ mod tests {
         battle.advance_ticks(200);
         assert_eq!(unit(&battle, "attacker").position(), destination);
         assert!(unit(&battle, "attacker").destination().is_none());
+    }
+
+    #[test]
+    fn field_battle_loads_drop_pending_ladder_orders() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let battle = TacticalBattle::new(
+            battlefield,
+            vec![sample_unit(
+                "attacker",
+                BattleSide::Attacker,
+                BattlePoint::new(10_000, 20_000),
+                Formation::Line { files: 10 },
+            )],
+        )
+        .unwrap();
+        // A field battle document carrying a pending ladder order, as a siege save
+        // stripped of its siege would.
+        let mut encoded = serde_json::to_value(&battle).unwrap();
+        encoded["units"][0]["ladderOrder"] =
+            serde_json::to_value(BattlePoint::new(50_000, 20_000)).unwrap();
+        let field: TacticalBattle = serde_json::from_value(encoded).unwrap();
+        assert_eq!(unit(&field, "attacker").ladder_order(), None);
+        let reencoded = serde_json::to_string(&field).unwrap();
+        assert!(!reencoded.contains("ladderOrder"));
     }
 
     #[test]

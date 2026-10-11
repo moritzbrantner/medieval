@@ -582,7 +582,8 @@ impl SiegeBattleState {
             .iter()
             .find(|segment| segment.contains(at))?;
         let gate = self.layout.gate;
-        let half = SIEGE_LADDER_HALF_SPAN_MM.min((gate.max_y_mm - gate.min_y_mm) / 4);
+        // The full span is capped at a quarter of the gate width.
+        let half = SIEGE_LADDER_HALF_SPAN_MM.min((gate.max_y_mm - gate.min_y_mm) / 8);
         let span = (2 * half).min(segment.max_y_mm - segment.min_y_mm);
         let min_y_mm = at
             .y_mm
@@ -606,6 +607,16 @@ impl SiegeBattleState {
     pub(crate) fn ladder_climb_speed_mm_per_tick(self) -> u32 {
         let gate = self.layout.gate;
         ((gate.max_x_mm - gate.min_x_mm) / self.profile.ladder_climb_ticks()).max(1)
+    }
+
+    /// Whether the wall is thick enough for a climb, stored only as position,
+    /// to last at least [`SiegeProfile::ladder_climb_ticks`]: one millimetre
+    /// per tick. Thinner walls (siege battlefields under about 10 m) offer no
+    /// ladders rather than a shortened climb.
+    #[must_use]
+    pub(crate) fn supports_ladders(self) -> bool {
+        let gate = self.layout.gate;
+        gate.max_x_mm - gate.min_x_mm >= self.profile.ladder_climb_ticks()
     }
 
     /// Whether `point` lies in the wall band (wall or gate footprint across).
@@ -1044,6 +1055,27 @@ mod tests {
         let on_bound = BattlePoint::new(wall_x + half, gate.min_y_mm);
         assert!(!siege.wall_separates(west, on_bound));
         assert!(!siege.wall_separates(on_bound, west));
+    }
+
+    #[test]
+    fn ladder_spans_stay_within_a_quarter_gate_and_need_a_climbable_wall() {
+        for profile in [SiegeProfile::PalisadeV1, SiegeProfile::StoneWallsV1] {
+            let siege =
+                SiegeBattleState::for_profile(FlatBattlefield::new(100_000, 100_000), profile);
+            let gate = siege.layout.gate;
+            let segment = siege.layout.wall_segments[0];
+            let ladder = siege
+                .ladder_area(BattlePoint::new(
+                    segment.center().x_mm,
+                    segment.center().y_mm,
+                ))
+                .unwrap();
+            assert!(4 * (ladder.max_y_mm - ladder.min_y_mm) <= gate.max_y_mm - gate.min_y_mm);
+            assert!(siege.supports_ladders());
+            // A wall thinner than the climb ticks cannot hold the minimum climb time.
+            let thin = SiegeBattleState::for_profile(FlatBattlefield::new(1_000, 1_000), profile);
+            assert!(!thin.supports_ladders());
+        }
     }
 
     #[test]
