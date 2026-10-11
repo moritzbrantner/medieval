@@ -3,7 +3,7 @@ use std::{
     fmt,
 };
 
-use medieval_core::{BattlePoint, BattleSide, Facing, FormationOrder, GroupMovementOrder, MovementMode, MovementOrder, TacticalBattle};
+use medieval_core::{BattlePoint, BattleSide, Facing, FormationOrder, GroupMovementOrder, MovementMode, MovementOrder, TacticalBattle, TacticalBattleState};
 use medieval_renderer::{Camera3d, RenderViewState};
 use serde::Deserialize;
 
@@ -55,6 +55,8 @@ enum TacticalControlIntent {
     FrontageSelected { width_mm: u32 },
     StopSelected,
     Withdraw,
+    DeploySelected { position: BattlePoint },
+    StartBattle,
 }
 
 impl TacticalControlRequest {
@@ -62,6 +64,13 @@ impl TacticalControlRequest {
         let kind = self.kind;
         match kind.as_str() {
             "withdraw" => Ok(TacticalControlIntent::Withdraw),
+            "deploySelected" => Ok(TacticalControlIntent::DeploySelected {
+                position: BattlePoint::new(
+                    required(self.x_mm, &kind, "xMm")?,
+                    required(self.y_mm, &kind, "yMm")?,
+                ),
+            }),
+            "startBattle" => Ok(TacticalControlIntent::StartBattle),
             "fitCamera" => Ok(TacticalControlIntent::FitCamera),
             "panCamera" => Ok(TacticalControlIntent::PanCamera {
                 delta_x_mm: required(self.delta_x_mm, &kind, "deltaXMm")?,
@@ -245,9 +254,20 @@ impl TacticalControls {
                 self.attack_move_armed = true;
                 Ok(())
             }
+            // During deployment a plain move places the selection instead, so
+            // every surface's ordinary right click repositions formations.
+            TacticalControlIntent::MoveSelected { destination, queued: false, mode: MovementMode::March }
+                if battle.state() == TacticalBattleState::Deployment =>
+            {
+                self.deploy_selected(battle, destination)
+            }
             TacticalControlIntent::MoveSelected { destination, queued, mode } => {
                 self.move_selected(battle, destination, queued, mode)
             }
+            TacticalControlIntent::DeploySelected { position } => self.deploy_selected(battle, position),
+            TacticalControlIntent::StartBattle => battle
+                .begin_battle()
+                .map_err(|error| TacticalControlError::RuleRejected(error.to_string())),
             TacticalControlIntent::EngageSelected { target_unit_id } => {
                 self.engage_selected(battle, &target_unit_id)
             }
@@ -375,6 +395,60 @@ impl TacticalControls {
         let orders = self.selected_units.iter().cloned().map(command).collect::<Vec<_>>();
         battle.issue_formation_orders(&orders)
             .map_err(|error| TacticalControlError::RuleRejected(error.to_string()))?;
+        self.order_preview = false;
+        Ok(())
+    }
+
+    /// Places the selection instantly through the core deployment API. One
+    /// formation lands exactly on `position`; several keep their relative
+    /// anchor offsets around their anchor centroid, which lands on `position`.
+    /// The core validates the resulting layout atomically.
+    fn deploy_selected(
+        &mut self,
+        battle: &mut TacticalBattle,
+        position: BattlePoint,
+    ) -> Result<(), TacticalControlError> {
+        self.sync_with_battle(battle);
+        self.ensure_selection()?;
+        let rejected = |error: medieval_core::TacticalError| TacticalControlError::RuleRejected(error.to_string());
+        if let [unit_id] = self.selected_units.iter().collect::<Vec<_>>()[..] {
+            battle.deploy_formation(unit_id, position).map_err(rejected)?;
+        } else {
+            let anchors = self
+                .selected_units
+                .iter()
+                .map(|unit_id| {
+                    let anchor = battle
+                        .units()
+                        .iter()
+                        .find(|unit| unit.id() == unit_id)
+                        .expect("selected units are synchronized before deployment")
+                        .position();
+                    (unit_id.as_str(), i64::from(anchor.x_mm), i64::from(anchor.y_mm))
+                })
+                .collect::<Vec<_>>();
+            let count = i64::try_from(anchors.len()).expect("a selection fits in i64");
+            let centre_x = anchors.iter().map(|(_, x, _)| x).sum::<i64>().div_euclid(count);
+            let centre_y = anchors.iter().map(|(_, _, y)| y).sum::<i64>().div_euclid(count);
+            // An anchor that would fall off the field is clamped to its edge,
+            // where its footprint is necessarily outside the zone: the core
+            // then rejects the placement as it would any other.
+            let clamp = |value: i64| u32::try_from(value.max(0)).unwrap_or(u32::MAX);
+            let placements = anchors
+                .iter()
+                .map(|(unit_id, x, y)| {
+                    (
+                        *unit_id,
+                        BattlePoint::new(
+                            clamp(i64::from(position.x_mm) + x - centre_x),
+                            clamp(i64::from(position.y_mm) + y - centre_y),
+                        ),
+                    )
+                })
+                .collect::<Vec<_>>();
+            battle.deploy_formations(&placements).map_err(rejected)?;
+        }
+        self.attack_move_armed = false;
         self.order_preview = false;
         Ok(())
     }
