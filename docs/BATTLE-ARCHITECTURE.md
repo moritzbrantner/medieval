@@ -512,6 +512,93 @@ catapult arm for a moment after `last_shot_tick`; presentation never reads the
 range, reload, ammunition or damage rules. Tower integrity, engine destruction
 by enemy fire, opponent-AI engine use and the browser setup UI are out of scope.
 
+## Staged siege objectives
+
+Siege depth 6 (#127) lets one siege hold several capture points. Every siege
+profile owns an ordered list of capture objectives, outer to inner, and
+`TacticalBattle::siege_objectives()` returns it as `SiegeObjectiveStatus {
+center, radius_mm, progress, capturing_side, captured_by, unlocked }`, or
+`None` outside a siege. Like the tower, ladder and engine read models it is
+derived from core state; presentation only projects it.
+
+**Profiles.** `PalisadeV1` and `StoneWallsV1` are single-point profiles: one
+objective, always unlocked, equal to `layout.capture_point` with the `capture`
+state. Their layout and save documents and their capture timeline are exactly
+the pre-#127 ones (the new fields below are omitted for them), so older saves
+load and resume unchanged. Profiles are never changed in place, so the
+multi-objective layout is a new profile, `SiegeProfile::StagedKeepV1`
+(serialized `stagedKeepV1`): the `StoneWallsV1` wall, gate, towers and rules
+with three objectives on the defender side at 62 %, 76 % and 90 % of the
+battlefield width on the center line (outer bailey, inner bailey, keep), each
+with the usual radius (a twentieth of the shorter side). The geometry
+serializes as `layout.stagedObjectives` and the per-objective state as
+`objectiveCaptures`.
+
+**Rules.**
+
+- *Ordered unlock.* Only the first objective starts unlocked. A later
+  objective unlocks when the attacker captures the objective before it; until
+  then it accrues nothing for either side. Only attacker captures unlock: a
+  defender who captures (or holds) an earlier objective never unlocks the next
+  one. Because a captured objective stays captured, a defender capture of an
+  earlier objective closes the capture path for good, and the battle is then
+  decided by rout or withdrawal.
+- *Per-objective capture is the existing rule.* Once per combat pulse, formed
+  units of exactly one side inside the active objective (the first one the
+  attacker has not captured) gain `SIEGE_CAPTURE_PROGRESS_PER_PULSE` for that
+  side, restarting from zero when the holding side changes. A contested
+  objective (formed units of both sides inside) is left exactly unchanged, so
+  contested capture fails closed. A captured objective stays captured, even
+  when the enemy reoccupies it.
+- *Victory only from the final objective.* Capturing an earlier objective
+  never finishes the battle. A started battle finishes with
+  `TacticalFinishReason::SiegeCapture` on the pulse the final objective is
+  captured, won by its captor. With one objective this is exactly the
+  single-point rule.
+
+**Legacy fields.** For `StagedKeepV1`, `layout.capturePoint` is the final
+objective (the keep, which decides the battle), and `capture` mirrors the
+active objective: the first one the attacker has not captured, or the final
+one once all have fallen. `SiegeBattleState::active_objective()` returns that
+objective; the renderer projects it as `RenderSiegeSnapshot::capture` and every
+objective, in core order, as `RenderSiegeSnapshot::objectives` (a read-only,
+iterable and indexable `RenderSiegeObjectives` of `RenderSiegeCapture`, each
+with `unlocked`), drawing one marker per objective. Victory and
+settlement-capture provenance read the final objective
+(`final_objective_captured_by`), never the mirror.
+
+**Presentation.** The sandbox status carries `siegeObjectives` straight from
+`siege_objectives()`, and the battle HUD lists them in `#siege-objectives`
+(locked, open, capturing with progress, or captured by a side) when a siege has
+more than one objective. Presentation never reads the capture rate, contention
+or unlock rules.
+
+**Offering.** `StagedKeepV1` is not in `SiegeProfile::ALL` and no campaign
+fortification level maps to it (`for_fortification_level` still returns only
+palisade or stone walls), so sandbox and campaign offerings are unchanged; it is
+reachable through `deploy_siege_with_profile` and saved battles. Mapping a
+campaign fortification level to it, a browser profile selector with a
+Playwright journey, and opponent-AI objective planning are follow-ups.
+
+**Decisions on the points #127 left open.**
+
+- *Geometry and count:* three objectives (outer bailey, inner bailey, keep)
+  at 62 %, 76 % and 90 % of the width on the center line, behind the
+  `StoneWallsV1` wall; every other siege rule (gate, towers, ladders, ram,
+  catapult) is the stone-wall one.
+- *Defender captures:* only attacker captures unlock; a defender capture of an
+  earlier objective is permanent and keeps every later objective locked, and
+  it never finishes the battle.
+- *Legacy fields:* `capturePoint` is the keep, `capture` mirrors the active
+  objective; neither decides victory for a staged profile.
+- *Opponent AI:* unchanged; it does not plan around objectives yet.
+- *Campaign mapping:* none; fortification levels still map to palisade and
+  stone walls only.
+- *`SiegeProfile::ALL`:* `StagedKeepV1` is not in it.
+- *Browser selector and Playwright journey:* not added; the HUD list appears
+  only for a siege with more than one objective, so current journeys are
+  unchanged.
+
 ## Finite missile ammunition
 
 New V1 missile formations initialize the core profile's volley budget (30 for

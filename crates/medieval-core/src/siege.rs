@@ -17,6 +17,9 @@ pub const SIEGE_GATE_ATTACK_DISTANCE_MM: u32 = crate::tactical::COMBAT_CONTACT_D
 /// capped at a quarter of the gate span so it always stays narrower than the
 /// gate.
 pub(crate) const SIEGE_LADDER_HALF_SPAN_MM: u32 = 1_500;
+/// Objectives of [`SiegeProfile::StagedKeepV1`]: outer bailey, inner bailey
+/// and keep.
+pub const STAGED_KEEP_OBJECTIVE_COUNT: usize = 3;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -168,6 +171,12 @@ pub enum SiegeProfile {
     /// before profiles existed load as stone walls.
     #[default]
     StoneWallsV1,
+    /// Stone curtain wall (the `StoneWallsV1` wall, gate and towers) with a
+    /// staged defense behind it: an ordered list of capture objectives from
+    /// the outer bailey to the keep (see [`SiegeBattleState::objectives`]).
+    /// Not a campaign fortification level and not in [`Self::ALL`]; it is
+    /// offered only through explicit construction.
+    StagedKeepV1,
 }
 
 /// Geometry of one profile, as fractions of the battlefield.
@@ -181,6 +190,9 @@ struct SiegeProfileGeometry {
 }
 
 impl SiegeProfile {
+    /// The single-point profiles the campaign fortification levels map to.
+    /// `StagedKeepV1` is deliberately not listed: no campaign level or sandbox
+    /// selector offers it yet.
     pub const ALL: [Self; 2] = [Self::PalisadeV1, Self::StoneWallsV1];
 
     /// The fortification level this profile represents (1 = palisade, 2 = stone).
@@ -188,7 +200,7 @@ impl SiegeProfile {
     pub const fn fortification_level(self) -> u8 {
         match self {
             Self::PalisadeV1 => 1,
-            Self::StoneWallsV1 => 2,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 2,
         }
     }
 
@@ -199,7 +211,7 @@ impl SiegeProfile {
     pub const fn gate_damage_per_pulse(self) -> u16 {
         match self {
             Self::PalisadeV1 => 100,
-            Self::StoneWallsV1 => 50,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 50,
         }
     }
 
@@ -210,7 +222,7 @@ impl SiegeProfile {
     pub const fn ram_damage_per_pulse(self) -> u16 {
         match self {
             Self::PalisadeV1 => 250,
-            Self::StoneWallsV1 => 125,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 125,
         }
     }
 
@@ -220,7 +232,7 @@ impl SiegeProfile {
     pub const fn catapult_gate_damage_per_shot(self) -> u16 {
         match self {
             Self::PalisadeV1 => 200,
-            Self::StoneWallsV1 => 100,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 100,
         }
     }
 
@@ -231,7 +243,7 @@ impl SiegeProfile {
     pub const fn tower_range_mm(self) -> u32 {
         match self {
             Self::PalisadeV1 => 20_000,
-            Self::StoneWallsV1 => 30_000,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 30_000,
         }
     }
 
@@ -243,7 +255,7 @@ impl SiegeProfile {
     pub const fn ladder_climb_ticks(self) -> u32 {
         match self {
             Self::PalisadeV1 => 60,
-            Self::StoneWallsV1 => 100,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 100,
         }
     }
 
@@ -252,7 +264,7 @@ impl SiegeProfile {
     pub const fn tower_max_casualties_per_pulse(self) -> u16 {
         match self {
             Self::PalisadeV1 => 2,
-            Self::StoneWallsV1 => 3,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 3,
         }
     }
 
@@ -262,7 +274,7 @@ impl SiegeProfile {
     pub(crate) const fn tower_volley_frontage(self) -> u32 {
         match self {
             Self::PalisadeV1 => 12,
-            Self::StoneWallsV1 => 24,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 24,
         }
     }
 
@@ -283,7 +295,7 @@ impl SiegeProfile {
                 gate_permille: (430, 570),
                 tower_radius_divisor: 80,
             },
-            Self::StoneWallsV1 => SiegeProfileGeometry {
+            Self::StoneWallsV1 | Self::StagedKeepV1 => SiegeProfileGeometry {
                 wall_permille: (490, 510),
                 gate_permille: (450, 550),
                 tower_radius_divisor: 50,
@@ -298,8 +310,15 @@ pub struct SiegeLayout {
     pub wall_segments: [SiegeArea; 2],
     pub gate: SiegeArea,
     pub towers: [SiegeTower; SIEGE_TOWER_COUNT],
+    /// The single capture point of a one-objective profile. For a staged
+    /// profile it is the final objective (the keep), whose capture decides
+    /// the battle; the full ordered list is [`Self::staged_objectives`].
     pub capture_point: SiegeCapturePoint,
     pub deployment_zones: [DeploymentZone; 2],
+    /// Ordered objectives, outer to inner, of a staged profile. Omitted for
+    /// single-point profiles, so their documents are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_objectives: Option<[SiegeCapturePoint; STAGED_KEEP_OBJECTIVE_COUNT]>,
 }
 
 impl SiegeLayout {
@@ -348,13 +367,23 @@ impl SiegeLayout {
             center: BattlePoint::new(wall_center_x, scale(battlefield.depth_mm, percent_y, 100)),
             radius_mm: tower_radius,
         });
-        let capture_point = SiegeCapturePoint {
+        let capture_radius = battlefield.width_mm.min(battlefield.depth_mm) / 20;
+        let objective_at = |percent_x: u32| SiegeCapturePoint {
             center: BattlePoint::new(
-                scale(battlefield.width_mm, 80, 100),
+                scale(battlefield.width_mm, percent_x, 100),
                 scale(battlefield.depth_mm, 50, 100),
             ),
-            radius_mm: battlefield.width_mm.min(battlefield.depth_mm) / 20,
+            radius_mm: capture_radius,
         };
+        // Staged objectives step from just behind the wall to the keep at the
+        // far edge, each 14 % of the width farther in.
+        let staged_objectives = match profile {
+            SiegeProfile::PalisadeV1 | SiegeProfile::StoneWallsV1 => None,
+            SiegeProfile::StagedKeepV1 => Some([62, 76, 90].map(objective_at)),
+        };
+        let capture_point = staged_objectives
+            .and_then(|objectives| objectives.last().copied())
+            .unwrap_or_else(|| objective_at(80));
         let deployment_zones = [
             DeploymentZone {
                 side: BattleSide::Attacker,
@@ -377,6 +406,7 @@ impl SiegeLayout {
             towers,
             capture_point,
             deployment_zones,
+            staged_objectives,
         }
     }
 
@@ -408,7 +438,30 @@ pub struct SiegeBattleState {
     /// recorded before gate assaults existed load with an intact gate.
     #[serde(default = "full_gate_integrity")]
     pub gate_integrity: u16,
+    /// Capture state of the single objective. For a staged profile it mirrors
+    /// the active objective (see [`Self::active_objective_index`]); the
+    /// authoritative per-objective state is [`Self::objective_captures`].
     pub capture: SiegeCaptureState,
+    /// Per-objective capture state of a staged profile, in layout order.
+    /// Omitted for single-point profiles, so their documents are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective_captures: Option<[SiegeCaptureState; STAGED_KEEP_OBJECTIVE_COUNT]>,
+}
+
+/// Core-owned state of one siege capture objective, in profile order (outer
+/// to inner). Single-point profiles have exactly one, always unlocked, equal
+/// to `layout.capture_point` and `capture`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiegeObjectiveStatus {
+    pub center: BattlePoint,
+    pub radius_mm: u32,
+    pub progress: u16,
+    pub capturing_side: Option<BattleSide>,
+    pub captured_by: Option<BattleSide>,
+    /// Whether the objective can be captured: the first always is, a later one
+    /// once the attacker has captured the objective before it.
+    pub unlocked: bool,
 }
 
 const fn full_gate_integrity() -> u16 {
@@ -424,12 +477,77 @@ impl SiegeBattleState {
     /// A fresh siege of `profile`: closed gate, no capture progress.
     #[must_use]
     pub fn for_profile(battlefield: FlatBattlefield, profile: SiegeProfile) -> Self {
+        let layout = SiegeLayout::for_profile(battlefield, profile);
         Self {
             profile,
-            layout: SiegeLayout::for_profile(battlefield, profile),
+            layout,
             gate_state: SiegeGateState::Closed,
             gate_integrity: SIEGE_GATE_MAX_INTEGRITY,
             capture: SiegeCaptureState::default(),
+            objective_captures: layout
+                .staged_objectives
+                .map(|_| [SiegeCaptureState::default(); STAGED_KEEP_OBJECTIVE_COUNT]),
+        }
+    }
+
+    /// Every capture objective in order, outer to inner.
+    #[must_use]
+    pub fn objectives(self) -> Vec<SiegeObjectiveStatus> {
+        let Some(points) = self.layout.staged_objectives else {
+            return vec![objective_status(
+                self.layout.capture_point,
+                self.capture,
+                true,
+            )];
+        };
+        let captures = self.objective_captures.unwrap_or_default();
+        points
+            .iter()
+            .zip(captures)
+            .enumerate()
+            .map(|(index, (point, capture))| {
+                let unlocked =
+                    index == 0 || captures[index - 1].captured_by == Some(BattleSide::Attacker);
+                objective_status(*point, capture, unlocked)
+            })
+            .collect()
+    }
+
+    /// The staged objective that is currently in play: the first one the
+    /// attacker has not captured (always unlocked, since every objective
+    /// before it fell to the attacker), or the final one once all fell.
+    /// Later objectives unlock only through attacker captures, so a defender
+    /// who captures this objective keeps it, and every later one, locked.
+    #[must_use]
+    pub fn active_objective_index(
+        captures: &[SiegeCaptureState; STAGED_KEEP_OBJECTIVE_COUNT],
+    ) -> usize {
+        captures
+            .iter()
+            .position(|capture| capture.captured_by != Some(BattleSide::Attacker))
+            .unwrap_or(STAGED_KEEP_OBJECTIVE_COUNT - 1)
+    }
+
+    /// The active objective, which the legacy `capture` mirrors: the single
+    /// objective of a one-objective profile, otherwise the objective at
+    /// [`Self::active_objective_index`].
+    #[must_use]
+    pub fn active_objective(self) -> SiegeObjectiveStatus {
+        let index = self
+            .objective_captures
+            .filter(|_| self.layout.staged_objectives.is_some())
+            .map_or(0, |captures| Self::active_objective_index(&captures));
+        self.objectives().swap_remove(index)
+    }
+
+    /// The side that captured the final objective, which decides the battle.
+    /// For a single-point profile this is `capture.captured_by`.
+    #[must_use]
+    pub fn final_objective_captured_by(self) -> Option<BattleSide> {
+        match (self.layout.staged_objectives, self.objective_captures) {
+            (Some(_), Some(captures)) => captures[STAGED_KEEP_OBJECTIVE_COUNT - 1].captured_by,
+            (Some(_), None) => None,
+            (None, _) => self.capture.captured_by,
         }
     }
 
@@ -805,43 +923,81 @@ impl SiegeBattleState {
 
     /// Advances capture once per authoritative tactical combat pulse. Only
     /// formed units count. If both sides are present, progress is left exactly
-    /// unchanged; contested capture therefore fails closed.
+    /// unchanged; contested capture therefore fails closed. A staged profile
+    /// advances only its active objective (see
+    /// [`Self::active_objective_index`]) and mirrors it into `capture`.
     pub fn advance_capture(&mut self, units: &[TacticalUnit]) {
-        if self.capture.captured_by.is_some() {
-            return;
-        }
-        let mut attacker_present = false;
-        let mut defender_present = false;
-        for unit in units.iter().filter(|unit| {
-            unit.can_receive_orders() && self.layout.capture_point.contains(unit.position())
-        }) {
-            match unit.side() {
-                BattleSide::Attacker => attacker_present = true,
-                BattleSide::Defender => defender_present = true,
-            }
-        }
-
-        let side = match (attacker_present, defender_present) {
-            (true, false) => Some(BattleSide::Attacker),
-            (false, true) => Some(BattleSide::Defender),
-            (false, false) | (true, true) => None,
-        };
-        let Some(side) = side else {
+        let Some(points) = self.layout.staged_objectives else {
+            advance_objective(&mut self.capture, self.layout.capture_point, units);
             return;
         };
+        let mut captures = self.objective_captures.unwrap_or_default();
+        let active = Self::active_objective_index(&captures);
+        advance_objective(&mut captures[active], points[active], units);
+        self.objective_captures = Some(captures);
+        // Re-resolve after advancing: capturing a non-final objective makes
+        // the next one active on this same pulse, and the mirror follows it.
+        self.capture = captures[Self::active_objective_index(&captures)];
+    }
+}
 
-        if self.capture.capturing_side != Some(side) {
-            self.capture.capturing_side = Some(side);
-            self.capture.progress = 0;
+const fn objective_status(
+    point: SiegeCapturePoint,
+    capture: SiegeCaptureState,
+    unlocked: bool,
+) -> SiegeObjectiveStatus {
+    SiegeObjectiveStatus {
+        center: point.center,
+        radius_mm: point.radius_mm,
+        progress: capture.progress,
+        capturing_side: capture.capturing_side,
+        captured_by: capture.captured_by,
+        unlocked,
+    }
+}
+
+/// The capture rule of one objective: once captured it stays captured;
+/// otherwise formed units of exactly one side inside it gain progress for
+/// that side, restarting from zero when the holding side changes.
+fn advance_objective(
+    capture: &mut SiegeCaptureState,
+    point: SiegeCapturePoint,
+    units: &[TacticalUnit],
+) {
+    if capture.captured_by.is_some() {
+        return;
+    }
+    let mut attacker_present = false;
+    let mut defender_present = false;
+    for unit in units
+        .iter()
+        .filter(|unit| unit.can_receive_orders() && point.contains(unit.position()))
+    {
+        match unit.side() {
+            BattleSide::Attacker => attacker_present = true,
+            BattleSide::Defender => defender_present = true,
         }
-        self.capture.progress = self
-            .capture
-            .progress
-            .saturating_add(SIEGE_CAPTURE_PROGRESS_PER_PULSE)
-            .min(SIEGE_CAPTURE_MAX_PROGRESS);
-        if self.capture.progress == SIEGE_CAPTURE_MAX_PROGRESS {
-            self.capture.captured_by = Some(side);
-        }
+    }
+
+    let side = match (attacker_present, defender_present) {
+        (true, false) => Some(BattleSide::Attacker),
+        (false, true) => Some(BattleSide::Defender),
+        (false, false) | (true, true) => None,
+    };
+    let Some(side) = side else {
+        return;
+    };
+
+    if capture.capturing_side != Some(side) {
+        capture.capturing_side = Some(side);
+        capture.progress = 0;
+    }
+    capture.progress = capture
+        .progress
+        .saturating_add(SIEGE_CAPTURE_PROGRESS_PER_PULSE)
+        .min(SIEGE_CAPTURE_MAX_PROGRESS);
+    if capture.progress == SIEGE_CAPTURE_MAX_PROGRESS {
+        capture.captured_by = Some(side);
     }
 }
 
@@ -947,6 +1103,21 @@ mod tests {
             );
         }
         assert_eq!(SiegeProfile::for_fortification_level(0), None);
+    }
+
+    #[test]
+    fn legacy_capture_mirrors_the_next_objective_on_the_pulse_an_earlier_one_falls() {
+        let battlefield = FlatBattlefield::new(100_000, 80_000);
+        let mut siege = SiegeBattleState::for_profile(battlefield, SiegeProfile::StagedKeepV1);
+        let first = siege.layout.staged_objectives.unwrap()[0];
+        let attackers = [unit("attacker", BattleSide::Attacker, first.center)];
+        while siege.objective_captures.unwrap()[0].captured_by.is_none() {
+            siege.advance_capture(&attackers);
+        }
+        let captures = siege.objective_captures.unwrap();
+        assert_eq!(captures[0].captured_by, Some(BattleSide::Attacker));
+        assert_eq!(SiegeBattleState::active_objective_index(&captures), 1);
+        assert_eq!(siege.capture, captures[1]);
     }
 
     #[test]
