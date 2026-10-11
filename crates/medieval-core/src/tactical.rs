@@ -6,7 +6,9 @@ use std::{
 use physics_engine::{Collider, ColliderShape, Vec3i, collider_contact};
 use serde::{Deserialize, Serialize};
 
-use crate::deployment::siege::{SiegeBattleState, SiegeGateState, SiegeProfile};
+use crate::deployment::siege::{
+    SiegeBattleState, SiegeGateState, SiegeLadder, SiegeLadderPlacement, SiegeProfile,
+};
 use crate::deployment::{DeploymentZone, standard_deployment_zone, standard_deployment_zones};
 use crate::terrain::{BattlefieldLocation, COMBAT_FACTOR_BASE_MILLI, TacticalTerrain};
 use crate::{TacticalWorkCounters, UnitKind};
@@ -204,6 +206,10 @@ pub struct TacticalUnit {
     /// documents without gate assaults keep their exact shape.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     gate_attack: bool,
+    /// Pending order to place this unit's ladder at a wall point. Serialized
+    /// only while set so documents without ladders keep their exact shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ladder_order: Option<BattlePoint>,
     fatigue: u16,
     morale: u16,
     state: TacticalUnitState,
@@ -270,6 +276,7 @@ impl TacticalUnit {
             queued_movements: Vec::new(),
             engagement_target: None,
             gate_attack: false,
+            ladder_order: None,
             fatigue: 0,
             morale: MAX_TACTICAL_MORALE,
             state: TacticalUnitState::Formed,
@@ -477,6 +484,25 @@ impl TacticalUnit {
         self.gate_attack
     }
 
+    /// The wall point this unit is ordered to place its ladder at.
+    #[must_use]
+    pub const fn ladder_order(&self) -> Option<BattlePoint> {
+        self.ladder_order
+    }
+
+    /// Whether the unit may place and climb siege ladders: attacker foot
+    /// units. Mounted knights and defenders never use ladders.
+    #[must_use]
+    pub fn can_use_ladders(&self) -> bool {
+        self.side == BattleSide::Attacker && self.unit_kind() != Some(UnitKind::Knights)
+    }
+
+    /// Ends every standing siege order (gate assault or ladder placement).
+    const fn clear_siege_orders(&mut self) {
+        self.gate_attack = false;
+        self.ladder_order = None;
+    }
+
     #[cfg(test)]
     pub(crate) const fn with_gate_attack_order(mut self) -> Self {
         self.gate_attack = true;
@@ -575,6 +601,10 @@ pub struct TacticalBattle {
     /// Fractional siege tower damage per tower index and target unit.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     tower_damage_credit: BTreeMap<u8, BTreeMap<String, CombatDamageCredit>>,
+    /// Placed siege ladders in placement order, omitted while empty so
+    /// battles without ladders keep their exact document shape.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    siege_ladders: Vec<SiegeLadderPlacement>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -623,6 +653,8 @@ struct TacticalBattleWire {
     /// Fractional siege tower damage per tower index and target unit.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     tower_damage_credit: BTreeMap<u8, BTreeMap<String, CombatDamageCredit>>,
+    #[serde(default)]
+    siege_ladders: Vec<SiegeLadderPlacement>,
 }
 
 impl From<TacticalBattleWire> for TacticalBattle {
@@ -646,6 +678,11 @@ impl From<TacticalBattleWire> for TacticalBattle {
             ranged_damage_credit: wire.ranged_damage_credit,
             melee_damage_credit: wire.melee_damage_credit,
             tower_damage_credit: wire.tower_damage_credit,
+            siege_ladders: if wire.siege.is_some() {
+                wire.siege_ladders
+            } else {
+                Vec::new()
+            },
             units: wire.units,
         }
     }
@@ -746,6 +783,7 @@ impl TacticalBattle {
             ranged_damage_credit: BTreeMap::new(),
             melee_damage_credit: BTreeMap::new(),
             tower_damage_credit: BTreeMap::new(),
+            siege_ladders: Vec::new(),
             units,
         })
     }
@@ -871,11 +909,32 @@ impl TacticalBattle {
         self.siege.map(|siege| siege.tower_activity(&self.units))
     }
 
+    /// Placed siege ladders in placement order, with whether a formed
+    /// defender holds each one's top. `None` outside a siege.
+    #[must_use]
+    pub fn siege_ladders(&self) -> Option<Vec<SiegeLadder>> {
+        self.siege?;
+        Some(
+            self.siege_ladders
+                .iter()
+                .map(|ladder| SiegeLadder {
+                    area: ladder.area,
+                    held_by_defender: SiegeBattleState::ladder_held(ladder, &self.units),
+                })
+                .collect(),
+        )
+    }
+
     /// Whether a siege wall stands between two positions, so formed units
-    /// there cannot fight in melee.
+    /// there cannot fight in melee. Placed ladders open their own cells.
     fn wall_separates(&self, left: BattlePoint, right: BattlePoint) -> bool {
-        self.siege
-            .is_some_and(|siege| siege.wall_separates(left, right))
+        self.siege.is_some_and(|siege| {
+            siege.wall_separates_with_ladders(
+                left,
+                right,
+                self.siege_ladders.iter().map(|ladder| ladder.area),
+            )
+        })
     }
 
     pub fn open_siege_gate(&mut self) -> Result<(), TacticalError> {
@@ -918,7 +977,58 @@ impl TacticalBattle {
         unit.movement_mode = crate::MovementMode::March;
         unit.arrival_facing = None;
         unit.engagement_target = None;
+        unit.ladder_order = None;
         unit.gate_attack = true;
+        Ok(())
+    }
+
+    /// Orders a formed attacker foot unit to place its one scaling ladder at
+    /// `at`, a point inside a wall segment. Like the gate-attack order the
+    /// unit approaches from any distance, to the foot of the ladder on its own
+    /// side of the wall; the ladder exists once the unit stands there. A
+    /// rejected order changes nothing.
+    pub fn issue_ladder_order(
+        &mut self,
+        unit_id: &str,
+        at: BattlePoint,
+    ) -> Result<(), TacticalError> {
+        self.ensure_running()?;
+        let Some(siege) = self.siege else {
+            return Err(TacticalError::NotSiegeBattle);
+        };
+        let index = self
+            .unit_index(unit_id)
+            .ok_or_else(|| TacticalError::UnitNotFound(unit_id.to_owned()))?;
+        self.ensure_can_receive_orders(index)?;
+        let unit = &self.units[index];
+        if !unit.can_use_ladders()
+            || self
+                .siege_ladders
+                .iter()
+                .any(|ladder| ladder.placed_by == unit.id)
+        {
+            return Err(TacticalError::LadderUnavailable(unit_id.to_owned()));
+        }
+        let invalid = || TacticalError::InvalidLadderPosition {
+            unit_id: unit_id.to_owned(),
+            position: at,
+        };
+        let area = siege.ladder_area(at).ok_or_else(invalid)?;
+        let foot = crate::deployment::siege::ladder_foot(area, unit.position);
+        if !self.battlefield.contains(foot) || !self.is_passable_at(foot) {
+            return Err(invalid());
+        }
+        let unit = &mut self.units[index];
+        if unit.ladder_order.is_none() {
+            unit.interrupt_charge();
+        }
+        unit.destination = None;
+        unit.queued_movements.clear();
+        unit.movement_mode = crate::MovementMode::March;
+        unit.arrival_facing = None;
+        unit.engagement_target = None;
+        unit.gate_attack = false;
+        unit.ladder_order = Some(at);
         Ok(())
     }
 
@@ -977,7 +1087,7 @@ impl TacticalBattle {
                 routed: unit.is_routed(),
             };
             unit.engagement_target = None;
-            unit.gate_attack = false;
+            unit.clear_siege_orders();
             unit.arrival_facing = None;
             unit.queued_movements.clear();
             unit.movement_mode = crate::MovementMode::March;
@@ -1077,7 +1187,7 @@ impl TacticalBattle {
         let unit = &mut self.units[unit_index];
         unit.interrupt_charge();
         unit.engagement_target = None;
-        unit.gate_attack = false;
+        unit.clear_siege_orders();
         unit.queued_movements.clear();
         unit.movement_mode = crate::MovementMode::March;
         unit.arrival_facing = None;
@@ -1153,7 +1263,7 @@ impl TacticalBattle {
         unit.queued_movements.clear();
         unit.movement_mode = crate::MovementMode::March;
         unit.arrival_facing = None;
-        unit.gate_attack = false;
+        unit.clear_siege_orders();
         unit.engagement_target = Some(target_unit_id.to_owned());
         Ok(())
     }
@@ -1341,6 +1451,125 @@ impl TacticalBattle {
         self.movement_waypoint(from, destination)
     }
 
+    /// Whether `unit` may stand at `point`: passable ground, or a placed
+    /// ladder cell for a unit that can climb ladders.
+    fn unit_may_stand_at(&self, unit: &TacticalUnit, point: BattlePoint) -> bool {
+        self.is_passable_at(point)
+            || (unit.can_use_ladders()
+                && self.terrain.is_passable_at(self.battlefield, point)
+                && self
+                    .siege_ladders
+                    .iter()
+                    .any(|ladder| ladder.area.contains(point)))
+    }
+
+    /// One movement step of `unit` toward `destination` at `speed`. Without
+    /// ladders this is the shared siege and terrain path. With ladders, a
+    /// destination on a ladder is approached at its foot on the unit's side,
+    /// and units that can climb route a closed-wall crossing over a ladder:
+    /// they step from the foot onto the ladder's edge, cross the wall
+    /// thickness at the profile's climb speed, and stay at the top while a
+    /// defender holds it (`held`, per ladder in placement order).
+    fn unit_step(
+        &self,
+        counters: &mut TacticalWorkCounters,
+        unit: &TacticalUnit,
+        destination: BattlePoint,
+        speed: u32,
+        held: &[bool],
+    ) -> BattlePoint {
+        let from = unit.position;
+        let Some(siege) = self.siege.filter(|_| !self.siege_ladders.is_empty()) else {
+            let waypoint = self.measured_movement_waypoint(counters, from, destination);
+            return move_point_toward(from, waypoint, speed);
+        };
+        let destination = match self
+            .siege_ladders
+            .iter()
+            .find(|ladder| ladder.area.contains(destination))
+        {
+            Some(ladder) if !siege.in_wall_band(from) => BattlePoint::new(
+                crate::deployment::siege::ladder_foot(ladder.area, from).x_mm,
+                destination.y_mm,
+            ),
+            _ => destination,
+        };
+        if !unit.can_use_ladders() {
+            let waypoint = self.measured_movement_waypoint(counters, from, destination);
+            return move_point_toward(from, waypoint, speed);
+        }
+        counters.path_requests += 1;
+        let terrain_waypoint = self
+            .terrain
+            .movement_waypoint(self.battlefield, from, destination);
+        let Some(waypoint) = siege.ladder_waypoint(&self.siege_ladders, from, terrain_waypoint)
+        else {
+            return move_point_toward(from, siege.movement_waypoint(from, terrain_waypoint), speed);
+        };
+        if let Some(index) = self
+            .siege_ladders
+            .iter()
+            .position(|ladder| ladder.area.contains(from))
+        {
+            // Climbing: the wall thickness takes the profile's climb time, and
+            // nobody leaves onto the defenders' (east) side of a held ladder.
+            let area = self.siege_ladders[index].area;
+            let next = move_point_toward(from, waypoint, siege.ladder_climb_speed_mm_per_tick());
+            if next.x_mm > area.max_x_mm && held.get(index).copied().unwrap_or(false) {
+                return BattlePoint::new(area.max_x_mm, next.y_mm);
+            }
+            return next;
+        }
+        let next = move_point_toward(from, waypoint, speed);
+        let gate = siege.layout.gate;
+        let entry_x = if from.x_mm < gate.min_x_mm && next.x_mm >= gate.min_x_mm {
+            gate.min_x_mm
+        } else if from.x_mm > gate.max_x_mm && next.x_mm <= gate.max_x_mm {
+            gate.max_x_mm
+        } else {
+            return next;
+        };
+        // Stepping off the foot onto the ladder's near edge.
+        let entry = BattlePoint::new(entry_x, from.y_mm);
+        if self
+            .siege_ladders
+            .iter()
+            .any(|ladder| ladder.area.contains(entry))
+        {
+            entry
+        } else {
+            from
+        }
+    }
+
+    /// Places the ladder of every formed unit that has reached the foot of
+    /// its ordered ladder this tick, in unit order.
+    fn place_arrived_ladders(&mut self, counters: &mut TacticalWorkCounters) {
+        let Some(siege) = self.siege else {
+            return;
+        };
+        for index in 0..self.units.len() {
+            let unit = &self.units[index];
+            let Some(at) = unit.ladder_order else {
+                continue;
+            };
+            counters.unit_scan_visits += 1;
+            let Some(area) = siege.ladder_area(at) else {
+                self.units[index].ladder_order = None;
+                continue;
+            };
+            if unit.state != TacticalUnitState::Formed
+                || unit.position != crate::deployment::siege::ladder_foot(area, unit.position)
+            {
+                continue;
+            }
+            let placed_by = unit.id.clone();
+            self.units[index].ladder_order = None;
+            self.siege_ladders
+                .push(SiegeLadderPlacement { area, placed_by });
+        }
+    }
+
     fn advance_movement_orders(&mut self, counters: &mut TacticalWorkCounters) {
         // Queued-waypoint promotion and attack-move acquisition each visit
         // every unit once.
@@ -1411,6 +1640,16 @@ impl TacticalBattle {
     /// [`MovementBefore`], so idle units cost a visit but no copy.
     fn advance_movement_phase(&mut self, counters: &mut TacticalWorkCounters) {
         self.advance_movement_orders(counters);
+        // Whether each ladder's top is held, from the state all units had when
+        // the phase began, so the result never depends on unit order.
+        let held: Vec<bool> = self
+            .siege_ladders
+            .iter()
+            .map(|ladder| {
+                counters.unit_scan_visits += self.units.len() as u64;
+                SiegeBattleState::ladder_held(ladder, &self.units)
+            })
+            .collect();
         let mut before = MovementBefore::default();
         for index in 0..self.units.len() {
             counters.movement_unit_visits += 1;
@@ -1436,7 +1675,7 @@ impl TacticalBattle {
                                 TacticalUnitState::Destroyed | TacticalUnitState::Escaped { .. }
                             )
                         });
-                    self.advance_formed_unit(counters, index, unit, target);
+                    self.advance_formed_unit(counters, index, unit, target, &held);
                 }
                 TacticalUnitState::Routed => {
                     let nearest_enemy = before
@@ -1452,14 +1691,15 @@ impl TacticalBattle {
                                 .then_with(|| left.id.cmp(&right.id))
                         })
                         .map(|enemy| enemy.position);
-                    self.advance_routed_unit(counters, index, unit, nearest_enemy);
+                    self.advance_routed_unit(counters, index, unit, nearest_enemy, &held);
                 }
                 TacticalUnitState::Withdrawing { routed } => {
-                    self.advance_withdrawing_unit(counters, index, unit, routed);
+                    self.advance_withdrawing_unit(counters, index, unit, routed, &held);
                 }
                 TacticalUnitState::Escaped { .. } | TacticalUnitState::Destroyed => {}
             }
         }
+        self.place_arrived_ladders(counters);
         counters.unit_scan_visits += self.units.len() as u64;
         // Charges read only their own previous charge and positions, never
         // another unit's charge, so all are computed before any is written.
@@ -1575,6 +1815,7 @@ impl TacticalBattle {
         index: usize,
         unit: &TacticalUnit,
         target: Option<TargetView>,
+        held: &[bool],
     ) {
         if let Some(target) = target
             && target.is_pursuit_target()
@@ -1600,12 +1841,18 @@ impl TacticalBattle {
                 siege.gate_attack_position(unit.position)
             }
         });
+        let ladder_position = self
+            .siege
+            .zip(unit.ladder_order)
+            .and_then(|(siege, at)| siege.ladder_area(at))
+            .map(|area| crate::deployment::siege::ladder_foot(area, unit.position));
         let destination = if unit.movement_mode == crate::MovementMode::AttackMove {
             target.map(|target| target.position).or(unit.destination)
         } else {
             unit.destination
                 .or_else(|| target.map(|target| target.position))
                 .or(gate_attack_position)
+                .or(ladder_position)
         };
         let Some(destination) = destination else {
             self.units[index].fatigue = self.units[index]
@@ -1619,7 +1866,8 @@ impl TacticalBattle {
             .map_or(COMBAT_CONTACT_DISTANCE_MM, |_| unit.attack_range_mm());
         let holding_at_gate = unit.destination.is_none()
             && unit.engagement_target.is_none()
-            && gate_attack_position == Some(unit.position);
+            && (gate_attack_position == Some(unit.position)
+                || ladder_position == Some(unit.position));
         // A melee unit next to its target across a wall is not in contact; it
         // keeps following the siege path toward the gate instead of holding.
         let blocked_by_wall = engagement_stop_distance <= COMBAT_CONTACT_DISTANCE_MM
@@ -1651,9 +1899,8 @@ impl TacticalBattle {
             unit.position,
             base_movement_speed,
         );
-        let waypoint = self.measured_movement_waypoint(counters, unit.position, destination);
-        let next = move_point_toward(unit.position, waypoint, movement_speed);
-        debug_assert!(self.is_passable_at(next));
+        let next = self.unit_step(counters, unit, destination, movement_speed, held);
+        debug_assert!(self.unit_may_stand_at(unit, next));
         if unit.facing.is_some() && next != unit.position {
             self.units[index].facing = crate::Facing::toward(unit.position, next);
         }
@@ -1678,6 +1925,7 @@ impl TacticalBattle {
         index: usize,
         unit: &TacticalUnit,
         routed: bool,
+        held: &[bool],
     ) {
         let edge = match unit.side {
             BattleSide::Attacker => 0,
@@ -1693,9 +1941,8 @@ impl TacticalBattle {
         let speed =
             self.terrain
                 .movement_speed_mm_per_tick(self.battlefield, unit.position, base_speed);
-        let waypoint = self.measured_movement_waypoint(counters, unit.position, destination);
-        let next = move_point_toward(unit.position, waypoint, speed);
-        debug_assert!(self.is_passable_at(next));
+        let next = self.unit_step(counters, unit, destination, speed, held);
+        debug_assert!(self.unit_may_stand_at(unit, next));
         let before_position = unit.position;
         let unit = &mut self.units[index];
         unit.position = next;
@@ -1719,6 +1966,7 @@ impl TacticalBattle {
         index: usize,
         unit: &TacticalUnit,
         nearest_enemy: Option<BattlePoint>,
+        held: &[bool],
     ) {
         let Some(enemy_position) = nearest_enemy else {
             return;
@@ -1736,9 +1984,8 @@ impl TacticalBattle {
             self.battlefield,
             unit.side,
         );
-        let waypoint = self.measured_movement_waypoint(counters, unit.position, desired);
-        let next = move_point_toward(unit.position, waypoint, route_speed);
-        debug_assert!(self.is_passable_at(next));
+        let next = self.unit_step(counters, unit, desired, route_speed, held);
+        debug_assert!(self.unit_may_stand_at(unit, next));
         self.units[index].position = next;
         if next != unit.position {
             self.units[index].fatigue = self.units[index]
@@ -2037,7 +2284,7 @@ impl TacticalBattle {
                 self.units[index].queued_movements.clear();
                 self.units[index].movement_mode = crate::MovementMode::March;
                 self.units[index].engagement_target = None;
-                self.units[index].gate_attack = false;
+                self.units[index].clear_siege_orders();
                 continue;
             }
 
@@ -2055,7 +2302,7 @@ impl TacticalBattle {
                     self.units[index].queued_movements.clear();
                     self.units[index].movement_mode = crate::MovementMode::March;
                     self.units[index].engagement_target = None;
-                    self.units[index].gate_attack = false;
+                    self.units[index].clear_siege_orders();
                 }
             }
         }
@@ -2096,6 +2343,9 @@ impl TacticalBattle {
         for unit in &mut self.units {
             if unit.gate_attack && (!gate_closed || unit.state != TacticalUnitState::Formed) {
                 unit.gate_attack = false;
+            }
+            if unit.state != TacticalUnitState::Formed {
+                unit.ladder_order = None;
             }
         }
     }
@@ -2176,6 +2426,14 @@ pub enum TacticalError {
     SiegeGateNotClosed,
     /// A destroyed gate stays destroyed; it cannot be opened or closed again.
     SiegeGateDestroyed,
+    /// Only formed attacker foot units carry a ladder, one per unit.
+    LadderUnavailable(String),
+    /// A ladder stands only inside a wall segment, reachable from the unit's
+    /// side of the wall.
+    InvalidLadderPosition {
+        unit_id: String,
+        position: BattlePoint,
+    },
 }
 
 impl fmt::Display for TacticalError {
@@ -2319,6 +2577,14 @@ impl fmt::Display for TacticalError {
             Self::SiegeGateDestroyed => {
                 write!(formatter, "a destroyed siege gate cannot change state")
             }
+            Self::LadderUnavailable(unit_id) => {
+                write!(formatter, "tactical unit {unit_id} has no ladder to place")
+            }
+            Self::InvalidLadderPosition { unit_id, position } => write!(
+                formatter,
+                "tactical unit {unit_id} cannot place a ladder at ({}, {}) mm",
+                position.x_mm, position.y_mm
+            ),
         }
     }
 }
@@ -2752,6 +3018,7 @@ fn movement_may_change(unit: &TacticalUnit) -> bool {
             unit.destination.is_some()
                 || unit.engagement_target.is_some()
                 || unit.gate_attack
+                || unit.ladder_order.is_some()
                 || unit.fatigue > 0
         }
         TacticalUnitState::Routed | TacticalUnitState::Withdrawing { .. } => true,

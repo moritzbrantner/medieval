@@ -340,13 +340,13 @@ order as `attackGate`.
 
 ## Siege walls and towers
 
-Walls are core-owned barriers for movement and melee. No wall-access mechanic
-exists yet, so a wall position is never a legal destination and formed units on
-opposite sides of the wall line do not fight in melee or pursue through it,
-even across the 1 m palisade (thinner than `COMBAT_CONTACT_DISTANCE_MM`)
-(`SiegeBattleState::wall_separates`). They meet only where the line between them
-crosses the wall line inside an open or destroyed gate; a closed gate separates
-them too and is attacked through the gate assault order instead. A melee unit
+Walls are core-owned barriers for movement and melee. A wall position is never
+a legal destination and formed units on opposite sides of the wall line do not
+fight in melee or pursue through it, even across the 1 m palisade (thinner than
+`COMBAT_CONTACT_DISTANCE_MM`) (`SiegeBattleState::wall_separates`). They meet
+only where the line between them crosses the wall line inside an open or
+destroyed gate or a placed ladder cell (see "Siege ladders"); a closed gate
+separates them too and is attacked through the gate assault order instead. A melee unit
 whose engagement target stands across a wall keeps following the siege path
 toward the gate instead of holding against the wall. Missiles still fly over
 walls, and an archer pressed against the wall is not in melee contact, so it
@@ -376,6 +376,59 @@ activity is derived from authoritative unit state, so it needs no stored state:
 (`staffed`, `target_unit_id`) per layout tower, or `None` outside a siege. The
 renderer copies `staffed` into `RenderSiegeTower::active`; presentation never
 reads the tower range or casualty rules.
+
+## Siege ladders
+
+Scaling ladders are the one wall-access mechanic (#125). They are not an
+engine entity: every formed attacker foot unit carries one ladder per battle;
+mounted `Knights` and defenders never place or climb ladders
+(`TacticalUnit::can_use_ladders`).
+
+`TacticalBattle::issue_ladder_order(unit_id, at)` is legal only in a running
+siege, for an eligible formed unit that has not placed its ladder, with `at`
+inside a wall segment (never the gate, open ground or outside the battlefield)
+and the ladder foot on the unit's side passable. Like the gate-attack order the
+unit approaches from any distance to that foot and a move, engagement, gate
+attack, withdrawal, rout or destruction replaces the order. Rejected orders
+(`LadderUnavailable`, `InvalidLadderPosition` and the shared errors) change
+nothing. The ladder exists from the tick the unit stands on the foot; it is
+never destroyed or removed.
+
+A ladder opens one cell (`SiegeLadder::area`): the full wall thickness across
+and 3 m along the wall centered on `at` (`SIEGE_LADDER_HALF_SPAN_MM`, capped at
+a quarter of the gate span so it stays narrower than the gate), shifted to stay
+inside its wall segment. Only units that can use ladders stand in it; it is
+still never a move destination, and a destination on a ladder is approached at
+its foot. While the gate is not traversable, an eligible unit whose path
+crosses the wall routes to the nearer foot of the nearest ladder (ties by
+placement order), steps onto the ladder edge, crosses the wall thickness at
+`thickness / SiegeProfile::ladder_climb_ticks()` mm per tick (at least 1) and
+continues from the far foot. Climbing is position-only state, so a save made
+mid-climb continues exactly.
+
+| Profile | `ladder_climb_ticks` | Wall thickness (100 m field) | Ticks on the ladder |
+| --- | --- | --- | --- |
+| `PalisadeV1` | 60 (3 s) | 1 m | 63 |
+| `StoneWallsV1` | 100 (5 s) | 2 m | 101 |
+
+A walking V1 foot unit crosses the same thickness in about a second. The climb
+takes at least `ladder_climb_ticks` whenever the wall is at least that many
+millimetres thick (every V1 profile on a battlefield 10 m wide or more).
+
+Defenders contest a ladder in two ways. Melee is allowed where the line
+between two units crosses the wall line inside a ladder cell (exact rational
+comparison, independent of argument order); the wall elsewhere still
+separates. A formed defender within `COMBAT_CONTACT_DISTANCE_MM` of the inner
+(east) foot *holds* the ladder: climbers stop at the top edge of the wall and
+no attacker leaves the ladder onto the defenders' side until the top is clear.
+Holding is derived from the unit state at the start of each movement phase, so
+it needs no stored state. `TacticalBattle::siege_ladders()` returns the
+`SiegeLadder` read model (`area`, `held_by_defender`) in placement order, or
+`None` outside a siege. Placed ladders serialize as `siegeLadders` and a pending
+order as the unit's `ladderOrder`, both omitted while empty, so battles without
+ladders keep the exact pre-ladder document. Presentation never reads the climb
+time rule; ladder drawing in 3D and opponent-AI ladder use (#128) are
+follow-ups, and withdrawal still needs a traversable gate.
 
 ## Finite missile ammunition
 

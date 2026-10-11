@@ -13,6 +13,10 @@ pub const SIEGE_TOWER_COUNT: usize = 4;
 pub const SIEGE_GATE_MAX_INTEGRITY: u16 = 1_000;
 /// Distance from the gate footprint within which an ordered unit strikes it.
 pub const SIEGE_GATE_ATTACK_DISTANCE_MM: u32 = crate::tactical::COMBAT_CONTACT_DISTANCE_MM;
+/// Half the span of a ladder cell along the wall: a ladder opens a 3 m cell,
+/// capped at a quarter of the gate span so it always stays narrower than the
+/// gate.
+pub(crate) const SIEGE_LADDER_HALF_SPAN_MM: u32 = 1_500;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,6 +87,54 @@ pub struct SiegeTowerActivity {
     /// tower center, ties broken by unit id. `None` while unstaffed or with no
     /// attacker in range.
     pub target_unit_id: Option<String>,
+}
+
+/// Core-owned read model of one placed scaling ladder. Presentation projects
+/// it and never re-derives climbing or holding rules.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiegeLadder {
+    /// The wall cell the ladder opens for eligible attackers: the full wall
+    /// thickness across, inside one wall segment along it.
+    pub area: SiegeArea,
+    /// A formed defender stands within melee contact of the ladder's inner
+    /// foot, so no attacker leaves the ladder onto the defenders' side.
+    pub held_by_defender: bool,
+}
+
+/// Authoritative record of one placed ladder. The placing unit is kept so a
+/// unit carries exactly one ladder per battle.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SiegeLadderPlacement {
+    pub(crate) area: SiegeArea,
+    pub(crate) placed_by: String,
+}
+
+impl SiegeLadderPlacement {
+    /// Foot on the defenders' (east) side: the top a defender holds.
+    pub(crate) const fn inner_foot(&self) -> BattlePoint {
+        ladder_inner_foot(self.area)
+    }
+}
+
+/// Where a unit at `from` stands at the foot of the ladder occupying `area`,
+/// on its own side of the wall, on the ladder's center row.
+pub(crate) const fn ladder_foot(area: SiegeArea, from: BattlePoint) -> BattlePoint {
+    if from.x_mm < area.center().x_mm {
+        ladder_outer_foot(area)
+    } else {
+        ladder_inner_foot(area)
+    }
+}
+
+/// Foot on the attackers' (west) side.
+const fn ladder_outer_foot(area: SiegeArea) -> BattlePoint {
+    BattlePoint::new(area.min_x_mm.saturating_sub(1), area.center().y_mm)
+}
+
+const fn ladder_inner_foot(area: SiegeArea) -> BattlePoint {
+    BattlePoint::new(area.max_x_mm.saturating_add(1), area.center().y_mm)
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,6 +211,18 @@ impl SiegeProfile {
         match self {
             Self::PalisadeV1 => 20_000,
             Self::StoneWallsV1 => 30_000,
+        }
+    }
+
+    /// Minimum ticks a unit spends on a scaling ladder, inside the wall
+    /// footprint, before it can leave at the top: 3 s up a palisade and 5 s up
+    /// a stone curtain wall. Climbers move across the wall thickness at
+    /// [`SiegeBattleState::ladder_climb_speed_mm_per_tick`].
+    #[must_use]
+    pub const fn ladder_climb_ticks(self) -> u32 {
+        match self {
+            Self::PalisadeV1 => 60,
+            Self::StoneWallsV1 => 100,
         }
     }
 
@@ -457,10 +521,21 @@ impl SiegeBattleState {
     /// those positions cannot fight in melee. Positions on opposite sides of
     /// the wall line are separated unless the straight line between them
     /// crosses the wall line inside a traversable (open or destroyed) gate.
-    /// No wall-access mechanic exists yet, so a closed gate separates them
-    /// too. Missiles are not affected.
+    /// This ignores ladders; see [`Self::wall_separates_with_ladders`]. A
+    /// closed gate separates them too. Missiles are not affected.
     #[must_use]
     pub fn wall_separates(self, left: BattlePoint, right: BattlePoint) -> bool {
+        self.wall_separates_with_ladders(left, right, std::iter::empty())
+    }
+
+    /// [`Self::wall_separates`] where the line may also cross the wall line
+    /// inside any of the placed `ladders` cells (whatever the gate state).
+    pub(crate) fn wall_separates_with_ladders(
+        self,
+        left: BattlePoint,
+        right: BattlePoint,
+        ladders: impl IntoIterator<Item = SiegeArea>,
+    ) -> bool {
         let gate = self.layout.gate;
         let (left_side, right_side) = (
             wall_side(left.x_mm, gate.min_x_mm, gate.max_x_mm),
@@ -471,9 +546,6 @@ impl SiegeBattleState {
             (WallSide::Left, WallSide::Right) | (WallSide::Right, WallSide::Left)
         ) {
             return false;
-        }
-        if !self.gate_state.is_traversable() {
-            return true;
         }
         // Where the line between the two positions crosses the wall center
         // line, compared exactly as a rational (no truncation), with the
@@ -490,9 +562,115 @@ impl SiegeBattleState {
         let run = ex - wx;
         // crossing_y * run, with run > 0.
         let crossing_scaled = wy * run + (ey - wy) * (wall_x - wx);
-        let within_gate = i128::from(gate.min_y_mm) * run <= crossing_scaled
-            && crossing_scaled <= i128::from(gate.max_y_mm) * run;
-        !within_gate
+        let crosses_inside = |area: SiegeArea| {
+            i128::from(area.min_y_mm) * run <= crossing_scaled
+                && crossing_scaled <= i128::from(area.max_y_mm) * run
+        };
+        let through_gate = self.gate_state.is_traversable() && crosses_inside(gate);
+        !(through_gate || ladders.into_iter().any(crosses_inside))
+    }
+
+    /// The ladder cell a ladder ordered at `at` opens: the full wall
+    /// thickness across, centered on `at` along the wall where the segment
+    /// allows and always inside the wall segment holding `at`. `None` unless
+    /// `at` lies inside a wall segment (never the gate or open ground).
+    #[must_use]
+    pub(crate) fn ladder_area(self, at: BattlePoint) -> Option<SiegeArea> {
+        let segment = *self
+            .layout
+            .wall_segments
+            .iter()
+            .find(|segment| segment.contains(at))?;
+        let gate = self.layout.gate;
+        let half = SIEGE_LADDER_HALF_SPAN_MM.min((gate.max_y_mm - gate.min_y_mm) / 4);
+        let span = (2 * half).min(segment.max_y_mm - segment.min_y_mm);
+        let min_y_mm = at
+            .y_mm
+            .saturating_sub(half)
+            .max(segment.min_y_mm)
+            .min(segment.max_y_mm - span);
+        Some(SiegeArea {
+            min_x_mm: segment.min_x_mm,
+            max_x_mm: segment.max_x_mm,
+            min_y_mm,
+            max_y_mm: min_y_mm + span,
+        })
+    }
+
+    /// How far a climber moves along a ladder per tick: the wall thickness
+    /// spread over [`SiegeProfile::ladder_climb_ticks`], so a climb spends at
+    /// least that many ticks inside the wall footprint whenever the wall is
+    /// at least that many millimetres thick (every V1 layout on a
+    /// battlefield of 10 m or more).
+    #[must_use]
+    pub(crate) fn ladder_climb_speed_mm_per_tick(self) -> u32 {
+        let gate = self.layout.gate;
+        ((gate.max_x_mm - gate.min_x_mm) / self.profile.ladder_climb_ticks()).max(1)
+    }
+
+    /// Whether `point` lies in the wall band (wall or gate footprint across).
+    #[must_use]
+    pub(crate) const fn in_wall_band(self, point: BattlePoint) -> bool {
+        point.x_mm >= self.layout.gate.min_x_mm && point.x_mm <= self.layout.gate.max_x_mm
+    }
+
+    /// The next waypoint of an eligible climber at `from` heading for
+    /// `destination` while the gate is not traversable, or `None` when no
+    /// ladder applies (no crossing, a traversable gate, or no ladder). On a
+    /// ladder the climber heads for the foot on the destination's side;
+    /// otherwise it heads for the nearer foot of the nearest ladder (ties by
+    /// placement order) and, once standing on it, across to the far foot.
+    #[must_use]
+    pub(crate) fn ladder_waypoint(
+        self,
+        ladders: &[SiegeLadderPlacement],
+        from: BattlePoint,
+        destination: BattlePoint,
+    ) -> Option<BattlePoint> {
+        let gate = self.layout.gate;
+        let from_side = wall_side(from.x_mm, gate.min_x_mm, gate.max_x_mm);
+        let destination_side = wall_side(destination.x_mm, gate.min_x_mm, gate.max_x_mm);
+        if from_side == WallSide::Inside {
+            let ladder = ladders.iter().find(|ladder| ladder.area.contains(from))?;
+            return Some(match destination_side {
+                WallSide::Left => BattlePoint::new(ladder_outer_foot(ladder.area).x_mm, from.y_mm),
+                WallSide::Inside if ladder.area.contains(destination) => destination,
+                WallSide::Inside | WallSide::Right => {
+                    BattlePoint::new(ladder.inner_foot().x_mm, from.y_mm)
+                }
+            });
+        }
+        let crossing = matches!(
+            (from_side, destination_side),
+            (WallSide::Left, WallSide::Right) | (WallSide::Right, WallSide::Left)
+        );
+        if !crossing || self.gate_state.is_traversable() {
+            return None;
+        }
+        let ladder = ladders
+            .iter()
+            .min_by_key(|ladder| point_distance_squared(from, ladder_foot(ladder.area, from)))?;
+        let near = ladder_foot(ladder.area, from);
+        if from != near {
+            return Some(near);
+        }
+        Some(match from_side {
+            WallSide::Left => ladder.inner_foot(),
+            WallSide::Inside | WallSide::Right => ladder_outer_foot(ladder.area),
+        })
+    }
+
+    /// Whether a formed defender stands within melee contact of the ladder's
+    /// inner foot, holding the top.
+    #[must_use]
+    pub(crate) fn ladder_held(ladder: &SiegeLadderPlacement, units: &[TacticalUnit]) -> bool {
+        let top = ladder.inner_foot();
+        let reach = square(crate::tactical::COMBAT_CONTACT_DISTANCE_MM);
+        units.iter().any(|unit| {
+            unit.side() == BattleSide::Defender
+                && unit.can_receive_orders()
+                && point_distance_squared(top, unit.position()) <= reach
+        })
     }
 
     /// Per tower in layout order: the index into `units` of the staffed
@@ -866,6 +1044,45 @@ mod tests {
         let on_bound = BattlePoint::new(wall_x + half, gate.min_y_mm);
         assert!(!siege.wall_separates(west, on_bound));
         assert!(!siege.wall_separates(on_bound, west));
+    }
+
+    #[test]
+    fn ladder_cells_stay_in_their_segment_and_open_only_their_own_rows_exactly() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let siege = SiegeBattleState::for_profile(battlefield, SiegeProfile::PalisadeV1);
+        let segment = siege.layout.wall_segments[0];
+        assert_eq!(siege.ladder_area(siege.layout.gate.center()), None);
+        assert_eq!(siege.ladder_area(BattlePoint::new(40_000, 20_000)), None);
+        // Near the gate the cell shifts to stay inside the segment.
+        let edge = BattlePoint::new(segment.center().x_mm, segment.max_y_mm);
+        let clamped = siege.ladder_area(edge).unwrap();
+        assert!(clamped.contains(edge));
+        assert_eq!(clamped.max_y_mm, segment.max_y_mm);
+        assert_eq!(
+            clamped.max_y_mm - clamped.min_y_mm,
+            2 * SIEGE_LADDER_HALF_SPAN_MM
+        );
+
+        let ladder = siege
+            .ladder_area(BattlePoint::new(segment.center().x_mm, 20_000))
+            .unwrap();
+        let wall_x = siege.layout.gate.center().x_mm;
+        let half = (wall_x - segment.min_x_mm).max(segment.max_x_mm - wall_x) + 1;
+        let west = BattlePoint::new(wall_x - half, ladder.min_y_mm);
+        // Crosses the wall line half a millimetre below the ladder cell.
+        let east = BattlePoint::new(wall_x + half, ladder.min_y_mm - 1);
+        let on_bound = BattlePoint::new(wall_x + half, ladder.min_y_mm);
+        for (left, right, separated) in [(west, east, true), (west, on_bound, false)] {
+            assert_eq!(
+                siege.wall_separates_with_ladders(left, right, [ladder]),
+                separated
+            );
+            assert_eq!(
+                siege.wall_separates_with_ladders(right, left, [ladder]),
+                separated
+            );
+            assert!(siege.wall_separates(left, right));
+        }
     }
 
     #[test]
