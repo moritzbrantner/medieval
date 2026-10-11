@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 
 use medieval_core::{
-    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation, TacticalBattle,
-    TacticalBattleState, TacticalTerrain, TacticalTerrainCell, UnitKind,
+    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, Formation, SiegeEngineKind,
+    SiegeObjectiveStatus, TacticalBattle, TacticalBattleState, TacticalTerrain,
+    TacticalTerrainCell, UnitKind,
 };
 
 use crate::{Camera3d, terrain::terrain_height_mm};
@@ -72,6 +73,9 @@ impl RenderSiegeArea {
 pub struct RenderSiegeTower {
     pub center: BattlePoint,
     pub radius_mm: u32,
+    /// Copied from core `SiegeTowerActivity::staffed`; presentation never
+    /// decides tower targets or casualties.
+    pub active: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -81,15 +85,93 @@ pub struct RenderSiegeCapture {
     pub progress: u16,
     pub capturing_side: Option<BattleSide>,
     pub captured_by: Option<BattleSide>,
+    /// Copied from core `SiegeObjectiveStatus::unlocked`.
+    pub unlocked: bool,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+impl From<SiegeObjectiveStatus> for RenderSiegeCapture {
+    fn from(objective: SiegeObjectiveStatus) -> Self {
+        Self {
+            center: objective.center,
+            radius_mm: objective.radius_mm,
+            progress: objective.progress,
+            capturing_side: objective.capturing_side,
+            captured_by: objective.captured_by,
+            unlocked: objective.unlocked,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderSiegeSnapshot {
     pub wall_segments: [RenderSiegeArea; 2],
     pub gate: RenderSiegeArea,
     pub gate_traversable: bool,
     pub towers: [RenderSiegeTower; 4],
+    /// The active objective (core `SiegeBattleState::active_objective`):
+    /// the single capture point of a one-objective profile.
     pub capture: RenderSiegeCapture,
+    /// Every core objective in core order (outer to inner), copied from
+    /// `TacticalBattle::siege_objectives`; presentation never decides
+    /// capture, unlocking or victory.
+    pub objectives: RenderSiegeObjectives,
+}
+
+/// The ordered siege objectives of a render snapshot, copied from core
+/// `TacticalBattle::siege_objectives` (outer to inner). Read-only: iterate or
+/// index it; presentation never adds, removes or reorders objectives.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RenderSiegeObjectives(Vec<RenderSiegeCapture>);
+
+impl RenderSiegeObjectives {
+    /// The objectives in core order.
+    pub fn iter(&self) -> std::slice::Iter<'_, RenderSiegeCapture> {
+        self.0.iter()
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl FromIterator<RenderSiegeCapture> for RenderSiegeObjectives {
+    fn from_iter<I: IntoIterator<Item = RenderSiegeCapture>>(objectives: I) -> Self {
+        Self(objectives.into_iter().collect())
+    }
+}
+
+impl std::ops::Index<usize> for RenderSiegeObjectives {
+    type Output = RenderSiegeCapture;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl<'a> IntoIterator for &'a RenderSiegeObjectives {
+    type Item = &'a RenderSiegeCapture;
+    type IntoIter = std::slice::Iter<'a, RenderSiegeCapture>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+/// One siege engine, copied from core `SiegeEngineStatus` in core order.
+/// Presentation never decides range, reload, ammunition or damage; shot
+/// trajectories and effects are decoration keyed on `last_shot_tick`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RenderSiegeEngine {
+    pub kind: SiegeEngineKind,
+    pub position: BattlePoint,
+    pub ammunition: Option<u16>,
+    pub last_shot_tick: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -137,6 +219,8 @@ pub struct BattleRenderSnapshot {
     pub river_cells: Vec<TacticalTerrainCell>,
     pub river_crossing_cells: Vec<TacticalTerrainCell>,
     pub siege: Option<RenderSiegeSnapshot>,
+    /// Siege engines in core order; empty outside a siege or without engines.
+    pub siege_engines: Vec<RenderSiegeEngine>,
     pub camera: Camera3d,
     pub units: Vec<RenderUnitInstance>,
 }
@@ -196,18 +280,36 @@ impl BattleRenderSnapshot {
                 max_y_mm: siege.layout.gate.max_y_mm,
             },
             gate_traversable: siege.gate_state.is_traversable(),
-            towers: siege.layout.towers.map(|tower| RenderSiegeTower {
-                center: tower.center,
-                radius_mm: tower.radius_mm,
-            }),
-            capture: RenderSiegeCapture {
-                center: siege.layout.capture_point.center,
-                radius_mm: siege.layout.capture_point.radius_mm,
-                progress: siege.capture.progress,
-                capturing_side: siege.capture.capturing_side,
-                captured_by: siege.capture.captured_by,
+            towers: {
+                let activity = battle.siege_tower_activity().unwrap_or_default();
+                std::array::from_fn(|index| {
+                    let tower = siege.layout.towers[index];
+                    RenderSiegeTower {
+                        center: tower.center,
+                        radius_mm: tower.radius_mm,
+                        active: activity.get(index).is_some_and(|tower| tower.staffed),
+                    }
+                })
             },
+            capture: RenderSiegeCapture::from(siege.active_objective()),
+            objectives: battle
+                .siege_objectives()
+                .unwrap_or_default()
+                .into_iter()
+                .map(RenderSiegeCapture::from)
+                .collect(),
         });
+        let siege_engines = battle
+            .siege_engines()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|engine| RenderSiegeEngine {
+                kind: engine.kind,
+                position: engine.position,
+                ammunition: engine.ammunition,
+                last_shot_tick: engine.last_shot_tick,
+            })
+            .collect();
         Self {
             tick: battle.tick(),
             battle_state: battle.state(),
@@ -218,6 +320,7 @@ impl BattleRenderSnapshot {
             river_cells: battle.terrain().river_cells().to_vec(),
             river_crossing_cells: battle.terrain().river_crossing_cells().to_vec(),
             siege,
+            siege_engines,
             camera: view.camera,
             units,
         }

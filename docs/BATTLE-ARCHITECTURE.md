@@ -69,7 +69,7 @@ Speed and pause are sandbox presentation and scheduling state. They are reported
 The browser HUD only renders the Rust sandbox status and forwards input:
 
 - **Battle status** shows the run state, the player and opponent sides (`playerSide` / `opponentSide`: attacker or defender) and, only in a siege, a capture progress bar from `siege.capture.progress` out of `siegeCaptureMaxProgress` (core `SIEGE_CAPTURE_MAX_PROGRESS`). A terminal state with reason `siegeCapture` gets its own text, separate from a defeated force or a withdrawal.
-- **Selected units** shows one card per Rust-selected unit with its kind, soldiers, morale, fatigue, ammunition, formation and current order. The order is derived in Rust from core unit state (`order.kind`: `hold`, `move`, `attackMove`, `engage` with `targetUnitId`, `withdraw`, `rout`, `destroyed` or `escaped`).
+- **Selected units** shows one card per Rust-selected unit with its kind, soldiers, morale, fatigue, ammunition, formation and current order. The order is derived in Rust from core unit state (`order.kind`: `hold`, `move`, `attackMove`, `engage` with `targetUnitId`, `attackGate`, `withdraw`, `rout`, `destroyed` or `escaped`).
 - **Control groups** are shared `TacticalControls` state and are reported as `controlGroups`. As on desktop, Ctrl+1–9 assigns the selection, 1–9 recalls a group and Shift+1–9 adds it to the selection. Digit 0 stays bound to fit camera in the browser. Each group is a focusable button that recalls it. Resetting the battle clears the groups.
 
 ## Converged 3D foundations
@@ -309,6 +309,295 @@ starts 40 ticks of `recovering`; stopping, turning, changing formation or target
 cover, detours and interception interrupt momentum. Repeating the same engagement
 order does not restart momentum or recovery. Core serialization and browser status
 retain charge state; historical records lacking it do not acquire charge bonuses.
+
+## Siege gate assault
+
+A siege gate has core-owned integrity (`SiegeBattleState::gate_integrity`,
+serialized as `gateIntegrity`) out of `SIEGE_GATE_MAX_INTEGRITY` (1,000, the
+same thousandths scale as capture progress). Sieges recorded without the field
+load with an intact gate; a gate recorded as destroyed loads with zero.
+
+`TacticalBattle::issue_gate_attack_order(unit_id)` is the semantic attack-gate
+order. It is legal only for a formed attacker unit while the gate is closed; a
+defender, an open or destroyed gate, a field battle and a finished battle are
+rejected without changing the battle. Like an engagement order the unit
+approaches from any distance, to the gate's center line just outside the gate on
+its own side of the wall, and holds within reach
+(`COMBAT_CONTACT_DISTANCE_MM` of the gate footprint). A move, engagement,
+withdrawal, rout or destruction replaces the order. A unit pressed against the
+gate under any other order never damages it.
+
+On each combat pulse every formed attacker unit holding the order within reach
+deals its profile's gate damage: 100 for a palisade (one unit breaches it in
+10 s) and 50 for stone walls (20 s). Like capture it counts units, not soldiers.
+Integrity only falls, and on the pulse it reaches zero the gate becomes
+`SiegeGateState::Destroyed`, which is traversable through the existing siege
+pathing contract (`is_passable_at`, `movement_waypoint`); every gate-attack
+order then ends. The opponent planner gives an attacking unit whose nearest
+enemy is behind a closed gate the same order; defenders never target their own
+gate. The renderer keeps projecting `gate_traversable`, and the HUD shows the
+order as `attackGate`.
+
+## Siege walls and towers
+
+Walls are core-owned barriers for movement and melee. A wall position is never
+a legal destination and formed units on opposite sides of the wall line do not
+fight in melee or pursue through it, even across the 1 m palisade (thinner than
+`COMBAT_CONTACT_DISTANCE_MM`) (`SiegeBattleState::wall_separates`). They meet
+only where the line between them crosses the wall line inside an open or
+destroyed gate or a placed ladder cell (see "Siege ladders"); a closed gate
+separates them too and is attacked through the gate assault order instead. A melee unit
+whose engagement target stands across a wall keeps following the siege path
+toward the gate instead of holding against the wall. Missiles still fly over
+walls, and an archer pressed against the wall is not in melee contact, so it
+keeps firing.
+
+A siege tower is *staffed* while at least one formed defender unit stands inside
+its footprint circle, the same position count the capture point uses; attackers
+never staff it. On each authoritative combat pulse a staffed tower fires one
+volley at the nearest formed attacker unit within `SiegeProfile::tower_range_mm`
+of the tower center (ties broken by unit id). The volley uses the stat-profile
+ranged rule with the tower as the shooter: the profile's volley frontage at
+base missile damage, elevation from the tower to the target, the target's
+ground cover and the target's armor, with fractional damage carried per tower
+and target (`towerDamageCredit`, omitted while empty, so older saves load
+unchanged). Losses are capped per tower per pulse, flow through the normal
+casualty, morale and rout application, never hit defenders, and never spend the
+staffing unit's ammunition or fatigue it.
+
+| Profile | Range | Volley frontage | Cap per pulse |
+| --- | --- | --- | --- |
+| `PalisadeV1` | 20 m | 12 slots (≈1 unarmored soldier per pulse) | 2 |
+| `StoneWallsV1` | 30 m | 24 slots (≈2 unarmored soldiers per pulse) | 3 |
+
+For comparison, a 10-file V1 archer line fires 10 slots up to 25 m. Tower
+activity is derived from authoritative unit state, so it needs no stored state:
+`TacticalBattle::siege_tower_activity()` returns one `SiegeTowerActivity`
+(`staffed`, `target_unit_id`) per layout tower, or `None` outside a siege. The
+renderer copies `staffed` into `RenderSiegeTower::active`; presentation never
+reads the tower range or casualty rules.
+
+## Siege ladders
+
+Scaling ladders are the one wall-access mechanic (#125). They are not an
+engine entity: every formed attacker foot unit carries one ladder per battle;
+mounted `Knights` and defenders never place or climb ladders
+(`TacticalUnit::can_use_ladders`).
+
+`TacticalBattle::issue_ladder_order(unit_id, at)` is legal only in a running
+siege, for an eligible formed unit that has not placed its ladder, with `at`
+inside a wall segment (never the gate, open ground or outside the battlefield)
+and the ladder foot on the unit's side passable. Like the gate-attack order the
+unit approaches from any distance to that foot and a move, engagement, gate
+attack, withdrawal, rout or destruction replaces the order. Rejected orders
+(`LadderUnavailable`, `InvalidLadderPosition` and the shared errors) change
+nothing. The ladder exists from the tick the unit stands on the foot; it is
+never destroyed or removed.
+
+A ladder opens one cell (`SiegeLadder::area`): the full wall thickness across
+and 3 m along the wall centered on `at` (`SIEGE_LADDER_HALF_SPAN_MM`, capped at
+a quarter of the gate span so it stays narrower than the gate), shifted to stay
+inside its wall segment. Only units that can use ladders stand in it; it is
+still never a move destination, and a destination on a ladder is approached at
+its foot. While the gate is not traversable, an eligible unit whose path
+crosses the wall routes to the nearer foot of the nearest ladder (ties by
+placement order), steps onto the ladder edge, crosses the wall thickness at
+`thickness / SiegeProfile::ladder_climb_ticks()` mm per tick (at least 1) and
+continues from the far foot. Climbing is position-only state, so a save made
+mid-climb continues exactly.
+
+| Profile | `ladder_climb_ticks` | Wall thickness (100 m field) | Ticks on the ladder |
+| --- | --- | --- | --- |
+| `PalisadeV1` | 60 (3 s) | 1 m | 63 |
+| `StoneWallsV1` | 100 (5 s) | 2 m | 101 |
+
+A walking V1 foot unit crosses the same thickness in about a second. The climb
+takes at least `ladder_climb_ticks` whenever the wall is at least that many
+millimetres thick (every V1 profile on a battlefield 10 m wide or more).
+
+Defenders contest a ladder in two ways. Melee is allowed where the line
+between two units crosses the wall line inside a ladder cell (exact rational
+comparison, independent of argument order); the wall elsewhere still
+separates. A formed defender within `COMBAT_CONTACT_DISTANCE_MM` of the inner
+(east) foot *holds* the ladder: climbers stop at the top edge of the wall and
+no attacker leaves the ladder onto the defenders' side until the top is clear.
+Holding is derived from the unit state at the start of each movement phase, so
+it needs no stored state. `TacticalBattle::siege_ladders()` returns the
+`SiegeLadder` read model (`area`, `held_by_defender`) in placement order, or
+`None` outside a siege. Placed ladders serialize as `siegeLadders` and a pending
+order as the unit's `ladderOrder`, both omitted while empty, so battles without
+ladders keep the exact pre-ladder document. Presentation never reads the climb
+time rule; ladder drawing in 3D and opponent-AI ladder use (#128) are
+follow-ups, and withdrawal still needs a traversable gate.
+
+## Siege engines
+
+Siege depth 5 (#126) adds a battering ram and one ranged engine, a catapult
+(`SiegeEngineKind::{BatteringRam, Catapult}`). Like ladders, engines are not
+free entities: each is crewed by one existing attacker unit, stands wherever
+its crew stands, moves only with the crew's ordinary movement and is used only
+through orders issued to the crew.
+
+**Availability is explicit.** Only
+`TacticalBattle::deploy_siege_with_engines(battlefield, units, location,
+profile, Vec<SiegeEngineSetup>)` assigns engines. A crew must be a formed
+attacker foot unit (never a defender or mounted `Knights`) and one unit crews
+at most one engine; an unknown crew is `UnitNotFound` and every other invalid
+setup is `SiegeEngineUnavailable(crew)`. An empty setup is exactly
+`deploy_siege_with_profile`, and every other construction path (sandbox
+`deploy_siege*`, campaign seeds) has no engines. Choosing equipment in the
+browser or sandbox UI is a follow-up. Engine crews do not climb ladders
+(`LadderUnavailable`, and they never route over placed ladders).
+
+**Battering ram.** `issue_ram_order(unit)` is the gate-attack order for the
+formed crew of a ram (`SiegeEngineUnavailable` for any other unit, then the
+usual gate-attack legality: closed gate, attacker, running battle). The crew
+approaches from any distance and on every combat pulse within
+`SIEGE_GATE_ATTACK_DISTANCE_MM` deals `SiegeProfile::ram_damage_per_pulse`
+instead of the unit gate damage; a ram crew under a plain gate-attack order
+also brings its ram. The order ends with the gate, a move or engagement order,
+rout or destruction, exactly like a gate assault.
+
+**Catapult.** `issue_siege_engine_fire_order(unit, SiegeEngineTarget)` holds
+the crew in place and fires at the closed gate (aimed at its center) or a
+formed enemy unit. It is legal only for the formed crew of a catapult with
+stones left (`SiegeEngineUnavailable` otherwise), against a closed gate
+(`SiegeGateNotClosed`) or a formed enemy (`UnitNotFound`,
+`InvalidSiegeEngineTarget`), within
+`CATAPULT_MIN_RANGE_MM..=CATAPULT_MAX_RANGE_MM` of the crew (Euclidean,
+inclusive; `SiegeEngineTargetOutOfRange`). Walls never block the indirect
+shot. On each combat pulse a formed crew first reloads one pulse; a loaded
+catapult then fires if its order is still valid and the target in range, spends
+one stone, records `last_shot_tick` and waits exactly `CATAPULT_RELOAD_PULSES`
+pulses. Engines start loaded, so the first shot lands on the first pulse after
+the order. A gate hit removes exactly `SiegeProfile::catapult_gate_damage_per_shot`
+(gate and ram damage of one pulse add up; the gate is destroyed on the pulse
+integrity reaches zero). A unit hit reuses the tower volley rule with the crew
+as shooter (`CATAPULT_SHOT_FRONTAGE` = 60 frontage slots, elevation, ground
+cover and armor, `RANGED_CASUALTY_DIVISOR`), removes at least one soldier and
+joins the pulse's shared casualty and morale resolution. A move, engagement,
+gate-attack or ladder order, rout, withdrawal or destruction of the crew, a gate
+that is no longer closed or a target that is no longer formed ends the fire
+order; an empty catapult neither fires nor accepts orders. Rejected orders
+change nothing.
+
+| Rule | `PalisadeV1` | `StoneWallsV1` |
+| --- | --- | --- |
+| Unit `gate_damage_per_pulse` | 100 (10 pulses) | 50 (20 pulses) |
+| `ram_damage_per_pulse` | 250 (4 pulses) | 125 (8 pulses) |
+| `catapult_gate_damage_per_shot` | 200 (5 stones) | 100 (10 stones) |
+
+| Catapult constant | Value |
+| --- | --- |
+| `CATAPULT_MIN_RANGE_MM` | 30 000 (30 m) |
+| `CATAPULT_MAX_RANGE_MM` | 150 000 (150 m, beyond tower and archer reach) |
+| `CATAPULT_RELOAD_PULSES` | 5 (5 s between shots) |
+| `CATAPULT_AMMUNITION` | 12 stones (enough for either gate) |
+| Unit hit on an unarmored target | 5 soldiers |
+
+A ram is the fast close breach that exposes its crew at the gate; the catapult
+is the slow stand-off option (a stone gate in 46 s from out of tower range).
+
+**Read model and persistence.** `TacticalBattle::siege_engines()` returns
+`SiegeEngineStatus { kind, crew_unit_id, position, ammunition (None for a ram),
+pulses_until_loaded, last_shot_tick }` in setup order, or `None` outside a
+siege. Engine state serializes as `siegeEngines` and a pending fire order as
+the unit's `siegeEngineFire`, both omitted while empty, so battles without
+engines keep the exact pre-engine document; a save made mid-reload continues
+identically. Loading clamps stones and reload to the rule bounds and drops
+engines from field battles. The renderer copies the read model into
+`BattleRenderSnapshot::siege_engines` (`RenderSiegeEngine { kind, position,
+ammunition, last_shot_tick }`) and draws a wooden body per engine and a raised
+catapult arm for a moment after `last_shot_tick`; presentation never reads the
+range, reload, ammunition or damage rules. Tower integrity, engine destruction
+by enemy fire, opponent-AI engine use and the browser setup UI are out of scope.
+
+## Staged siege objectives
+
+Siege depth 6 (#127) lets one siege hold several capture points. Every siege
+profile owns an ordered list of capture objectives, outer to inner, and
+`TacticalBattle::siege_objectives()` returns it as `SiegeObjectiveStatus {
+center, radius_mm, progress, capturing_side, captured_by, unlocked }`, or
+`None` outside a siege. Like the tower, ladder and engine read models it is
+derived from core state; presentation only projects it.
+
+**Profiles.** `PalisadeV1` and `StoneWallsV1` are single-point profiles: one
+objective, always unlocked, equal to `layout.capture_point` with the `capture`
+state. Their layout and save documents and their capture timeline are exactly
+the pre-#127 ones (the new fields below are omitted for them), so older saves
+load and resume unchanged. Profiles are never changed in place, so the
+multi-objective layout is a new profile, `SiegeProfile::StagedKeepV1`
+(serialized `stagedKeepV1`): the `StoneWallsV1` wall, gate, towers and rules
+with three objectives on the defender side at 62 %, 76 % and 90 % of the
+battlefield width on the center line (outer bailey, inner bailey, keep), each
+with the usual radius (a twentieth of the shorter side). The geometry
+serializes as `layout.stagedObjectives` and the per-objective state as
+`objectiveCaptures`.
+
+**Rules.**
+
+- *Ordered unlock.* Only the first objective starts unlocked. A later
+  objective unlocks when the attacker captures the objective before it; until
+  then it accrues nothing for either side. Only attacker captures unlock: a
+  defender who captures (or holds) an earlier objective never unlocks the next
+  one. Because a captured objective stays captured, a defender capture of an
+  earlier objective closes the capture path for good, and the battle is then
+  decided by rout or withdrawal.
+- *Per-objective capture is the existing rule.* Once per combat pulse, formed
+  units of exactly one side inside the active objective (the first one the
+  attacker has not captured) gain `SIEGE_CAPTURE_PROGRESS_PER_PULSE` for that
+  side, restarting from zero when the holding side changes. A contested
+  objective (formed units of both sides inside) is left exactly unchanged, so
+  contested capture fails closed. A captured objective stays captured, even
+  when the enemy reoccupies it.
+- *Victory only from the final objective.* Capturing an earlier objective
+  never finishes the battle. A started battle finishes with
+  `TacticalFinishReason::SiegeCapture` on the pulse the final objective is
+  captured, won by its captor. With one objective this is exactly the
+  single-point rule.
+
+**Legacy fields.** For `StagedKeepV1`, `layout.capturePoint` is the final
+objective (the keep, which decides the battle), and `capture` mirrors the
+active objective: the first one the attacker has not captured, or the final
+one once all have fallen. `SiegeBattleState::active_objective()` returns that
+objective; the renderer projects it as `RenderSiegeSnapshot::capture` and every
+objective, in core order, as `RenderSiegeSnapshot::objectives` (a read-only,
+iterable and indexable `RenderSiegeObjectives` of `RenderSiegeCapture`, each
+with `unlocked`), drawing one marker per objective. Victory and
+settlement-capture provenance read the final objective
+(`final_objective_captured_by`), never the mirror.
+
+**Presentation.** The sandbox status carries `siegeObjectives` straight from
+`siege_objectives()`, and the battle HUD lists them in `#siege-objectives`
+(locked, open, capturing with progress, or captured by a side) when a siege has
+more than one objective. Presentation never reads the capture rate, contention
+or unlock rules.
+
+**Offering.** `StagedKeepV1` is not in `SiegeProfile::ALL` and no campaign
+fortification level maps to it (`for_fortification_level` still returns only
+palisade or stone walls), so sandbox and campaign offerings are unchanged; it is
+reachable through `deploy_siege_with_profile` and saved battles. Mapping a
+campaign fortification level to it, a browser profile selector with a
+Playwright journey, and opponent-AI objective planning are follow-ups.
+
+**Decisions on the points #127 left open.**
+
+- *Geometry and count:* three objectives (outer bailey, inner bailey, keep)
+  at 62 %, 76 % and 90 % of the width on the center line, behind the
+  `StoneWallsV1` wall; every other siege rule (gate, towers, ladders, ram,
+  catapult) is the stone-wall one.
+- *Defender captures:* only attacker captures unlock; a defender capture of an
+  earlier objective is permanent and keeps every later objective locked, and
+  it never finishes the battle.
+- *Legacy fields:* `capturePoint` is the keep, `capture` mirrors the active
+  objective; neither decides victory for a staged profile.
+- *Opponent AI:* unchanged; it does not plan around objectives yet.
+- *Campaign mapping:* none; fortification levels still map to palisade and
+  stone walls only.
+- *`SiegeProfile::ALL`:* `StagedKeepV1` is not in it.
+- *Browser selector and Playwright journey:* not added; the HUD list appears
+  only for a siege with more than one objective, so current journeys are
+  unchanged.
 
 ## Finite missile ammunition
 

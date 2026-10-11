@@ -1,0 +1,746 @@
+{
+  "palisadeV1": {
+    "captureTimeline": [
+      [
+        20,
+        0,
+        null,
+        null
+      ],
+      [
+        40,
+        0,
+        null,
+        null
+      ],
+      [
+        60,
+        100,
+        "attacker",
+        null
+      ],
+      [
+        80,
+        200,
+        "attacker",
+        null
+      ],
+      [
+        100,
+        300,
+        "attacker",
+        null
+      ],
+      [
+        120,
+        400,
+        "attacker",
+        null
+      ],
+      [
+        140,
+        500,
+        "attacker",
+        null
+      ],
+      [
+        160,
+        600,
+        "attacker",
+        null
+      ],
+      [
+        180,
+        700,
+        "attacker",
+        null
+      ],
+      [
+        200,
+        800,
+        "attacker",
+        null
+      ],
+      [
+        220,
+        900,
+        "attacker",
+        null
+      ],
+      [
+        240,
+        1000,
+        "attacker",
+        "attacker"
+      ]
+    ],
+    "final": {
+      "battlefield": {
+        "depthMm": 100000,
+        "widthMm": 100000
+      },
+      "completionRules": "fieldAndSiegeV1",
+      "siege": {
+        "capture": {
+          "capturedBy": "attacker",
+          "capturingSide": "attacker",
+          "progress": 1000
+        },
+        "gateIntegrity": 1000,
+        "gateState": "open",
+        "layout": {
+          "capturePoint": {
+            "center": {
+              "xMm": 80000,
+              "yMm": 50000
+            },
+            "radiusMm": 5000
+          },
+          "deploymentZones": [
+            {
+              "maxXMm": 35000,
+              "maxYMm": 100000,
+              "minXMm": 0,
+              "minYMm": 0,
+              "side": "attacker"
+            },
+            {
+              "maxXMm": 100000,
+              "maxYMm": 100000,
+              "minXMm": 65000,
+              "minYMm": 0,
+              "side": "defender"
+            }
+          ],
+          "gate": {
+            "maxXMm": 50500,
+            "maxYMm": 57000,
+            "minXMm": 49500,
+            "minYMm": 43000
+          },
+          "towers": [
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 15000
+              },
+              "radiusMm": 1250
+            },
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 35000
+              },
+              "radiusMm": 1250
+            },
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 65000
+              },
+              "radiusMm": 1250
+            },
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 85000
+              },
+              "radiusMm": 1250
+            }
+          ],
+          "wallSegments": [
+            {
+              "maxXMm": 50500,
+              "maxYMm": 42999,
+              "minXMm": 49500,
+              "minYMm": 0
+            },
+            {
+              "maxXMm": 50500,
+              "maxYMm": 100000,
+              "minXMm": 49500,
+              "minYMm": 57001
+            }
+          ]
+        },
+        "profile": "palisadeV1"
+      },
+      "state": {
+        "finishingTick": 240,
+        "phase": "finished",
+        "reason": "siegeCapture",
+        "winner": "attacker"
+      },
+      "terrain": {
+        "location": "mountainPass",
+        "profile": "combatTerrainV4"
+      },
+      "tick": 240,
+      "units": [
+        {
+          "attackRangeMm": 1500,
+          "destination": null,
+          "engagementTarget": null,
+          "fatigue": 0,
+          "formation": {
+            "line": {
+              "files": 10
+            }
+          },
+          "id": "a",
+          "morale": 1000,
+          "position": {
+            "xMm": 80000,
+            "yMm": 50000
+          },
+          "pursuitCasualties": 0,
+          "side": "attacker",
+          "soldiers": 40,
+          "speedMmPerTick": 1000,
+          "state": "formed"
+        },
+        {
+          "attackRangeMm": 1500,
+          "destination": null,
+          "engagementTarget": null,
+          "fatigue": 0,
+          "formation": {
+            "line": {
+              "files": 10
+            }
+          },
+          "id": "d",
+          "morale": 1000,
+          "position": {
+            "xMm": 100000,
+            "yMm": 100000
+          },
+          "pursuitCasualties": 0,
+          "side": "defender",
+          "soldiers": 40,
+          "speedMmPerTick": 1000,
+          "state": "formed"
+        }
+      ]
+    },
+    "finishingTick": 240,
+    "midCapture": {
+      "battlefield": {
+        "depthMm": 100000,
+        "widthMm": 100000
+      },
+      "completionRules": "fieldAndSiegeV1",
+      "siege": {
+        "capture": {
+          "capturedBy": null,
+          "capturingSide": "attacker",
+          "progress": 500
+        },
+        "gateIntegrity": 1000,
+        "gateState": "open",
+        "layout": {
+          "capturePoint": {
+            "center": {
+              "xMm": 80000,
+              "yMm": 50000
+            },
+            "radiusMm": 5000
+          },
+          "deploymentZones": [
+            {
+              "maxXMm": 35000,
+              "maxYMm": 100000,
+              "minXMm": 0,
+              "minYMm": 0,
+              "side": "attacker"
+            },
+            {
+              "maxXMm": 100000,
+              "maxYMm": 100000,
+              "minXMm": 65000,
+              "minYMm": 0,
+              "side": "defender"
+            }
+          ],
+          "gate": {
+            "maxXMm": 50500,
+            "maxYMm": 57000,
+            "minXMm": 49500,
+            "minYMm": 43000
+          },
+          "towers": [
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 15000
+              },
+              "radiusMm": 1250
+            },
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 35000
+              },
+              "radiusMm": 1250
+            },
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 65000
+              },
+              "radiusMm": 1250
+            },
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 85000
+              },
+              "radiusMm": 1250
+            }
+          ],
+          "wallSegments": [
+            {
+              "maxXMm": 50500,
+              "maxYMm": 42999,
+              "minXMm": 49500,
+              "minYMm": 0
+            },
+            {
+              "maxXMm": 50500,
+              "maxYMm": 100000,
+              "minXMm": 49500,
+              "minYMm": 57001
+            }
+          ]
+        },
+        "profile": "palisadeV1"
+      },
+      "state": {
+        "phase": "running"
+      },
+      "terrain": {
+        "location": "mountainPass",
+        "profile": "combatTerrainV4"
+      },
+      "tick": 140,
+      "units": [
+        {
+          "attackRangeMm": 1500,
+          "destination": null,
+          "engagementTarget": null,
+          "fatigue": 0,
+          "formation": {
+            "line": {
+              "files": 10
+            }
+          },
+          "id": "a",
+          "morale": 1000,
+          "position": {
+            "xMm": 80000,
+            "yMm": 50000
+          },
+          "pursuitCasualties": 0,
+          "side": "attacker",
+          "soldiers": 40,
+          "speedMmPerTick": 1000,
+          "state": "formed"
+        },
+        {
+          "attackRangeMm": 1500,
+          "destination": null,
+          "engagementTarget": null,
+          "fatigue": 0,
+          "formation": {
+            "line": {
+              "files": 10
+            }
+          },
+          "id": "d",
+          "morale": 1000,
+          "position": {
+            "xMm": 100000,
+            "yMm": 100000
+          },
+          "pursuitCasualties": 0,
+          "side": "defender",
+          "soldiers": 40,
+          "speedMmPerTick": 1000,
+          "state": "formed"
+        }
+      ]
+    }
+  },
+  "stoneWallsV1": {
+    "captureTimeline": [
+      [
+        20,
+        0,
+        null,
+        null
+      ],
+      [
+        40,
+        0,
+        null,
+        null
+      ],
+      [
+        60,
+        100,
+        "attacker",
+        null
+      ],
+      [
+        80,
+        200,
+        "attacker",
+        null
+      ],
+      [
+        100,
+        300,
+        "attacker",
+        null
+      ],
+      [
+        120,
+        400,
+        "attacker",
+        null
+      ],
+      [
+        140,
+        500,
+        "attacker",
+        null
+      ],
+      [
+        160,
+        600,
+        "attacker",
+        null
+      ],
+      [
+        180,
+        700,
+        "attacker",
+        null
+      ],
+      [
+        200,
+        800,
+        "attacker",
+        null
+      ],
+      [
+        220,
+        900,
+        "attacker",
+        null
+      ],
+      [
+        240,
+        1000,
+        "attacker",
+        "attacker"
+      ]
+    ],
+    "final": {
+      "battlefield": {
+        "depthMm": 100000,
+        "widthMm": 100000
+      },
+      "completionRules": "fieldAndSiegeV1",
+      "siege": {
+        "capture": {
+          "capturedBy": "attacker",
+          "capturingSide": "attacker",
+          "progress": 1000
+        },
+        "gateIntegrity": 1000,
+        "gateState": "open",
+        "layout": {
+          "capturePoint": {
+            "center": {
+              "xMm": 80000,
+              "yMm": 50000
+            },
+            "radiusMm": 5000
+          },
+          "deploymentZones": [
+            {
+              "maxXMm": 35000,
+              "maxYMm": 100000,
+              "minXMm": 0,
+              "minYMm": 0,
+              "side": "attacker"
+            },
+            {
+              "maxXMm": 100000,
+              "maxYMm": 100000,
+              "minXMm": 65000,
+              "minYMm": 0,
+              "side": "defender"
+            }
+          ],
+          "gate": {
+            "maxXMm": 51000,
+            "maxYMm": 55000,
+            "minXMm": 49000,
+            "minYMm": 45000
+          },
+          "towers": [
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 15000
+              },
+              "radiusMm": 2000
+            },
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 35000
+              },
+              "radiusMm": 2000
+            },
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 65000
+              },
+              "radiusMm": 2000
+            },
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 85000
+              },
+              "radiusMm": 2000
+            }
+          ],
+          "wallSegments": [
+            {
+              "maxXMm": 51000,
+              "maxYMm": 44999,
+              "minXMm": 49000,
+              "minYMm": 0
+            },
+            {
+              "maxXMm": 51000,
+              "maxYMm": 100000,
+              "minXMm": 49000,
+              "minYMm": 55001
+            }
+          ]
+        },
+        "profile": "stoneWallsV1"
+      },
+      "state": {
+        "finishingTick": 240,
+        "phase": "finished",
+        "reason": "siegeCapture",
+        "winner": "attacker"
+      },
+      "terrain": {
+        "location": "mountainPass",
+        "profile": "combatTerrainV4"
+      },
+      "tick": 240,
+      "units": [
+        {
+          "attackRangeMm": 1500,
+          "destination": null,
+          "engagementTarget": null,
+          "fatigue": 0,
+          "formation": {
+            "line": {
+              "files": 10
+            }
+          },
+          "id": "a",
+          "morale": 1000,
+          "position": {
+            "xMm": 80000,
+            "yMm": 50000
+          },
+          "pursuitCasualties": 0,
+          "side": "attacker",
+          "soldiers": 40,
+          "speedMmPerTick": 1000,
+          "state": "formed"
+        },
+        {
+          "attackRangeMm": 1500,
+          "destination": null,
+          "engagementTarget": null,
+          "fatigue": 0,
+          "formation": {
+            "line": {
+              "files": 10
+            }
+          },
+          "id": "d",
+          "morale": 1000,
+          "position": {
+            "xMm": 100000,
+            "yMm": 100000
+          },
+          "pursuitCasualties": 0,
+          "side": "defender",
+          "soldiers": 40,
+          "speedMmPerTick": 1000,
+          "state": "formed"
+        }
+      ]
+    },
+    "finishingTick": 240,
+    "midCapture": {
+      "battlefield": {
+        "depthMm": 100000,
+        "widthMm": 100000
+      },
+      "completionRules": "fieldAndSiegeV1",
+      "siege": {
+        "capture": {
+          "capturedBy": null,
+          "capturingSide": "attacker",
+          "progress": 500
+        },
+        "gateIntegrity": 1000,
+        "gateState": "open",
+        "layout": {
+          "capturePoint": {
+            "center": {
+              "xMm": 80000,
+              "yMm": 50000
+            },
+            "radiusMm": 5000
+          },
+          "deploymentZones": [
+            {
+              "maxXMm": 35000,
+              "maxYMm": 100000,
+              "minXMm": 0,
+              "minYMm": 0,
+              "side": "attacker"
+            },
+            {
+              "maxXMm": 100000,
+              "maxYMm": 100000,
+              "minXMm": 65000,
+              "minYMm": 0,
+              "side": "defender"
+            }
+          ],
+          "gate": {
+            "maxXMm": 51000,
+            "maxYMm": 55000,
+            "minXMm": 49000,
+            "minYMm": 45000
+          },
+          "towers": [
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 15000
+              },
+              "radiusMm": 2000
+            },
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 35000
+              },
+              "radiusMm": 2000
+            },
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 65000
+              },
+              "radiusMm": 2000
+            },
+            {
+              "center": {
+                "xMm": 50000,
+                "yMm": 85000
+              },
+              "radiusMm": 2000
+            }
+          ],
+          "wallSegments": [
+            {
+              "maxXMm": 51000,
+              "maxYMm": 44999,
+              "minXMm": 49000,
+              "minYMm": 0
+            },
+            {
+              "maxXMm": 51000,
+              "maxYMm": 100000,
+              "minXMm": 49000,
+              "minYMm": 55001
+            }
+          ]
+        },
+        "profile": "stoneWallsV1"
+      },
+      "state": {
+        "phase": "running"
+      },
+      "terrain": {
+        "location": "mountainPass",
+        "profile": "combatTerrainV4"
+      },
+      "tick": 140,
+      "units": [
+        {
+          "attackRangeMm": 1500,
+          "destination": null,
+          "engagementTarget": null,
+          "fatigue": 0,
+          "formation": {
+            "line": {
+              "files": 10
+            }
+          },
+          "id": "a",
+          "morale": 1000,
+          "position": {
+            "xMm": 80000,
+            "yMm": 50000
+          },
+          "pursuitCasualties": 0,
+          "side": "attacker",
+          "soldiers": 40,
+          "speedMmPerTick": 1000,
+          "state": "formed"
+        },
+        {
+          "attackRangeMm": 1500,
+          "destination": null,
+          "engagementTarget": null,
+          "fatigue": 0,
+          "formation": {
+            "line": {
+              "files": 10
+            }
+          },
+          "id": "d",
+          "morale": 1000,
+          "position": {
+            "xMm": 100000,
+            "yMm": 100000
+          },
+          "pursuitCasualties": 0,
+          "side": "defender",
+          "soldiers": 40,
+          "speedMmPerTick": 1000,
+          "state": "formed"
+        }
+      ]
+    }
+  }
+}

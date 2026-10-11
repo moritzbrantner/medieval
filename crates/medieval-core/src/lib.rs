@@ -30,11 +30,19 @@ pub use province_definitions::{
 };
 pub use recruitment::{RecruitmentOption, RecruitmentPool, UnitUnlock};
 mod save;
-pub use deployment::siege::{SIEGE_CAPTURE_MAX_PROGRESS, SiegeProfile};
+pub use deployment::siege::{
+    SIEGE_CAPTURE_MAX_PROGRESS, SIEGE_GATE_MAX_INTEGRITY, STAGED_KEEP_OBJECTIVE_COUNT, SiegeArea,
+    SiegeLadder, SiegeObjectiveStatus, SiegeProfile, SiegeTowerActivity,
+};
 mod settlement;
+mod siege_engine;
 pub use settlement::{
     SETTLEMENT_LEVELS, SettlementLevel, SettlementLevelSpec, SettlementUpgradeOption,
     SettlementUpgradeOrder, SettlementUpgradeRequirement,
+};
+pub use siege_engine::{
+    CATAPULT_AMMUNITION, CATAPULT_MAX_RANGE_MM, CATAPULT_MIN_RANGE_MM, CATAPULT_RELOAD_PULSES,
+    SiegeEngineKind, SiegeEngineSetup, SiegeEngineStatus, SiegeEngineTarget,
 };
 mod tactical;
 mod tactical_opponent;

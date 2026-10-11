@@ -8,6 +8,18 @@ use crate::{
 pub const SIEGE_CAPTURE_MAX_PROGRESS: u16 = 1_000;
 pub const SIEGE_CAPTURE_PROGRESS_PER_PULSE: u16 = 100;
 pub const SIEGE_TOWER_COUNT: usize = 4;
+/// Integrity of a standing gate. Integrity uses the same thousandths scale as
+/// capture progress; the gate is destroyed on the pulse it reaches zero.
+pub const SIEGE_GATE_MAX_INTEGRITY: u16 = 1_000;
+/// Distance from the gate footprint within which an ordered unit strikes it.
+pub const SIEGE_GATE_ATTACK_DISTANCE_MM: u32 = crate::tactical::COMBAT_CONTACT_DISTANCE_MM;
+/// Half the span of a ladder cell along the wall: a ladder opens a 3 m cell,
+/// capped at a quarter of the gate span so it always stays narrower than the
+/// gate.
+pub(crate) const SIEGE_LADDER_HALF_SPAN_MM: u32 = 1_500;
+/// Objectives of [`SiegeProfile::StagedKeepV1`]: outer bailey, inner bailey
+/// and keep.
+pub const STAGED_KEEP_OBJECTIVE_COUNT: usize = 3;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +70,76 @@ pub struct SiegeTower {
     pub radius_mm: u32,
 }
 
+impl SiegeTower {
+    /// Whether `point` lies inside the tower footprint circle (inclusive).
+    #[must_use]
+    pub fn contains(self, point: BattlePoint) -> bool {
+        point_distance_squared(self.center, point) <= square(self.radius_mm)
+    }
+}
+
+/// Core-owned activity of one siege tower, derived from authoritative unit
+/// state. Presentation projects it and never re-derives targets or casualties.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiegeTowerActivity {
+    /// A formed defender unit stands inside the tower footprint.
+    pub staffed: bool,
+    /// The formed attacker unit the staffed tower fires at on the next combat
+    /// pulse: the nearest one within [`SiegeProfile::tower_range_mm`] of the
+    /// tower center, ties broken by unit id. `None` while unstaffed or with no
+    /// attacker in range.
+    pub target_unit_id: Option<String>,
+}
+
+/// Core-owned read model of one placed scaling ladder. Presentation projects
+/// it and never re-derives climbing or holding rules.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiegeLadder {
+    /// The wall cell the ladder opens for eligible attackers: the full wall
+    /// thickness across, inside one wall segment along it.
+    pub area: SiegeArea,
+    /// A formed defender stands within melee contact of the ladder's inner
+    /// foot, so no attacker leaves the ladder onto the defenders' side.
+    pub held_by_defender: bool,
+}
+
+/// Authoritative record of one placed ladder. The placing unit is kept so a
+/// unit carries exactly one ladder per battle.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SiegeLadderPlacement {
+    pub(crate) area: SiegeArea,
+    pub(crate) placed_by: String,
+}
+
+impl SiegeLadderPlacement {
+    /// Foot on the defenders' (east) side: the top a defender holds.
+    pub(crate) const fn inner_foot(&self) -> BattlePoint {
+        ladder_inner_foot(self.area)
+    }
+}
+
+/// Where a unit at `from` stands at the foot of the ladder occupying `area`,
+/// on its own side of the wall, on the ladder's center row.
+pub(crate) const fn ladder_foot(area: SiegeArea, from: BattlePoint) -> BattlePoint {
+    if from.x_mm < area.center().x_mm {
+        ladder_outer_foot(area)
+    } else {
+        ladder_inner_foot(area)
+    }
+}
+
+/// Foot on the attackers' (west) side.
+const fn ladder_outer_foot(area: SiegeArea) -> BattlePoint {
+    BattlePoint::new(area.min_x_mm.saturating_sub(1), area.center().y_mm)
+}
+
+const fn ladder_inner_foot(area: SiegeArea) -> BattlePoint {
+    BattlePoint::new(area.max_x_mm.saturating_add(1), area.center().y_mm)
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SiegeCapturePoint {
@@ -89,6 +171,12 @@ pub enum SiegeProfile {
     /// before profiles existed load as stone walls.
     #[default]
     StoneWallsV1,
+    /// Stone curtain wall (the `StoneWallsV1` wall, gate and towers) with a
+    /// staged defense behind it: an ordered list of capture objectives from
+    /// the outer bailey to the keep (see [`SiegeBattleState::objectives`]).
+    /// Not a campaign fortification level and not in [`Self::ALL`]; it is
+    /// offered only through explicit construction.
+    StagedKeepV1,
 }
 
 /// Geometry of one profile, as fractions of the battlefield.
@@ -102,6 +190,9 @@ struct SiegeProfileGeometry {
 }
 
 impl SiegeProfile {
+    /// The single-point profiles the campaign fortification levels map to.
+    /// `StagedKeepV1` is deliberately not listed: no campaign level or sandbox
+    /// selector offers it yet.
     pub const ALL: [Self; 2] = [Self::PalisadeV1, Self::StoneWallsV1];
 
     /// The fortification level this profile represents (1 = palisade, 2 = stone).
@@ -109,7 +200,81 @@ impl SiegeProfile {
     pub const fn fortification_level(self) -> u8 {
         match self {
             Self::PalisadeV1 => 1,
-            Self::StoneWallsV1 => 2,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 2,
+        }
+    }
+
+    /// Gate damage one formed attacking unit deals per combat pulse. Like
+    /// capture progress it counts units, not soldiers: one unit breaches a
+    /// palisade gate in 10 pulses (10 s) and a stone gate in 20 pulses (20 s).
+    #[must_use]
+    pub const fn gate_damage_per_pulse(self) -> u16 {
+        match self {
+            Self::PalisadeV1 => 100,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 50,
+        }
+    }
+
+    /// Gate damage a battering-ram crew deals per combat pulse in place of
+    /// [`Self::gate_damage_per_pulse`]: 2.5 times one unit, so a ram breaches
+    /// a palisade gate in 4 pulses and a stone gate in 8.
+    #[must_use]
+    pub const fn ram_damage_per_pulse(self) -> u16 {
+        match self {
+            Self::PalisadeV1 => 250,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 125,
+        }
+    }
+
+    /// Gate integrity one catapult stone removes: a palisade gate falls to 5
+    /// stones and a stone gate to 10, within one catapult's ammunition.
+    #[must_use]
+    pub const fn catapult_gate_damage_per_shot(self) -> u16 {
+        match self {
+            Self::PalisadeV1 => 200,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 100,
+        }
+    }
+
+    /// Reach of a staffed tower, from the tower center to the target unit
+    /// position (inclusive). Stone towers stand taller than palisade
+    /// watchtowers; both stay near V1 archer range (25 m).
+    #[must_use]
+    pub const fn tower_range_mm(self) -> u32 {
+        match self {
+            Self::PalisadeV1 => 20_000,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 30_000,
+        }
+    }
+
+    /// Minimum ticks a unit spends on a scaling ladder, inside the wall
+    /// footprint, before it can leave at the top: 3 s up a palisade and 5 s up
+    /// a stone curtain wall. Climbers move across the wall thickness at
+    /// [`SiegeBattleState::ladder_climb_speed_mm_per_tick`].
+    #[must_use]
+    pub const fn ladder_climb_ticks(self) -> u32 {
+        match self {
+            Self::PalisadeV1 => 60,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 100,
+        }
+    }
+
+    /// Upper bound on the soldiers one staffed tower removes in one combat pulse.
+    #[must_use]
+    pub const fn tower_max_casualties_per_pulse(self) -> u16 {
+        match self {
+            Self::PalisadeV1 => 2,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 3,
+        }
+    }
+
+    /// Missile frontage of one staffed tower volley, in the same frontage
+    /// slots a formed missile unit fires with (a 10-file archer line fires 10).
+    #[must_use]
+    pub(crate) const fn tower_volley_frontage(self) -> u32 {
+        match self {
+            Self::PalisadeV1 => 12,
+            Self::StoneWallsV1 | Self::StagedKeepV1 => 24,
         }
     }
 
@@ -130,7 +295,7 @@ impl SiegeProfile {
                 gate_permille: (430, 570),
                 tower_radius_divisor: 80,
             },
-            Self::StoneWallsV1 => SiegeProfileGeometry {
+            Self::StoneWallsV1 | Self::StagedKeepV1 => SiegeProfileGeometry {
                 wall_permille: (490, 510),
                 gate_permille: (450, 550),
                 tower_radius_divisor: 50,
@@ -145,8 +310,15 @@ pub struct SiegeLayout {
     pub wall_segments: [SiegeArea; 2],
     pub gate: SiegeArea,
     pub towers: [SiegeTower; SIEGE_TOWER_COUNT],
+    /// The single capture point of a one-objective profile. For a staged
+    /// profile it is the final objective (the keep), whose capture decides
+    /// the battle; the full ordered list is [`Self::staged_objectives`].
     pub capture_point: SiegeCapturePoint,
     pub deployment_zones: [DeploymentZone; 2],
+    /// Ordered objectives, outer to inner, of a staged profile. Omitted for
+    /// single-point profiles, so their documents are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_objectives: Option<[SiegeCapturePoint; STAGED_KEEP_OBJECTIVE_COUNT]>,
 }
 
 impl SiegeLayout {
@@ -158,8 +330,9 @@ impl SiegeLayout {
 
     /// Deterministic layout of a fortification profile. The wall forms one
     /// vertical barrier through the battlefield with a centered gate. Towers
-    /// remain bounded to the wall footprint; they are presentation/state
-    /// anchors in this slice, not independent destruction or collision systems.
+    /// remain bounded to the wall footprint; staffed towers fire on attackers
+    /// in range (see [`SiegeBattleState::tower_activity`]), but they are not
+    /// independent destruction or collision systems.
     #[must_use]
     pub fn for_profile(battlefield: FlatBattlefield, profile: SiegeProfile) -> Self {
         let geometry = profile.geometry();
@@ -194,13 +367,23 @@ impl SiegeLayout {
             center: BattlePoint::new(wall_center_x, scale(battlefield.depth_mm, percent_y, 100)),
             radius_mm: tower_radius,
         });
-        let capture_point = SiegeCapturePoint {
+        let capture_radius = battlefield.width_mm.min(battlefield.depth_mm) / 20;
+        let objective_at = |percent_x: u32| SiegeCapturePoint {
             center: BattlePoint::new(
-                scale(battlefield.width_mm, 80, 100),
+                scale(battlefield.width_mm, percent_x, 100),
                 scale(battlefield.depth_mm, 50, 100),
             ),
-            radius_mm: battlefield.width_mm.min(battlefield.depth_mm) / 20,
+            radius_mm: capture_radius,
         };
+        // Staged objectives step from just behind the wall to the keep at the
+        // far edge, each 14 % of the width farther in.
+        let staged_objectives = match profile {
+            SiegeProfile::PalisadeV1 | SiegeProfile::StoneWallsV1 => None,
+            SiegeProfile::StagedKeepV1 => Some([62, 76, 90].map(objective_at)),
+        };
+        let capture_point = staged_objectives
+            .and_then(|objectives| objectives.last().copied())
+            .unwrap_or_else(|| objective_at(80));
         let deployment_zones = [
             DeploymentZone {
                 side: BattleSide::Attacker,
@@ -223,6 +406,7 @@ impl SiegeLayout {
             towers,
             capture_point,
             deployment_zones,
+            staged_objectives,
         }
     }
 
@@ -250,7 +434,38 @@ pub struct SiegeBattleState {
     pub profile: SiegeProfile,
     pub layout: SiegeLayout,
     pub gate_state: SiegeGateState,
+    /// Remaining gate integrity out of [`SIEGE_GATE_MAX_INTEGRITY`]. Sieges
+    /// recorded before gate assaults existed load with an intact gate.
+    #[serde(default = "full_gate_integrity")]
+    pub gate_integrity: u16,
+    /// Capture state of the single objective. For a staged profile it mirrors
+    /// the active objective (see [`Self::active_objective_index`]); the
+    /// authoritative per-objective state is [`Self::objective_captures`].
     pub capture: SiegeCaptureState,
+    /// Per-objective capture state of a staged profile, in layout order.
+    /// Omitted for single-point profiles, so their documents are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective_captures: Option<[SiegeCaptureState; STAGED_KEEP_OBJECTIVE_COUNT]>,
+}
+
+/// Core-owned state of one siege capture objective, in profile order (outer
+/// to inner). Single-point profiles have exactly one, always unlocked, equal
+/// to `layout.capture_point` and `capture`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiegeObjectiveStatus {
+    pub center: BattlePoint,
+    pub radius_mm: u32,
+    pub progress: u16,
+    pub capturing_side: Option<BattleSide>,
+    pub captured_by: Option<BattleSide>,
+    /// Whether the objective can be captured: the first always is, a later one
+    /// once the attacker has captured the objective before it.
+    pub unlocked: bool,
+}
+
+const fn full_gate_integrity() -> u16 {
+    SIEGE_GATE_MAX_INTEGRITY
 }
 
 impl SiegeBattleState {
@@ -262,11 +477,77 @@ impl SiegeBattleState {
     /// A fresh siege of `profile`: closed gate, no capture progress.
     #[must_use]
     pub fn for_profile(battlefield: FlatBattlefield, profile: SiegeProfile) -> Self {
+        let layout = SiegeLayout::for_profile(battlefield, profile);
         Self {
             profile,
-            layout: SiegeLayout::for_profile(battlefield, profile),
+            layout,
             gate_state: SiegeGateState::Closed,
+            gate_integrity: SIEGE_GATE_MAX_INTEGRITY,
             capture: SiegeCaptureState::default(),
+            objective_captures: layout
+                .staged_objectives
+                .map(|_| [SiegeCaptureState::default(); STAGED_KEEP_OBJECTIVE_COUNT]),
+        }
+    }
+
+    /// Every capture objective in order, outer to inner.
+    #[must_use]
+    pub fn objectives(self) -> Vec<SiegeObjectiveStatus> {
+        let Some(points) = self.layout.staged_objectives else {
+            return vec![objective_status(
+                self.layout.capture_point,
+                self.capture,
+                true,
+            )];
+        };
+        let captures = self.objective_captures.unwrap_or_default();
+        points
+            .iter()
+            .zip(captures)
+            .enumerate()
+            .map(|(index, (point, capture))| {
+                let unlocked =
+                    index == 0 || captures[index - 1].captured_by == Some(BattleSide::Attacker);
+                objective_status(*point, capture, unlocked)
+            })
+            .collect()
+    }
+
+    /// The staged objective that is currently in play: the first one the
+    /// attacker has not captured (always unlocked, since every objective
+    /// before it fell to the attacker), or the final one once all fell.
+    /// Later objectives unlock only through attacker captures, so a defender
+    /// who captures this objective keeps it, and every later one, locked.
+    #[must_use]
+    pub fn active_objective_index(
+        captures: &[SiegeCaptureState; STAGED_KEEP_OBJECTIVE_COUNT],
+    ) -> usize {
+        captures
+            .iter()
+            .position(|capture| capture.captured_by != Some(BattleSide::Attacker))
+            .unwrap_or(STAGED_KEEP_OBJECTIVE_COUNT - 1)
+    }
+
+    /// The active objective, which the legacy `capture` mirrors: the single
+    /// objective of a one-objective profile, otherwise the objective at
+    /// [`Self::active_objective_index`].
+    #[must_use]
+    pub fn active_objective(self) -> SiegeObjectiveStatus {
+        let index = self
+            .objective_captures
+            .filter(|_| self.layout.staged_objectives.is_some())
+            .map_or(0, |captures| Self::active_objective_index(&captures));
+        self.objectives().swap_remove(index)
+    }
+
+    /// The side that captured the final objective, which decides the battle.
+    /// For a single-point profile this is `capture.captured_by`.
+    #[must_use]
+    pub fn final_objective_captured_by(self) -> Option<BattleSide> {
+        match (self.layout.staged_objectives, self.objective_captures) {
+            (Some(_), Some(captures)) => captures[STAGED_KEEP_OBJECTIVE_COUNT - 1].captured_by,
+            (Some(_), None) => None,
+            (None, _) => self.capture.captured_by,
         }
     }
 
@@ -326,45 +607,397 @@ impl SiegeBattleState {
         BattlePoint::new(gate_center.x_mm, gate_center.y_mm)
     }
 
-    /// Advances capture once per authoritative tactical combat pulse. Only
-    /// formed units count. If both sides are present, progress is left exactly
-    /// unchanged; contested capture therefore fails closed.
-    pub fn advance_capture(&mut self, units: &[TacticalUnit]) {
-        if self.capture.captured_by.is_some() {
-            return;
+    /// Whether `point` is close enough to the gate footprint to strike it.
+    #[must_use]
+    pub fn within_gate_attack_distance(self, point: BattlePoint) -> bool {
+        let gate = self.layout.gate;
+        let dx = u128::from(
+            gate.min_x_mm
+                .saturating_sub(point.x_mm)
+                .max(point.x_mm.saturating_sub(gate.max_x_mm)),
+        );
+        let dy = u128::from(
+            gate.min_y_mm
+                .saturating_sub(point.y_mm)
+                .max(point.y_mm.saturating_sub(gate.max_y_mm)),
+        );
+        let reach = u128::from(SIEGE_GATE_ATTACK_DISTANCE_MM);
+        dx * dx + dy * dy <= reach * reach
+    }
+
+    /// Where a unit at `from` stands to strike the gate: just outside the gate
+    /// footprint on its own side of the wall, on the gate's center line. The
+    /// point is passable whatever the gate state, so the existing siege path
+    /// reaches it without crossing the wall.
+    #[must_use]
+    pub fn gate_attack_position(self, from: BattlePoint) -> BattlePoint {
+        let gate = self.layout.gate;
+        let center = gate.center();
+        let x_mm = if from.x_mm > center.x_mm {
+            gate.max_x_mm.saturating_add(1)
+        } else {
+            gate.min_x_mm.saturating_sub(1)
+        };
+        BattlePoint::new(x_mm, center.y_mm)
+    }
+
+    /// Whether a closed gate is all that separates `from` and `to` across the
+    /// wall line, so reaching `to` needs the gate breached or opened.
+    #[must_use]
+    pub fn closed_gate_separates(self, from: BattlePoint, to: BattlePoint) -> bool {
+        let gate = self.layout.gate;
+        self.gate_state == SiegeGateState::Closed
+            && matches!(
+                (
+                    wall_side(from.x_mm, gate.min_x_mm, gate.max_x_mm),
+                    wall_side(to.x_mm, gate.min_x_mm, gate.max_x_mm)
+                ),
+                (WallSide::Left, WallSide::Right) | (WallSide::Right, WallSide::Left)
+            )
+    }
+
+    /// Whether the wall stands between `left` and `right`, so formed units at
+    /// those positions cannot fight in melee. Positions on opposite sides of
+    /// the wall line are separated unless the straight line between them
+    /// crosses the wall line inside a traversable (open or destroyed) gate.
+    /// This ignores ladders; see [`Self::wall_separates_with_ladders`]. A
+    /// closed gate separates them too. Missiles are not affected.
+    #[must_use]
+    pub fn wall_separates(self, left: BattlePoint, right: BattlePoint) -> bool {
+        self.wall_separates_with_ladders(left, right, std::iter::empty())
+    }
+
+    /// [`Self::wall_separates`] where the line may also cross the wall line
+    /// inside any of the placed `ladders` cells (whatever the gate state).
+    pub(crate) fn wall_separates_with_ladders(
+        self,
+        left: BattlePoint,
+        right: BattlePoint,
+        ladders: impl IntoIterator<Item = SiegeArea>,
+    ) -> bool {
+        let gate = self.layout.gate;
+        let (left_side, right_side) = (
+            wall_side(left.x_mm, gate.min_x_mm, gate.max_x_mm),
+            wall_side(right.x_mm, gate.min_x_mm, gate.max_x_mm),
+        );
+        if !matches!(
+            (left_side, right_side),
+            (WallSide::Left, WallSide::Right) | (WallSide::Right, WallSide::Left)
+        ) {
+            return false;
         }
-        let mut attacker_present = false;
-        let mut defender_present = false;
-        for unit in units.iter().filter(|unit| {
-            unit.can_receive_orders() && self.layout.capture_point.contains(unit.position())
-        }) {
-            match unit.side() {
-                BattleSide::Attacker => attacker_present = true,
-                BattleSide::Defender => defender_present = true,
+        // Where the line between the two positions crosses the wall center
+        // line, compared exactly as a rational (no truncation), with the
+        // points ordered by x so the result never depends on argument order.
+        // Opposite sides guarantee distinct x coordinates.
+        let (west, east) = if left.x_mm < right.x_mm {
+            (left, right)
+        } else {
+            (right, left)
+        };
+        let wall_x = i128::from(gate.center().x_mm);
+        let (wx, wy) = (i128::from(west.x_mm), i128::from(west.y_mm));
+        let (ex, ey) = (i128::from(east.x_mm), i128::from(east.y_mm));
+        let run = ex - wx;
+        // crossing_y * run, with run > 0.
+        let crossing_scaled = wy * run + (ey - wy) * (wall_x - wx);
+        let crosses_inside = |area: SiegeArea| {
+            i128::from(area.min_y_mm) * run <= crossing_scaled
+                && crossing_scaled <= i128::from(area.max_y_mm) * run
+        };
+        let through_gate = self.gate_state.is_traversable() && crosses_inside(gate);
+        !(through_gate || ladders.into_iter().any(crosses_inside))
+    }
+
+    /// The ladder cell a ladder ordered at `at` opens: the full wall
+    /// thickness across, centered on `at` along the wall where the segment
+    /// allows and always inside the wall segment holding `at`. `None` unless
+    /// `at` lies inside a wall segment (never the gate or open ground).
+    #[must_use]
+    pub(crate) fn ladder_area(self, at: BattlePoint) -> Option<SiegeArea> {
+        let segment = *self
+            .layout
+            .wall_segments
+            .iter()
+            .find(|segment| segment.contains(at))?;
+        let gate = self.layout.gate;
+        // The full span is capped at a quarter of the gate width.
+        let half = SIEGE_LADDER_HALF_SPAN_MM.min((gate.max_y_mm - gate.min_y_mm) / 8);
+        let span = (2 * half).min(segment.max_y_mm - segment.min_y_mm);
+        let min_y_mm = at
+            .y_mm
+            .saturating_sub(half)
+            .max(segment.min_y_mm)
+            .min(segment.max_y_mm - span);
+        Some(SiegeArea {
+            min_x_mm: segment.min_x_mm,
+            max_x_mm: segment.max_x_mm,
+            min_y_mm,
+            max_y_mm: min_y_mm + span,
+        })
+    }
+
+    /// How far a climber moves along a ladder per tick: the wall thickness
+    /// spread over [`SiegeProfile::ladder_climb_ticks`], so a climb spends at
+    /// least that many ticks inside the wall footprint whenever the wall is
+    /// at least that many millimetres thick (every V1 layout on a
+    /// battlefield of 10 m or more).
+    #[must_use]
+    pub(crate) fn ladder_climb_speed_mm_per_tick(self) -> u32 {
+        let gate = self.layout.gate;
+        ((gate.max_x_mm - gate.min_x_mm) / self.profile.ladder_climb_ticks()).max(1)
+    }
+
+    /// Whether the wall is thick enough for a climb, stored only as position,
+    /// to last at least [`SiegeProfile::ladder_climb_ticks`]: one millimetre
+    /// per tick. Thinner walls (siege battlefields under about 10 m) offer no
+    /// ladders rather than a shortened climb.
+    #[must_use]
+    pub(crate) fn supports_ladders(self) -> bool {
+        let gate = self.layout.gate;
+        gate.max_x_mm - gate.min_x_mm >= self.profile.ladder_climb_ticks()
+    }
+
+    /// Whether `point` lies in the wall band (wall or gate footprint across).
+    #[must_use]
+    pub(crate) const fn in_wall_band(self, point: BattlePoint) -> bool {
+        point.x_mm >= self.layout.gate.min_x_mm && point.x_mm <= self.layout.gate.max_x_mm
+    }
+
+    /// The next waypoint of an eligible climber at `from` heading for
+    /// `destination` while the gate is not traversable, or `None` when no
+    /// ladder applies (no crossing, a traversable gate, or no ladder). On a
+    /// ladder the climber heads for the foot on the destination's side;
+    /// otherwise it heads for the nearer foot of the nearest ladder (ties by
+    /// placement order) and, once standing on it, across to the far foot.
+    #[must_use]
+    pub(crate) fn ladder_waypoint(
+        self,
+        ladders: &[SiegeLadderPlacement],
+        from: BattlePoint,
+        destination: BattlePoint,
+    ) -> Option<BattlePoint> {
+        let gate = self.layout.gate;
+        let from_side = wall_side(from.x_mm, gate.min_x_mm, gate.max_x_mm);
+        let destination_side = wall_side(destination.x_mm, gate.min_x_mm, gate.max_x_mm);
+        if from_side == WallSide::Inside {
+            let ladder = ladders.iter().find(|ladder| ladder.area.contains(from))?;
+            return Some(match destination_side {
+                WallSide::Left => BattlePoint::new(ladder_outer_foot(ladder.area).x_mm, from.y_mm),
+                WallSide::Inside if ladder.area.contains(destination) => destination,
+                WallSide::Inside | WallSide::Right => {
+                    BattlePoint::new(ladder.inner_foot().x_mm, from.y_mm)
+                }
+            });
+        }
+        let crossing = matches!(
+            (from_side, destination_side),
+            (WallSide::Left, WallSide::Right) | (WallSide::Right, WallSide::Left)
+        );
+        if !crossing || self.gate_state.is_traversable() {
+            return None;
+        }
+        let ladder = ladders
+            .iter()
+            .min_by_key(|ladder| point_distance_squared(from, ladder_foot(ladder.area, from)))?;
+        let near = ladder_foot(ladder.area, from);
+        if from != near {
+            return Some(near);
+        }
+        Some(match from_side {
+            WallSide::Left => ladder.inner_foot(),
+            WallSide::Inside | WallSide::Right => ladder_outer_foot(ladder.area),
+        })
+    }
+
+    /// Whether a formed defender stands within melee contact of the ladder's
+    /// inner foot, holding the top.
+    #[must_use]
+    pub(crate) fn ladder_held(ladder: &SiegeLadderPlacement, units: &[TacticalUnit]) -> bool {
+        let top = ladder.inner_foot();
+        let reach = square(crate::tactical::COMBAT_CONTACT_DISTANCE_MM);
+        units.iter().any(|unit| {
+            unit.side() == BattleSide::Defender
+                && unit.can_receive_orders()
+                && point_distance_squared(top, unit.position()) <= reach
+        })
+    }
+
+    /// Per tower in layout order: the index into `units` of the staffed
+    /// tower's target, or `None`, plus whether the tower is staffed. One pass
+    /// over `units` resolves all towers.
+    pub(crate) fn tower_targets(
+        self,
+        units: &[TacticalUnit],
+    ) -> [(bool, Option<usize>); SIEGE_TOWER_COUNT] {
+        let range = square(self.profile.tower_range_mm());
+        let mut towers = [(false, None::<(u128, usize)>); SIEGE_TOWER_COUNT];
+        for (index, unit) in units.iter().enumerate() {
+            if !unit.can_receive_orders() {
+                continue;
+            }
+            for (tower, (staffed, target)) in self.layout.towers.iter().zip(&mut towers) {
+                match unit.side() {
+                    BattleSide::Defender => *staffed |= tower.contains(unit.position()),
+                    BattleSide::Attacker => {
+                        let distance = point_distance_squared(tower.center, unit.position());
+                        if distance > range {
+                            continue;
+                        }
+                        let closer = target.is_none_or(|(best, best_index)| {
+                            (distance, unit.id()) < (best, units[best_index].id())
+                        });
+                        if closer {
+                            *target = Some((distance, index));
+                        }
+                    }
+                }
             }
         }
+        towers
+            .map(|(staffed, target)| (staffed, target.filter(|_| staffed).map(|(_, index)| index)))
+    }
 
-        let side = match (attacker_present, defender_present) {
-            (true, false) => Some(BattleSide::Attacker),
-            (false, true) => Some(BattleSide::Defender),
-            (false, false) | (true, true) => None,
-        };
-        let Some(side) = side else {
+    /// Current activity of every tower in layout order.
+    #[must_use]
+    pub fn tower_activity(self, units: &[TacticalUnit]) -> Vec<SiegeTowerActivity> {
+        self.tower_targets(units)
+            .into_iter()
+            .map(|(staffed, target)| SiegeTowerActivity {
+                staffed,
+                target_unit_id: target.map(|index| units[index].id().to_owned()),
+            })
+            .collect()
+    }
+
+    /// Applies one combat pulse of gate damage. Only formed attacker units
+    /// under an explicit gate-attack order and within reach of the gate count;
+    /// defenders never damage their own gate. Integrity only falls, and the
+    /// gate becomes [`SiegeGateState::Destroyed`] on the pulse it reaches zero.
+    /// Returns whether this pulse destroyed the gate.
+    pub fn advance_gate_assault(&mut self, units: &[TacticalUnit]) -> bool {
+        self.advance_gate_assault_with_rams(units, |_| false)
+    }
+
+    /// [`Self::advance_gate_assault`] where a unit for which `has_ram` holds
+    /// deals [`SiegeProfile::ram_damage_per_pulse`] instead of the unit damage.
+    pub(crate) fn advance_gate_assault_with_rams(
+        &mut self,
+        units: &[TacticalUnit],
+        has_ram: impl Fn(&TacticalUnit) -> bool,
+    ) -> bool {
+        if self.gate_state != SiegeGateState::Closed {
+            return false;
+        }
+        let damage = units
+            .iter()
+            .filter(|unit| {
+                unit.side() == BattleSide::Attacker
+                    && unit.can_receive_orders()
+                    && unit.is_attacking_gate()
+                    && self.within_gate_attack_distance(unit.position())
+            })
+            .fold(0_u16, |damage, unit| {
+                damage.saturating_add(if has_ram(unit) {
+                    self.profile.ram_damage_per_pulse()
+                } else {
+                    self.profile.gate_damage_per_pulse()
+                })
+            });
+        self.damage_gate(damage)
+    }
+
+    /// Removes `damage` integrity from a closed gate, destroying it on the
+    /// pulse integrity reaches zero. Returns whether this destroyed the gate.
+    pub(crate) fn damage_gate(&mut self, damage: u16) -> bool {
+        if self.gate_state != SiegeGateState::Closed || damage == 0 {
+            return false;
+        }
+        self.gate_integrity = self.gate_integrity.saturating_sub(damage);
+        if self.gate_integrity == 0 {
+            self.gate_state = SiegeGateState::Destroyed;
+            return true;
+        }
+        false
+    }
+
+    /// Advances capture once per authoritative tactical combat pulse. Only
+    /// formed units count. If both sides are present, progress is left exactly
+    /// unchanged; contested capture therefore fails closed. A staged profile
+    /// advances only its active objective (see
+    /// [`Self::active_objective_index`]) and mirrors it into `capture`.
+    pub fn advance_capture(&mut self, units: &[TacticalUnit]) {
+        let Some(points) = self.layout.staged_objectives else {
+            advance_objective(&mut self.capture, self.layout.capture_point, units);
             return;
         };
+        let mut captures = self.objective_captures.unwrap_or_default();
+        let active = Self::active_objective_index(&captures);
+        advance_objective(&mut captures[active], points[active], units);
+        self.objective_captures = Some(captures);
+        // Re-resolve after advancing: capturing a non-final objective makes
+        // the next one active on this same pulse, and the mirror follows it.
+        self.capture = captures[Self::active_objective_index(&captures)];
+    }
+}
 
-        if self.capture.capturing_side != Some(side) {
-            self.capture.capturing_side = Some(side);
-            self.capture.progress = 0;
+const fn objective_status(
+    point: SiegeCapturePoint,
+    capture: SiegeCaptureState,
+    unlocked: bool,
+) -> SiegeObjectiveStatus {
+    SiegeObjectiveStatus {
+        center: point.center,
+        radius_mm: point.radius_mm,
+        progress: capture.progress,
+        capturing_side: capture.capturing_side,
+        captured_by: capture.captured_by,
+        unlocked,
+    }
+}
+
+/// The capture rule of one objective: once captured it stays captured;
+/// otherwise formed units of exactly one side inside it gain progress for
+/// that side, restarting from zero when the holding side changes.
+fn advance_objective(
+    capture: &mut SiegeCaptureState,
+    point: SiegeCapturePoint,
+    units: &[TacticalUnit],
+) {
+    if capture.captured_by.is_some() {
+        return;
+    }
+    let mut attacker_present = false;
+    let mut defender_present = false;
+    for unit in units
+        .iter()
+        .filter(|unit| unit.can_receive_orders() && point.contains(unit.position()))
+    {
+        match unit.side() {
+            BattleSide::Attacker => attacker_present = true,
+            BattleSide::Defender => defender_present = true,
         }
-        self.capture.progress = self
-            .capture
-            .progress
-            .saturating_add(SIEGE_CAPTURE_PROGRESS_PER_PULSE)
-            .min(SIEGE_CAPTURE_MAX_PROGRESS);
-        if self.capture.progress == SIEGE_CAPTURE_MAX_PROGRESS {
-            self.capture.captured_by = Some(side);
-        }
+    }
+
+    let side = match (attacker_present, defender_present) {
+        (true, false) => Some(BattleSide::Attacker),
+        (false, true) => Some(BattleSide::Defender),
+        (false, false) | (true, true) => None,
+    };
+    let Some(side) = side else {
+        return;
+    };
+
+    if capture.capturing_side != Some(side) {
+        capture.capturing_side = Some(side);
+        capture.progress = 0;
+    }
+    capture.progress = capture
+        .progress
+        .saturating_add(SIEGE_CAPTURE_PROGRESS_PER_PULSE)
+        .min(SIEGE_CAPTURE_MAX_PROGRESS);
+    if capture.progress == SIEGE_CAPTURE_MAX_PROGRESS {
+        capture.captured_by = Some(side);
     }
 }
 
@@ -387,6 +1020,17 @@ fn wall_side(x_mm: u32, min_x_mm: u32, max_x_mm: u32) -> WallSide {
 
 fn scale(span_mm: u32, numerator: u32, denominator: u32) -> u32 {
     ((u64::from(span_mm) * u64::from(numerator)) / u64::from(denominator)) as u32
+}
+
+fn point_distance_squared(left: BattlePoint, right: BattlePoint) -> u128 {
+    squared_components(
+        i64::from(left.x_mm) - i64::from(right.x_mm),
+        i64::from(left.y_mm) - i64::from(right.y_mm),
+    )
+}
+
+const fn square(value: u32) -> u128 {
+    (value as u128) * (value as u128)
 }
 
 fn squared_components(dx: i64, dy: i64) -> u128 {
@@ -462,6 +1106,21 @@ mod tests {
     }
 
     #[test]
+    fn legacy_capture_mirrors_the_next_objective_on_the_pulse_an_earlier_one_falls() {
+        let battlefield = FlatBattlefield::new(100_000, 80_000);
+        let mut siege = SiegeBattleState::for_profile(battlefield, SiegeProfile::StagedKeepV1);
+        let first = siege.layout.staged_objectives.unwrap()[0];
+        let attackers = [unit("attacker", BattleSide::Attacker, first.center)];
+        while siege.objective_captures.unwrap()[0].captured_by.is_none() {
+            siege.advance_capture(&attackers);
+        }
+        let captures = siege.objective_captures.unwrap();
+        assert_eq!(captures[0].captured_by, Some(BattleSide::Attacker));
+        assert_eq!(SiegeBattleState::active_objective_index(&captures), 1);
+        assert_eq!(siege.capture, captures[1]);
+    }
+
+    #[test]
     fn battles_recorded_before_profiles_load_as_stone_walls() {
         let battlefield = FlatBattlefield::new(100_000, 80_000);
         let mut document = serde_json::to_value(SiegeBattleState::test_siege(battlefield)).unwrap();
@@ -531,6 +1190,142 @@ mod tests {
         }
         assert_eq!(siege.capture.progress, SIEGE_CAPTURE_MAX_PROGRESS);
         assert_eq!(siege.capture.captured_by, Some(BattleSide::Attacker));
+    }
+
+    #[test]
+    fn gate_assault_counts_only_ordered_attackers_in_reach_and_uses_profile_damage() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let mut palisade = SiegeBattleState::for_profile(battlefield, SiegeProfile::PalisadeV1);
+        let reach = palisade.gate_attack_position(BattlePoint::new(20_000, 10_000));
+        assert_eq!(reach, BattlePoint::new(49_499, 50_000));
+        assert!(palisade.within_gate_attack_distance(reach));
+        assert!(!palisade.within_gate_attack_distance(BattlePoint::new(40_000, 50_000)));
+
+        let ordered = unit("ram", BattleSide::Attacker, reach).with_gate_attack_order();
+        let unordered = unit("idle", BattleSide::Attacker, reach);
+        let defender = unit("defender", BattleSide::Defender, reach).with_gate_attack_order();
+        assert!(!palisade.advance_gate_assault(&[unordered, defender]));
+        assert_eq!(palisade.gate_integrity, SIEGE_GATE_MAX_INTEGRITY);
+
+        for pulse in 1..=10 {
+            let destroyed = palisade.advance_gate_assault(std::slice::from_ref(&ordered));
+            assert_eq!(destroyed, pulse == 10);
+        }
+        assert_eq!(palisade.gate_integrity, 0);
+        assert_eq!(palisade.gate_state, SiegeGateState::Destroyed);
+        assert!(!palisade.advance_gate_assault(std::slice::from_ref(&ordered)));
+
+        let mut stone = SiegeBattleState::test_siege(battlefield);
+        stone.advance_gate_assault(&[ordered.clone(), ordered]);
+        assert_eq!(
+            stone.gate_integrity,
+            SIEGE_GATE_MAX_INTEGRITY - 2 * SiegeProfile::StoneWallsV1.gate_damage_per_pulse()
+        );
+    }
+
+    #[test]
+    fn walls_separate_melee_unless_the_line_crosses_a_traversable_gate() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let mut siege = SiegeBattleState::test_siege(battlefield);
+        let gate = siege.layout.gate;
+        let at_gate = |x_mm| BattlePoint::new(x_mm, gate.center().y_mm);
+        let (outside, inside) = (gate.min_x_mm - 1, gate.max_x_mm + 1);
+        let wall_y = 20_000;
+        assert!(siege.wall_separates(at_gate(outside), at_gate(inside)));
+        assert!(siege.wall_separates(
+            BattlePoint::new(outside, wall_y),
+            BattlePoint::new(inside, wall_y)
+        ));
+        assert!(!siege.wall_separates(at_gate(outside), BattlePoint::new(outside - 500, 1)));
+        assert!(!siege.wall_separates(at_gate(outside), gate.center()));
+        for state in [SiegeGateState::Open, SiegeGateState::Destroyed] {
+            siege.gate_state = state;
+            assert!(!siege.wall_separates(at_gate(outside), at_gate(inside)));
+            assert!(siege.wall_separates(
+                BattlePoint::new(outside, wall_y),
+                BattlePoint::new(inside, wall_y)
+            ));
+        }
+    }
+
+    #[test]
+    fn wall_separation_is_exact_and_symmetric_at_a_gate_corner() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let mut siege = SiegeBattleState::test_siege(battlefield);
+        siege.gate_state = SiegeGateState::Open;
+        let gate = siege.layout.gate;
+        let wall_x = gate.center().x_mm;
+        // Crosses the wall line half a millimetre outside the gate's lower bound.
+        // Equidistant from the wall line, just beyond the wall on either side.
+        let half = (wall_x - gate.min_x_mm).max(gate.max_x_mm - wall_x) + 1;
+        let west = BattlePoint::new(wall_x - half, gate.min_y_mm);
+        let east = BattlePoint::new(wall_x + half, gate.min_y_mm - 1);
+        assert!(siege.wall_separates(west, east));
+        assert!(siege.wall_separates(east, west));
+        // Exactly on the bound stays inside the gate in both orders.
+        let on_bound = BattlePoint::new(wall_x + half, gate.min_y_mm);
+        assert!(!siege.wall_separates(west, on_bound));
+        assert!(!siege.wall_separates(on_bound, west));
+    }
+
+    #[test]
+    fn ladder_spans_stay_within_a_quarter_gate_and_need_a_climbable_wall() {
+        for profile in [SiegeProfile::PalisadeV1, SiegeProfile::StoneWallsV1] {
+            let siege =
+                SiegeBattleState::for_profile(FlatBattlefield::new(100_000, 100_000), profile);
+            let gate = siege.layout.gate;
+            let segment = siege.layout.wall_segments[0];
+            let ladder = siege
+                .ladder_area(BattlePoint::new(
+                    segment.center().x_mm,
+                    segment.center().y_mm,
+                ))
+                .unwrap();
+            assert!(4 * (ladder.max_y_mm - ladder.min_y_mm) <= gate.max_y_mm - gate.min_y_mm);
+            assert!(siege.supports_ladders());
+            // A wall thinner than the climb ticks cannot hold the minimum climb time.
+            let thin = SiegeBattleState::for_profile(FlatBattlefield::new(1_000, 1_000), profile);
+            assert!(!thin.supports_ladders());
+        }
+    }
+
+    #[test]
+    fn ladder_cells_stay_in_their_segment_and_open_only_their_own_rows_exactly() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let siege = SiegeBattleState::for_profile(battlefield, SiegeProfile::PalisadeV1);
+        let segment = siege.layout.wall_segments[0];
+        assert_eq!(siege.ladder_area(siege.layout.gate.center()), None);
+        assert_eq!(siege.ladder_area(BattlePoint::new(40_000, 20_000)), None);
+        // Near the gate the cell shifts to stay inside the segment.
+        let edge = BattlePoint::new(segment.center().x_mm, segment.max_y_mm);
+        let clamped = siege.ladder_area(edge).unwrap();
+        assert!(clamped.contains(edge));
+        assert_eq!(clamped.max_y_mm, segment.max_y_mm);
+        assert_eq!(
+            clamped.max_y_mm - clamped.min_y_mm,
+            2 * SIEGE_LADDER_HALF_SPAN_MM
+        );
+
+        let ladder = siege
+            .ladder_area(BattlePoint::new(segment.center().x_mm, 20_000))
+            .unwrap();
+        let wall_x = siege.layout.gate.center().x_mm;
+        let half = (wall_x - segment.min_x_mm).max(segment.max_x_mm - wall_x) + 1;
+        let west = BattlePoint::new(wall_x - half, ladder.min_y_mm);
+        // Crosses the wall line half a millimetre below the ladder cell.
+        let east = BattlePoint::new(wall_x + half, ladder.min_y_mm - 1);
+        let on_bound = BattlePoint::new(wall_x + half, ladder.min_y_mm);
+        for (left, right, separated) in [(west, east, true), (west, on_bound, false)] {
+            assert_eq!(
+                siege.wall_separates_with_ladders(left, right, [ladder]),
+                separated
+            );
+            assert_eq!(
+                siege.wall_separates_with_ladders(right, left, [ladder]),
+                separated
+            );
+            assert!(siege.wall_separates(left, right));
+        }
     }
 
     #[test]

@@ -204,7 +204,7 @@ impl TacticalBattle {
         if settlement_capture.is_some()
             && self
                 .siege_snapshot()
-                .and_then(|siege| siege.capture.captured_by)
+                .and_then(crate::deployment::siege::SiegeBattleState::final_objective_captured_by)
                 != winner
         {
             return Err(TacticalResultError::InvalidProvenance(

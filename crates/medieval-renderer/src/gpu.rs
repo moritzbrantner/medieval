@@ -2,14 +2,14 @@ use std::cell::RefCell;
 
 use bytemuck::{Pod, Zeroable};
 use medieval_core::{
-    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, TacticalTerrain, TacticalTerrainCell,
-    UnitKind,
+    BattlePoint, BattleSide, DeploymentZone, FlatBattlefield, SiegeEngineKind, TacticalTerrain,
+    TacticalTerrainCell, UnitKind,
 };
 use wgpu::util::DeviceExt;
 
 use crate::{
-    BattleRenderSnapshot, Camera3d, RenderSiegeArea, RenderSiegeCapture, RenderSiegeTower,
-    TerrainMesh, TerrainVertex,
+    BattleRenderSnapshot, Camera3d, RenderSiegeArea, RenderSiegeCapture, RenderSiegeEngine,
+    RenderSiegeTower, TerrainMesh, TerrainVertex,
     character_assets::{CharacterAssetPack, CharacterVertex},
     terrain::{
         TERRAIN_GRID_SIZE, terrain_cell_bounds_mm, terrain_cell_height_mm, terrain_height_mm,
@@ -27,6 +27,10 @@ const SIEGE_GATE_OPEN_HEIGHT_MM: f32 = 220.0;
 const SIEGE_TOWER_HEIGHT_MM: f32 = 5_000.0;
 const SIEGE_CAPTURE_BASE_HEIGHT_MM: f32 = 180.0;
 const SIEGE_CAPTURE_PROGRESS_HEIGHT_SCALE: f32 = 2.0;
+/// Presentation-only siege engine proportions and shot effect duration.
+const SIEGE_ENGINE_BODY_HEIGHT_MM: f32 = 1_400.0;
+const SIEGE_ENGINE_ARM_HEIGHT_MM: f32 = 4_200.0;
+const SIEGE_ENGINE_SHOT_EFFECT_TICKS: u64 = 10;
 const CUBE_VERTEX_COUNT: u32 = 36;
 const INITIAL_INSTANCE_CAPACITY: usize = 256;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
@@ -250,6 +254,51 @@ impl GpuWorldInstance {
             half_extent_routed: [half_width, half_height, half_width, 0.0],
             visual: [0.0; 4],
         }
+    }
+}
+
+impl GpuWorldInstance {
+    fn siege_engine(
+        terrain: TacticalTerrain,
+        engine: RenderSiegeEngine,
+        battlefield: FlatBattlefield,
+        tick: u64,
+    ) -> Vec<Self> {
+        let terrain_y = terrain_height_mm(terrain, battlefield, engine.position) as f32;
+        // Engines sit just behind the crew's soldier centers toward the west.
+        let x = engine.position.x_mm as f32 - 2_400.0;
+        let z = engine.position.y_mm as f32;
+        let (half_length, half_width) = match engine.kind {
+            SiegeEngineKind::BatteringRam => (1_800.0, 700.0),
+            SiegeEngineKind::Catapult => (1_200.0, 1_000.0),
+        };
+        let body_half_height = SIEGE_ENGINE_BODY_HEIGHT_MM / 2.0;
+        let mut parts = vec![Self {
+            center_material: [x, terrain_y + body_half_height, z, 10.0],
+            half_extent_routed: [half_length, body_half_height, half_width, 0.0],
+            visual: [0.0; 4],
+        }];
+        if engine.kind == SiegeEngineKind::Catapult {
+            let fired_recently = engine
+                .last_shot_tick
+                .is_some_and(|shot| tick.saturating_sub(shot) < SIEGE_ENGINE_SHOT_EFFECT_TICKS);
+            let arm_height = if fired_recently {
+                SIEGE_ENGINE_ARM_HEIGHT_MM
+            } else {
+                SIEGE_ENGINE_ARM_HEIGHT_MM / 2.0
+            };
+            parts.push(Self {
+                center_material: [
+                    x,
+                    terrain_y + SIEGE_ENGINE_BODY_HEIGHT_MM + arm_height / 2.0,
+                    z,
+                    11.0,
+                ],
+                half_extent_routed: [160.0, arm_height / 2.0, 160.0, 0.0],
+                visual: [0.0; 4],
+            });
+        }
+        parts
     }
 }
 
@@ -694,10 +743,10 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     let deployment_capacity = (2 * TERRAIN_GRID_SIZE) as usize;
     let forest_capacity = snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize;
     let river_capacity = snapshot.river_cells.len();
-    let siege_capacity = snapshot.siege.map_or(0, |siege| {
+    let siege_capacity = snapshot.siege.as_ref().map_or(0, |siege| {
         (siege.wall_segments.len() + 1) * (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE) as usize
             + siege.towers.len()
-            + 1
+            + siege.objectives.len()
     });
     let mut world =
         Vec::with_capacity(deployment_capacity + forest_capacity + river_capacity + siege_capacity);
@@ -734,7 +783,7 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
         }
     }
 
-    if let Some(siege) = snapshot.siege {
+    if let Some(siege) = &snapshot.siege {
         for wall in siege.wall_segments {
             world.extend(GpuWorldInstance::siege_area_segments(
                 snapshot.terrain,
@@ -758,10 +807,21 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
         world.extend(siege.towers.into_iter().map(|tower| {
             GpuWorldInstance::siege_tower(snapshot.terrain, tower, snapshot.battlefield)
         }));
-        world.push(GpuWorldInstance::siege_capture(
+        // One marker per core objective; a single-point siege has exactly
+        // its capture point.
+        world.extend(siege.objectives.iter().map(|objective| {
+            GpuWorldInstance::siege_capture(snapshot.terrain, *objective, snapshot.battlefield)
+        }));
+    }
+
+    // Siege engines are drawn where core places their crews. A catapult raises
+    // its arm briefly after a core-recorded shot; that effect is decoration.
+    for engine in &snapshot.siege_engines {
+        world.extend(GpuWorldInstance::siege_engine(
             snapshot.terrain,
-            siege.capture,
+            *engine,
             snapshot.battlefield,
+            snapshot.tick,
         ));
     }
 
@@ -1121,7 +1181,7 @@ mod tests {
         let base_world_count = (2 * TERRAIN_GRID_SIZE) as usize
             + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
             + snapshot.river_cells.len();
-        let siege = snapshot.siege.expect("siege snapshot");
+        let siege = snapshot.siege.clone().expect("siege snapshot");
         let expected_wall_count = siege
             .wall_segments
             .into_iter()

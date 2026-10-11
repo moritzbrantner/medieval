@@ -434,6 +434,16 @@ fieldset.speed-control {
   accent-color: #c9ad78;
 }
 
+.siege-objectives {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.8rem;
+}
+
+.siege-objectives li[data-unlocked="false"] {
+  color: #a99d89;
+}
+
 .hud-hint {
   margin: 0.2rem 0 0;
   color: #a99d89;
