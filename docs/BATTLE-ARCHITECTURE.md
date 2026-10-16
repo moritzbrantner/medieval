@@ -24,6 +24,8 @@ Keeping the current integer ground coordinates is deliberate. A 3D renderer does
 
 Owns battle truth: units, positions on the battlefield, formations, movement, combat, morale, fatigue, routing, deterministic ticks, and the deterministic `TacticalTerrain` elevation/ground-cover contract. Forest movement is the first terrain-owned gameplay modifier; additional terrain effects remain explicit core rules.
 
+The tactical core also owns **gameplay proximity and contact eligibility**. Simple integer-range tests do not require a rigid-body world or `physics-engine`; use reusable `rust-kernels` geometry/spatial algorithms when warranted. See [the approved geometry ownership and dependency retirement](physics-engine-integration.md). Only an independently approved physical-motion/response feature can justify bringing Physics Engine back.
+
 ### `medieval-renderer`
 
 Owns the 3D scene projection and GPU work: perspective camera, world-space render snapshots, viewport rays, terrain mesh/volume projection, soldier instances, selection/order visualization, lighting, depth, culling/LOD, and `wgpu` resources.
