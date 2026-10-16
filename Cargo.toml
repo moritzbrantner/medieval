@@ -8,6 +8,6 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-physics-engine = { git = "https://github.com/moritzbrantner/physics-engine", rev = "4a695264bc841b24fff3505e7d5b75274f32f5b4" }
+physics-engine = { git = "https://github.com/moritzbrantner/physics-engine", rev = "90f393023d48f36e5e18b9985d046e4e640b705b" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

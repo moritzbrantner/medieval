@@ -2612,7 +2612,7 @@ dependencies = [
 [[package]]
 name = "physics-engine"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/physics-engine?rev=4a695264bc841b24fff3505e7d5b75274f32f5b4#4a695264bc841b24fff3505e7d5b75274f32f5b4"
+source = "git+https://github.com/moritzbrantner/physics-engine?rev=90f393023d48f36e5e18b9985d046e4e640b705b#90f393023d48f36e5e18b9985d046e4e640b705b"
 dependencies = [
  "geometry-kernels",
  "sha2 0.11.0",
