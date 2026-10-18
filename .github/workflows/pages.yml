@@ -3,14 +3,14 @@ name: Pages
 on:
   push:
     branches: [main]
-  pull_request:
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pages-${{ github.ref }}
+  group: medieval-pages-pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
