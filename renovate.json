@@ -15,5 +15,6 @@
       ],
       "allowedVersions": "<0.19"
     }
-  ]
+  ],
+  "platformAutomerge": true
 }
