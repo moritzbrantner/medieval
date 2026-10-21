@@ -3,7 +3,6 @@ use std::{
     fmt,
 };
 
-use physics_engine::{Collider, ColliderShape, Vec3i, collider_contact};
 use serde::{Deserialize, Serialize};
 
 use crate::deployment::siege::{
@@ -3402,12 +3401,11 @@ fn step_vector(dx: i64, dy: i64, speed_mm: u32) -> (i64, i64) {
     (step_x, step_y)
 }
 
-/// Uses the shared physics kernel for exact deterministic tactical proximity.
+/// Exact deterministic tactical proximity: inclusive squared-distance comparison.
 ///
-/// Tactical positions use the full `u32` battlefield range while the physics kernel's public
-/// vectors are compact `i32` coordinates. Contact is translation invariant, so rebase the left
-/// point to the local origin and map the battle ground plane onto physics X/Z. The cheap axis
-/// rejection keeps every converted delta inside the requested contact radius.
+/// Tactical positions use the full `u32` battlefield range, so deltas are widened to `i64`.
+/// The cheap axis rejection bounds each delta by the radius; squares and their sum then fit
+/// `u128` without overflow.
 #[cfg(test)]
 fn points_within_distance(left: BattlePoint, right: BattlePoint, distance_mm: u32) -> bool {
     measured_points_within_distance(
@@ -3425,27 +3423,18 @@ fn measured_points_within_distance(
     distance_mm: u32,
 ) -> bool {
     counters.proximity_queries += 1;
-    let radius =
-        i32::try_from(distance_mm).expect("tactical contact radius must fit physics Vec3i");
     let dx = i64::from(right.x_mm) - i64::from(left.x_mm);
-    let dz = i64::from(right.y_mm) - i64::from(left.y_mm);
+    let dy = i64::from(right.y_mm) - i64::from(left.y_mm);
     let distance = u64::from(distance_mm);
-    if dx.unsigned_abs() > distance || dz.unsigned_abs() > distance {
+    if dx.unsigned_abs() > distance || dy.unsigned_abs() > distance {
         return false;
     }
 
     counters.physics_contact_queries += 1;
-    let offset = Vec3i::new(
-        i32::try_from(dx).expect("contact x delta is bounded by the tactical radius"),
-        0,
-        i32::try_from(dz).expect("contact z delta is bounded by the tactical radius"),
-    );
-    collider_contact(
-        Collider::new(Vec3i::ZERO, ColliderShape::sphere(radius)),
-        Collider::new(offset, ColliderShape::sphere(0)),
-    )
-    .expect("validated tactical contact geometry must be representable")
-    .overlaps()
+    let dx = u128::from(dx.unsigned_abs());
+    let dy = u128::from(dy.unsigned_abs());
+    let distance = u128::from(distance);
+    dx * dx + dy * dy <= distance * distance
 }
 
 /// Finds a unit by id in the id-ordered unit vector with one indexed lookup.
@@ -3671,7 +3660,7 @@ mod tests {
     }
 
     #[test]
-    fn physics_contact_preserves_tactical_distance_boundaries() {
+    fn proximity_preserves_tactical_distance_boundaries() {
         let origin = BattlePoint::new(0, 0);
         assert!(points_within_distance(
             origin,
@@ -3686,7 +3675,7 @@ mod tests {
     }
 
     #[test]
-    fn physics_contact_rebases_large_battlefield_coordinates() {
+    fn proximity_handles_large_battlefield_coordinates() {
         let edge = BattlePoint::new(u32::MAX, u32::MAX);
         assert!(points_within_distance(
             BattlePoint::new(u32::MAX - 900, u32::MAX - 1_200),
@@ -3697,6 +3686,104 @@ mod tests {
             BattlePoint::new(0, 0),
             edge,
             PURSUIT_DISTANCE_MM,
+        ));
+    }
+
+    #[test]
+    fn proximity_is_inclusive_symmetric_and_exact_at_boundaries() {
+        let origin = BattlePoint::new(1_000, 1_000);
+        // Axial: exactly on the radius, then one millimetre beyond.
+        assert!(points_within_distance(
+            origin,
+            BattlePoint::new(2_500, 1_000),
+            1_500
+        ));
+        assert!(!points_within_distance(
+            origin,
+            BattlePoint::new(2_501, 1_000),
+            1_500
+        ));
+        assert!(points_within_distance(
+            origin,
+            BattlePoint::new(1_000, 0),
+            1_000
+        ));
+        assert!(!points_within_distance(
+            origin,
+            BattlePoint::new(1_000, 0),
+            999
+        ));
+        // Diagonal 3-4-5: on, just inside the axis box but outside the circle.
+        assert!(points_within_distance(
+            origin,
+            BattlePoint::new(4_000, 5_000),
+            5_000
+        ));
+        assert!(!points_within_distance(
+            origin,
+            BattlePoint::new(4_000, 5_001),
+            5_000
+        ));
+        assert!(!points_within_distance(
+            origin,
+            BattlePoint::new(4_536, 4_536),
+            5_000
+        ));
+        assert!(points_within_distance(
+            origin,
+            BattlePoint::new(4_535, 4_535),
+            5_000
+        ));
+        // Reversed order gives the same answer.
+        assert!(points_within_distance(
+            BattlePoint::new(4_000, 5_000),
+            origin,
+            5_000
+        ));
+        assert!(!points_within_distance(
+            BattlePoint::new(4_000, 5_001),
+            origin,
+            5_000
+        ));
+        // Zero radius admits only coincident points.
+        assert!(points_within_distance(origin, origin, 0));
+        assert!(!points_within_distance(
+            origin,
+            BattlePoint::new(1_001, 1_000),
+            0
+        ));
+    }
+
+    #[test]
+    fn proximity_handles_full_u32_range_without_overflow() {
+        let low = BattlePoint::new(0, 0);
+        let high = BattlePoint::new(u32::MAX, u32::MAX);
+        assert!(!points_within_distance(low, high, u32::MAX));
+        assert!(points_within_distance(
+            low,
+            BattlePoint::new(u32::MAX, 0),
+            u32::MAX
+        ));
+        assert!(points_within_distance(
+            BattlePoint::new(0, u32::MAX),
+            low,
+            u32::MAX
+        ));
+        assert!(!points_within_distance(
+            low,
+            BattlePoint::new(u32::MAX, 1),
+            u32::MAX
+        ));
+        assert!(points_within_distance(high, high, 0));
+        assert!(points_within_distance(
+            BattlePoint::new(u32::MAX - 3, u32::MAX - 4),
+            high,
+            5,
+        ));
+        assert!(!points_within_distance(
+            BattlePoint::new(u32::MAX - 3, u32::MAX - 5),
+            high,
+            5,
         ));
     }
 
