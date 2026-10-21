@@ -10,6 +10,13 @@ The first single-player target remains deliberately compact: a two-faction, six-
 
 The current shipping and acceptance target is desktop. Android/iOS packaging, mobile-specific input, touch-layout acceptance, and mobile performance work are deferred until mobile becomes an explicit product priority. Active CI should not build or validate mobile in the meantime.
 
+
+## Owner-confirmed strategic intelligence and succession (2026-10-21)
+
+- **Targeted espionage — choice B:** a successful spy mission against an enemy army or garrison may yield a **precise, dated snapshot** of troop counts and composition. Those facts are legitimately observed historical intelligence only: they must not track hidden current movements, silently refresh or confer perpetual fog-of-war visibility. Ordinary one-hop reconnaissance still exposes only approximate strength and troop roles; human and AI must use the same faction-scoped information. See [#137](https://github.com/moritzbrantner/medieval/issues/137) and [#132](https://github.com/moritzbrantner/medieval/issues/132).
+- **No-heir ruler death — choice B:** when a ruler dies without a legitimate successor, the faction enters a **recoverable succession crisis**, not automatic painless replacement or immediate defeat. Rival claimants, instability/rebellions and meaningful political choices may determine a successor. The faction remains playable while the crisis resolves; terminal consequences, claimant mechanics and balancing require explicit future definition as their own gameplay slice. See [#119](https://github.com/moritzbrantner/medieval/issues/119) and [#118](https://github.com/moritzbrantner/medieval/issues/118).
+
+Both are owner-approved product intent, not evidence that the campaign features are implemented. Keep core authority and seeded deterministic resolution.
 ## Ownership boundaries
 
 - **`medieval-core` owns truth:** campaign state, adjacency, movement legality, economy, recruitment rules, combat resolution, AI decisions, seeded randomness, victory conditions, serialization versions, and future tactical simulation state.
