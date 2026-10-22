@@ -8,9 +8,7 @@
 
 ## Current code and migration status
 
-At the time of this decision, `crates/medieval-core/src/tactical.rs` still imports `Collider`, `ColliderShape`, `Vec3i` and `collider_contact` from `physics-engine` for `measured_points_within_distance`. It creates a sphere of the melee/range radius and a zero-radius sphere to test whether two `BattlePoint` positions overlap. This is a **geometry-only compatibility adapter**, not a rigid-body world.
-
-The pinned dependency in the workspace manifest, the `medieval-core` manifest and `Cargo.lock` must remain until the actual migration passes the repository's relevant Rust/WASM and deterministic tactical acceptance. **Recording the decision does not itself remove the runtime dependency.** [Medieval #76](https://github.com/moritzbrantner/medieval/issues/76) owns removing it and any obsolete adapter/counters with regression protection.
+[Medieval #76](https://github.com/moritzbrantner/medieval/issues/76) removed the dependency. `measured_points_within_distance` in `crates/medieval-core/src/tactical.rs` now applies the inclusive squared-distance predicate below directly, after the same axis rejection, with `i64` deltas and `u128` squares. The workspace manifest, the `medieval-core` manifest and `Cargo.lock` no longer reference `physics-engine`. The `physics_contact_queries` work counter keeps its name and meaning (exact checks that pass axis rejection), so the work budgets in `crates/medieval-core/tests/fixtures/tactical-work-budgets-v1.json` stay unchanged.
 
 ## Exact proximity contract to preserve
 
@@ -18,8 +16,6 @@ The pinned dependency in the workspace manifest, the `medieval-core` manifest an
 - For a nonnegative allowed range `r`, the existing inclusive sphere/point overlap corresponds to the **squared distance** predicate `dx² + dy² <= r²`, using checked/widened integer intermediate values. Preserve equality/touching, coincident positions, zero-range behavior where accepted, and early bounding-axis rejection; prevent arithmetic overflow or saturating casts.
 - Preserve the actual validated limits (e.g., `attack_range_mm`, `COMBAT_CONTACT_DISTANCE_MM`, `PURSUIT_DISTANCE_MM`) and the existing semantic decisions and canonical ordering for melee, pursuit, charge, volleys and ranged attacks.
 - Keep the workload counters meaningful and explain any renamed counter or changed instrumentation separately; do not silently relax performance ratchets, thresholds or canonical fixtures when removing the dependency.
-
-Use the former `collider_contact` path as an independent reference in focused migration tests if useful, then remove the production crate dependency and update `Cargo.lock`. Run the existing battle fixtures and relevant native/WASM checks through CI before merging executable changes.
 
 ## Scope boundary for future features
 

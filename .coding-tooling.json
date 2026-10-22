@@ -2,9 +2,21 @@
   "schemaVersion": 1,
   "profile": "repository-foundation-v1",
   "tiers": {
-    "fast": ["format:check", "lint", "build", "test"],
-    "standard": ["format:check", "lint", "build", "test"],
-    "performance": ["benchmark:smoke"]
+    "fast": [
+      "format:check",
+      "lint",
+      "build",
+      "test"
+    ],
+    "standard": [
+      "format:check",
+      "lint",
+      "build",
+      "test"
+    ],
+    "performance": [
+      "benchmark:smoke"
+    ]
   },
   "requiredCapabilities": [
     "format:check",
@@ -30,14 +42,7 @@
   "merge": {
     "authority": "hosted",
     "requiredChecks": [
-      "rust",
-      "web",
-      "build",
-      "desktop input contract",
-      "desktop-shell (ubuntu-22.04)",
-      "desktop-shell (macos-latest)",
-      "desktop-shell (windows-latest)",
-      "asset-contract"
+      "merge-ready"
     ]
   }
 }
