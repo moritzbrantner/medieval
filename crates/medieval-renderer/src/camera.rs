@@ -63,6 +63,44 @@ impl Camera3d {
         }
     }
 
+    /// Opens a field battle around the formations, rather than making the
+    /// entire (mostly empty) battlefield occupy the first view. The regular
+    /// Fit Camera command still shows the full playable field. This is purely
+    /// presentation framing; no movement or visibility rule uses the camera.
+    #[must_use]
+    pub fn frame_armies<I>(battlefield: FlatBattlefield, positions: I) -> Self
+    where
+        I: IntoIterator<Item = BattlePoint>,
+    {
+        let mut camera = Self::fit(battlefield);
+        let mut bounds: Option<(u32, u32, u32, u32)> = None;
+        for position in positions {
+            bounds = Some(match bounds {
+                Some((min_x, max_x, min_z, max_z)) => (
+                    min_x.min(position.x_mm),
+                    max_x.max(position.x_mm),
+                    min_z.min(position.y_mm),
+                    max_z.max(position.y_mm),
+                ),
+                None => (position.x_mm, position.x_mm, position.y_mm, position.y_mm),
+            });
+        }
+        let Some((min_x, max_x, min_z, max_z)) = bounds else {
+            return camera;
+        };
+        camera.target_x_mm = (min_x as f32 + max_x as f32) / 2.0;
+        camera.target_z_mm = (min_z as f32 + max_z as f32) / 2.0;
+
+        let battlefield_span = battlefield.width_mm.max(battlefield.depth_mm).max(1) as f32;
+        let formation_span = (max_x - min_x).max(max_z - min_z) as f32;
+        // Leave space for frontage, movement arrows and formations at both
+        // extremes. Fixed bounds prevent a single unit from opening at a
+        // disorienting close-up or a wide battle from being clipped.
+        let framing_fraction = (formation_span / battlefield_span * 1.15).clamp(0.68, 0.9);
+        camera.distance_mm *= framing_fraction;
+        camera
+    }
+
     #[must_use]
     pub const fn target_x_mm(self) -> f32 {
         self.target_x_mm
@@ -512,6 +550,29 @@ fn normalize(vector: [f32; 3]) -> Option<[f32; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opening_camera_centers_both_armies_and_keeps_the_full_field_fit_available() {
+        let battlefield = FlatBattlefield::new(100_000, 100_000);
+        let full = Camera3d::fit(battlefield);
+        let positions = [
+            BattlePoint::new(16_000, 18_000),
+            BattlePoint::new(82_000, 77_000),
+        ];
+        let opening = Camera3d::frame_armies(battlefield, positions);
+        assert_eq!(opening.target_x_mm(), 49_000.0);
+        assert_eq!(opening.target_z_mm(), 47_500.0);
+        assert!(opening.distance_mm() < full.distance_mm());
+        assert!(opening.distance_mm() > full.distance_mm() * 0.65);
+        for position in positions {
+            let pixel = opening
+                .project_ground_point(battlefield, position, 1_200.0, 1_200.0)
+                .unwrap();
+            assert!((0.0..=1_200.0).contains(&pixel[0]));
+            assert!((0.0..=1_200.0).contains(&pixel[1]));
+        }
+        assert_eq!(Camera3d::frame_armies(battlefield, []), full);
+    }
 
     #[test]
     fn projected_ground_point_round_trips_through_the_terrain_ray() {

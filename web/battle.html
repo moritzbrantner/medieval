@@ -82,7 +82,7 @@
         <aside class="sandbox-sidebar" aria-label="Battle sandbox controls">
           <section id="deployment-panel" class="deployment-panel" aria-label="Deployment" hidden>
             <p class="eyebrow">Deployment</p>
-            <p class="hud-hint">Arrange your formations before the clock starts. Select a formation and <strong>right click</strong> to place it; <strong>Q / E</strong>, line, column and frontage change it in place. Each whole formation must stay inside your deployment zone without overlapping another of yours.</p>
+            <p class="hud-hint">Select a formation and <strong>right-click</strong> inside your marked zone to place it. <strong>Q / E</strong> rotates; formations cannot overlap.</p>
             <button id="start-deployed-battle" class="start-battle-button" type="button">Start battle</button>
           </section>
 
@@ -148,10 +148,10 @@
             <p><strong>Ctrl + 1–9</strong> assigns a control group. <strong>1–9</strong> recalls it; <strong>Shift + 1–9</strong> adds it to the selection.</p>
           </details>
 
-          <section>
-            <p class="eyebrow">Live units</p>
+          <details class="roster-details">
+            <summary class="eyebrow">Army roster</summary>
             <div id="unit-list" class="unit-list" aria-live="polite"></div>
-          </section>
+          </details>
         </aside>
       </section>
     </main>

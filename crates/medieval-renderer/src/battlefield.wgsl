@@ -97,14 +97,53 @@ fn project_world(world_position: vec3<f32>) -> vec4<f32> {
     );
 }
 
+struct SkyOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOutput {
+    var point = vec2<f32>(-1.0, -1.0);
+    if index == 1u {
+        point = vec2<f32>(3.0, -1.0);
+    } else if index == 2u {
+        point = vec2<f32>(-1.0, 3.0);
+    }
+    var output: SkyOutput;
+    output.position = vec4<f32>(point, 0.9999, 1.0);
+    output.uv = point * 0.5 + vec2<f32>(0.5);
+    return output;
+}
+
+@fragment
+fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
+    let horizon = smoothstep(0.0, 1.0, clamp(input.uv.y, 0.0, 1.0));
+    let haze = vec3<f32>(0.50, 0.47, 0.36);
+    let high_sky = vec3<f32>(0.30, 0.43, 0.51);
+    let sun_glow = exp(-distance(input.uv, vec2<f32>(0.74, 0.73)) * 7.0) * 0.11;
+    return vec4<f32>(mix(haze, high_sky, horizon) + vec3<f32>(sun_glow, sun_glow * 0.82, sun_glow * 0.45), 1.0);
+}
+
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
-    let world_position = input.center_material.xyz
-        + cube_vertex(input.vertex_index) * input.half_extent_routed.xyz;
+    var local = cube_vertex(input.vertex_index);
+    var normal = cube_normal(input.vertex_index);
+    // The same small instanced world mesh renders tapered, layered conifer
+    // crowns. This is presentation geometry, independent of forest legality.
+    if input.center_material.w > 4.5 && input.center_material.w < 5.5 {
+        let taper = mix(1.0, 0.10, (local.y + 1.0) * 0.5);
+        local.x *= taper;
+        local.z *= taper;
+        if abs(normal.y) < 0.5 {
+            normal = normalize(vec3<f32>(normal.x, 0.72, normal.z));
+        }
+    }
+    let world_position = input.center_material.xyz + local * input.half_extent_routed.xyz;
 
     var output: VertexOutput;
     output.position = project_world(world_position);
-    output.normal = cube_normal(input.vertex_index);
+    output.normal = normal;
     output.material = input.center_material.w;
     output.routed = input.half_extent_routed.w;
     output.selected = input.visual.x;
@@ -131,13 +170,20 @@ fn vs_character(input: CharacterVertexInput) -> CharacterVertexOutput {
 fn shade(color: vec3<f32>, normal: vec3<f32>) -> vec4<f32> {
     let light_direction = normalize(vec3<f32>(0.35, 0.82, 0.45));
     let diffuse = max(dot(normalize(normal), light_direction), 0.0);
-    return vec4<f32>(color * (0.38 + diffuse * 0.62), 1.0);
+    return vec4<f32>(color * (0.48 + diffuse * 0.52), 1.0);
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    if input.material > 17.5 {
+        return vec4<f32>(0.04, 0.08, 0.04, 0.30);
+    }
     var color = vec3<f32>(0.69, 0.18, 0.12);
-    if input.material > 14.5 {
+    if input.material > 16.5 {
+        color = vec3<f32>(0.26, 0.18, 0.10);
+    } else if input.material > 15.5 {
+        color = vec3<f32>(0.25, 0.34, 0.18);
+    } else if input.material > 14.5 {
         color = vec3<f32>(0.95, 0.85, 0.35);
     } else if input.material > 13.5 {
         color = vec3<f32>(0.18, 0.45, 0.92);
@@ -158,7 +204,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     } else if input.material > 5.5 {
         color = vec3<f32>(0.10, 0.34, 0.58);
     } else if input.material > 4.5 {
-        color = vec3<f32>(0.10, 0.24, 0.08);
+        color = mix(vec3<f32>(0.12, 0.29, 0.15), vec3<f32>(0.22, 0.37, 0.17), input.elevation);
     } else if input.material > 3.5 {
         color = vec3<f32>(0.18, 0.45, 0.92);
     } else if input.material > 2.5 {

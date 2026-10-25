@@ -203,7 +203,14 @@ impl TacticalControls {
     pub fn new(battle: &TacticalBattle, player_side: BattleSide) -> Self {
         Self {
             player_side,
-            camera: Camera3d::fit(battle.battlefield()),
+            camera: if battle.siege_snapshot().is_some() {
+                Camera3d::fit(battle.battlefield())
+            } else {
+                Camera3d::frame_armies(
+                    battle.battlefield(),
+                    battle.units().iter().map(|unit| unit.position()),
+                )
+            },
             selected_units: BTreeSet::new(),
             control_groups: BTreeMap::new(),
             order_preview: false,
@@ -685,7 +692,7 @@ mod tests {
             controls.selected_unit_ids().collect::<Vec<_>>(),
             vec!["attacker-a"]
         );
-        assert_eq!(controls.camera().target_x_mm(), 55_000.0);
+        assert_eq!(controls.camera().target_x_mm(), 50_000.0);
     }
 
     #[test]
