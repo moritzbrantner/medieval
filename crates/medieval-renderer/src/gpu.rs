@@ -20,6 +20,7 @@ const SOLDIER_CENTER_Y_MM: f32 = 900.0;
 const DEPLOYMENT_BOUNDARY_HALF_WIDTH_MM: f32 = 180.0;
 const DEPLOYMENT_BOUNDARY_HEIGHT_MM: f32 = 40.0;
 const FOREST_TREES_PER_CELL: u32 = 4;
+const FOREST_PARTS_PER_TREE: usize = 4;
 const RIVER_SURFACE_HEIGHT_MM: f32 = 30.0;
 const CROSSING_SURFACE_HEIGHT_MM: f32 = 90.0;
 const SIEGE_WALL_HEIGHT_MM: f32 = 3_600.0;
@@ -94,7 +95,7 @@ impl GpuWorldInstance {
         cell: TacticalTerrainCell,
         battlefield: FlatBattlefield,
         tree_index: u32,
-    ) -> Option<Self> {
+    ) -> Option<[Self; FOREST_PARTS_PER_TREE]> {
         if tree_index >= FOREST_TREES_PER_CELL {
             return None;
         }
@@ -113,13 +114,73 @@ impl GpuWorldInstance {
         let terrain_y =
             terrain_height_mm(terrain, battlefield, BattlePoint::new(tree_x, tree_z)) as f32;
         let minimum_span = (x1 - x0).min(z1 - z0) as f32;
-        let half_width = (minimum_span * 0.06).clamp(120.0, 700.0);
-        let half_height = (half_width * 3.0).clamp(700.0, 2_600.0);
-        Some(Self {
-            center_material: [tree_x as f32, terrain_y + half_height, tree_z as f32, 5.0],
-            half_extent_routed: [half_width, half_height, half_width, 0.0],
+        let variation = 0.82 + ((cell.cell_x * 3 + cell.cell_z * 5 + tree_index) % 5) as f32 * 0.09;
+        let crown_width = (minimum_span * 0.14).clamp(350.0, 1_500.0) * variation;
+        let height = (crown_width * 3.4).clamp(1_900.0, 5_500.0);
+        let tint = tree_index as f32 / FOREST_TREES_PER_CELL as f32;
+        let foliage = |level: f32, width: f32, half_height: f32| Self {
+            center_material: [
+                tree_x as f32,
+                terrain_y + height * level,
+                tree_z as f32,
+                5.0,
+            ],
+            half_extent_routed: [
+                crown_width * width,
+                height * half_height,
+                crown_width * width,
+                0.0,
+            ],
+            visual: [0.0, 0.0, tint, 0.0],
+        };
+        Some([
+            Self {
+                center_material: [
+                    tree_x as f32,
+                    terrain_y + height * 0.39,
+                    tree_z as f32,
+                    17.0,
+                ],
+                half_extent_routed: [crown_width * 0.12, height * 0.39, crown_width * 0.12, 0.0],
+                visual: [0.0; 4],
+            },
+            foliage(0.57, 1.0, 0.29),
+            foliage(0.78, 0.77, 0.25),
+            foliage(0.96, 0.51, 0.21),
+        ])
+    }
+
+    /// A shallow decorative continuation behind the bounded logical terrain,
+    /// so the battlefield no longer appears as a floating tile in empty space.
+    fn landscape_apron(battlefield: FlatBattlefield) -> Self {
+        Self {
+            center_material: [
+                battlefield.width_mm as f32 / 2.0,
+                -300.0,
+                battlefield.depth_mm as f32 / 2.0,
+                16.0,
+            ],
+            half_extent_routed: [
+                battlefield.width_mm as f32 * 0.62,
+                100.0,
+                battlefield.depth_mm as f32 * 0.62,
+                0.0,
+            ],
             visual: [0.0; 4],
-        })
+        }
+    }
+
+    fn soldier_shadow(center: [f32; 3]) -> Self {
+        Self {
+            center_material: [
+                center[0] + 230.0,
+                center[1] - SOLDIER_CENTER_Y_MM + 32.0,
+                center[2] + 260.0,
+                18.0,
+            ],
+            half_extent_routed: [330.0, 15.0, 250.0, 0.0],
+            visual: [0.0; 4],
+        }
     }
 
     fn river_cell(
@@ -482,6 +543,7 @@ struct DepthTarget {
 pub struct GpuBattleRenderer {
     device: wgpu::Device,
     queue: Option<wgpu::Queue>,
+    sky_pipeline: wgpu::RenderPipeline,
     pipeline: wgpu::RenderPipeline,
     character_pipeline: wgpu::RenderPipeline,
     terrain_pipeline: wgpu::RenderPipeline,
@@ -568,6 +630,7 @@ impl GpuBattleRenderer {
             ],
         });
         let instance_buffer = create_world_instance_buffer(device, INITIAL_INSTANCE_CAPACITY);
+        let sky_pipeline = create_sky_pipeline(device, target_format, &pipeline_layout, &shader);
         let pipeline = create_world_pipeline(device, target_format, &pipeline_layout, &shader);
         let character_pipeline =
             create_character_pipeline(device, target_format, &pipeline_layout, &shader);
@@ -581,6 +644,7 @@ impl GpuBattleRenderer {
         Self {
             device: device.clone(),
             queue: None,
+            sky_pipeline,
             pipeline,
             character_pipeline,
             terrain_pipeline,
@@ -703,6 +767,8 @@ impl GpuBattleRenderer {
             multiview_mask: None,
         });
         pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        pass.set_pipeline(&self.sky_pipeline);
+        pass.draw(0..3, 0..1);
         if self.terrain_batch.vertex_count > 0 {
             pass.set_pipeline(&self.terrain_pipeline);
             pass.set_vertex_buffer(0, self.terrain_batch.vertex_buffer.slice(..));
@@ -739,17 +805,62 @@ struct GpuSceneInstances {
     characters: [Vec<GpuCharacterInstance>; 3],
 }
 
+fn create_sky_pipeline(
+    device: &wgpu::Device,
+    target_format: wgpu::TextureFormat,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Medieval atmospheric battlefield backdrop"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_sky"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_sky"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: target_format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
     let deployment_capacity = (2 * TERRAIN_GRID_SIZE) as usize;
-    let forest_capacity = snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize;
+    let forest_capacity =
+        snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize * FOREST_PARTS_PER_TREE;
     let river_capacity = snapshot.river_cells.len();
+    let soldier_capacity = snapshot
+        .units
+        .iter()
+        .map(|unit| unit.soldier_centers_mm.len())
+        .sum::<usize>();
     let siege_capacity = snapshot.siege.as_ref().map_or(0, |siege| {
         (siege.wall_segments.len() + 1) * (TERRAIN_GRID_SIZE * TERRAIN_GRID_SIZE) as usize
             + siege.towers.len()
             + siege.objectives.len()
     });
-    let mut world =
-        Vec::with_capacity(deployment_capacity + forest_capacity + river_capacity + siege_capacity);
+    let mut world = Vec::with_capacity(
+        1 + deployment_capacity
+            + forest_capacity
+            + river_capacity
+            + siege_capacity
+            + soldier_capacity,
+    );
+    world.push(GpuWorldInstance::landscape_apron(snapshot.battlefield));
     for cell in &snapshot.river_cells {
         let crossing = snapshot.river_crossing_cells.contains(cell);
         if let Some(river) =
@@ -766,7 +877,7 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
                 snapshot.battlefield,
                 tree_index,
             ) {
-                world.push(tree);
+                world.extend(tree);
             }
         }
     }
@@ -827,6 +938,12 @@ fn gpu_instances(snapshot: &BattleRenderSnapshot) -> GpuSceneInstances {
 
     // Facing is supplied by the core. Floating point only places visible markers.
     for unit in &snapshot.units {
+        world.extend(
+            unit.soldier_centers_mm
+                .iter()
+                .copied()
+                .map(GpuWorldInstance::soldier_shadow),
+        );
         if let Some(facing) = unit.facing {
             let [x, y] = facing.direction();
             let length = (x as f32).hypot(y as f32);
@@ -1144,11 +1261,22 @@ mod tests {
             BattleRenderSnapshot::capture(&battle, &RenderViewState::fit(battle.battlefield()));
         assert_eq!(
             gpu_instances(&snapshot).world.len(),
-            (2 * TERRAIN_GRID_SIZE) as usize
-                + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
+            1 + (2 * TERRAIN_GRID_SIZE) as usize
+                + snapshot.forest_cells.len()
+                    * FOREST_TREES_PER_CELL as usize
+                    * FOREST_PARTS_PER_TREE
                 + snapshot.river_cells.len()
+                + 80
         );
         assert_eq!(gpu_instances(&snapshot).characters[0].len(), 80);
+        assert_eq!(
+            gpu_instances(&snapshot)
+                .world
+                .iter()
+                .filter(|instance| instance.center_material[3] == 18.0)
+                .count(),
+            80
+        );
     }
 
     #[test]
@@ -1178,9 +1306,11 @@ mod tests {
         .unwrap();
         let view = RenderViewState::fit(battlefield);
         let snapshot = BattleRenderSnapshot::capture(&battle, &view);
-        let base_world_count = (2 * TERRAIN_GRID_SIZE) as usize
-            + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize
-            + snapshot.river_cells.len();
+        let base_world_count = 1
+            + (2 * TERRAIN_GRID_SIZE) as usize
+            + snapshot.forest_cells.len() * FOREST_TREES_PER_CELL as usize * FOREST_PARTS_PER_TREE
+            + snapshot.river_cells.len()
+            + 2;
         let siege = snapshot.siege.clone().expect("siege snapshot");
         let expected_wall_count = siege
             .wall_segments
@@ -1307,10 +1437,16 @@ mod tests {
         let tree = GpuWorldInstance::forest_tree(snapshot.terrain, cell, battlefield, 0).unwrap();
         let (x0, x1, z0, z1) =
             terrain_cell_bounds_mm(battlefield, cell.cell_x, cell.cell_z).unwrap();
-        assert_eq!(tree.center_material[3], 5.0);
-        assert!(tree.center_material[0] > x0 as f32 && tree.center_material[0] < x1 as f32);
-        assert!(tree.center_material[2] > z0 as f32 && tree.center_material[2] < z1 as f32);
-        assert!(tree.half_extent_routed[1] > tree.half_extent_routed[0]);
+        assert_eq!(tree[0].center_material[3], 17.0);
+        for layer in &tree[1..] {
+            assert_eq!(layer.center_material[3], 5.0);
+            assert!(layer.center_material[0] > x0 as f32 && layer.center_material[0] < x1 as f32);
+            assert!(layer.center_material[2] > z0 as f32 && layer.center_material[2] < z1 as f32);
+            assert!(layer.half_extent_routed[1] > 0.0);
+        }
+        assert!(tree[1].half_extent_routed[0] > tree[2].half_extent_routed[0]);
+        assert!(tree[2].half_extent_routed[0] > tree[3].half_extent_routed[0]);
+        assert!(tree[1].center_material[1] < tree[2].center_material[1]);
     }
 
     #[test]
@@ -1357,6 +1493,8 @@ mod tests {
         assert!(SHADER_SOURCE.contains("cube_normal"));
         assert!(SHADER_SOURCE.contains("vs_character"));
         assert!(SHADER_SOURCE.contains("character_palette"));
+        assert!(SHADER_SOURCE.contains("vs_sky"));
+        assert!(SHADER_SOURCE.contains("fs_sky"));
         assert!(SHADER_SOURCE.contains("view_z"));
         assert!(SHADER_SOURCE.contains("eye_near"));
         assert!(!SHADER_SOURCE.contains("center_zoom_elevation"));
