@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
+
+async function readTacticalCore() {
+  const root = new URL("../crates/medieval-core/src/", import.meta.url);
+  const modules = await readdir(new URL("tactical/", root));
+  const paths = ["tactical.rs", ...modules.map((name) => `tactical/${name}`)];
+  const sources = await Promise.all(paths.map((path) => readFile(new URL(path, root), "utf8")));
+  return sources.join("\n");
+}
 
 const [
   html,
@@ -23,7 +31,7 @@ const [
   readFile(new URL("../src-tauri/src/native_battle/controls.rs", import.meta.url), "utf8"),
   readFile(new URL("../web-battle-wasm/src/controls.rs", import.meta.url), "utf8"),
   readFile(new URL("../.github/workflows/pages.yml", import.meta.url), "utf8"),
-  readFile(new URL("../crates/medieval-core/src/tactical.rs", import.meta.url), "utf8"),
+  readTacticalCore(),
   readFile(new URL("../crates/medieval-core/src/terrain.rs", import.meta.url), "utf8"),
   readFile(new URL("../crates/medieval-renderer/src/scene.rs", import.meta.url), "utf8"),
 ]);
