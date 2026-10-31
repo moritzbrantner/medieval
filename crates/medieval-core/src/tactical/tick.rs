@@ -1,6 +1,7 @@
 //! Tick advancement, completion rules and order clean-up after each tick.
 
 use super::error::TacticalError;
+use super::movement::MovementBefore;
 use super::{
     BattleSide, TACTICAL_TICKS_PER_SECOND, TacticalBattle, TacticalBattleState,
     TacticalFinishReason, TacticalUnit, TacticalUnitState, find_unit,
@@ -18,12 +19,14 @@ impl TacticalBattle {
     /// Counters are not retained or serialized in the battle.
     pub fn advance_ticks_measured(&mut self, ticks: u32) -> TacticalWorkCounters {
         let mut counters = TacticalWorkCounters::default();
+        // Reused across ticks so its buffer is not regrown every movement phase.
+        let mut before = MovementBefore::default();
         for _ in 0..ticks {
             if self.ensure_running().is_err() {
                 break;
             }
             counters.ticks += 1;
-            self.advance_movement_phase(&mut counters);
+            self.advance_movement_phase(&mut before, &mut counters);
             self.tick = self.tick.saturating_add(1);
             if self
                 .tick

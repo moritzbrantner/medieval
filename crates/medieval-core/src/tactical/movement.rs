@@ -224,7 +224,12 @@ impl TacticalBattle {
     /// Instead of cloning the whole unit vector, a unit is copied only right
     /// before its own step may change it; reads of other units go through
     /// [`MovementBefore`], so idle units cost a visit but no copy.
-    pub(super) fn advance_movement_phase(&mut self, counters: &mut TacticalWorkCounters) {
+    pub(super) fn advance_movement_phase(
+        &mut self,
+        before: &mut MovementBefore,
+        counters: &mut TacticalWorkCounters,
+    ) {
+        before.clear();
         self.advance_movement_orders(counters);
         // Whether each ladder's top is held, from the state all units had when
         // the phase began, so the result never depends on unit order.
@@ -236,7 +241,6 @@ impl TacticalBattle {
                 SiegeBattleState::ladder_held(ladder, &self.units)
             })
             .collect();
-        let mut before = MovementBefore::default();
         for index in 0..self.units.len() {
             counters.movement_unit_visits += 1;
             if !movement_may_change(&self.units[index]) {
@@ -293,7 +297,7 @@ impl TacticalBattle {
             .units(&self.units)
             .enumerate()
             .filter(|(_, unit)| unit.charge.is_some())
-            .map(|(index, unit)| (index, self.next_charge(counters, index, unit, &before)))
+            .map(|(index, unit)| (index, self.next_charge(counters, index, unit, before)))
             .collect();
         for (index, charge) in charges {
             self.units[index].charge = Some(charge);
@@ -663,11 +667,15 @@ fn movement_may_change(unit: &TacticalUnit) -> bool {
 /// began. Units are saved in increasing index order right before their own
 /// step; every other unit is still unchanged in the live vector.
 #[derive(Default)]
-struct MovementBefore {
+pub(super) struct MovementBefore {
     saved: Vec<(usize, TacticalUnit)>,
 }
 
 impl MovementBefore {
+    fn clear(&mut self) {
+        self.saved.clear();
+    }
+
     fn save(&mut self, index: usize, unit: TacticalUnit) {
         debug_assert!(self.saved.last().is_none_or(|(last, _)| *last < index));
         self.saved.push((index, unit));
