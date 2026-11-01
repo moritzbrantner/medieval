@@ -73,6 +73,8 @@ Camera3d perspective basis + viewport rays
 
 There is one production renderer and one camera geometry contract. Do not maintain a long-lived 2D renderer, Three.js battle renderer, browser-only gameplay renderer, or adapter-owned projection formula beside it.
 
+The renderer now supplies a presentation-only atmospheric backdrop, a shallow landscape apron beyond the bounded battlefield, deterministic layered conifer silhouettes and contact shadows. These are decorative geometry, not extended legal terrain, forest collision, extra soldiers or combat evidence. For field battles, the opening `Camera3d::frame_armies` view frames the existing formations more closely; the explicit Fit Camera control still restores the full battlefield overview. Sieges continue to open at full-field fit so their walls and objectives remain visible. Browser and desktop use the same renderer and camera construction.
+
 ## Pause, simulation speed and tick scheduling
 
 The browser battle offers four documented simulation speed multipliers: **0.5×**, **1×** (default), **2×** and **4×**. Pause and simulation speed are tick scheduling only. They decide how many fixed `TACTICAL_TICKS_PER_SECOND` ticks run for a span of wall time, never what a tick does. A battle at the same tick has the same simulation truth (units, siege capture state, battle state and outcome) at every speed and while paused.
@@ -92,6 +94,7 @@ The browser HUD only renders the Rust sandbox status and forwards input:
 - **Battle status** shows the run state, the player and opponent sides (`playerSide` / `opponentSide`: attacker or defender) and, only in a siege, a capture progress bar from `siege.capture.progress` out of `siegeCaptureMaxProgress` (core `SIEGE_CAPTURE_MAX_PROGRESS`). A terminal state with reason `siegeCapture` gets its own text, separate from a defeated force or a withdrawal.
 - **Selected units** shows one card per Rust-selected unit with its kind, soldiers, morale, fatigue, ammunition, formation and current order. The order is derived in Rust from core unit state (`order.kind`: `hold`, `move`, `attackMove`, `engage` with `targetUnitId`, `attackGate`, `withdraw`, `rout`, `destroyed` or `escaped`).
 - **Control groups** are shared `TacticalControls` state and are reported as `controlGroups`. As on desktop, Ctrl+1–9 assigns the selection, 1–9 recalls a group and Shift+1–9 adds it to the selection. Digit 0 stays bound to fit camera in the browser. Each group is a focusable button that recalls it. Resetting the battle clears the groups.
+- **Presentation density** shows deployment commands first, hides simulation speed and Pause until the battle starts, and puts the longer army roster behind an optional disclosure. This does not change the Rust phase, available commands or faction-scoped data.
 
 ## Deployment phase
 
