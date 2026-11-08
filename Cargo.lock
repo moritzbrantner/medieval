@@ -3702,7 +3702,7 @@ dependencies = [
 [[package]]
 name = "three-d-animation"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=6b04dc4bc16f9bcd65c1bc755254370012065e61#6b04dc4bc16f9bcd65c1bc755254370012065e61"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=21e916dcea8859334e800ed7a4f075a287a70edc#21e916dcea8859334e800ed7a4f075a287a70edc"
 dependencies = [
  "three-d-core",
 ]
@@ -3710,7 +3710,7 @@ dependencies = [
 [[package]]
 name = "three-d-assets"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=6b04dc4bc16f9bcd65c1bc755254370012065e61#6b04dc4bc16f9bcd65c1bc755254370012065e61"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=21e916dcea8859334e800ed7a4f075a287a70edc#21e916dcea8859334e800ed7a4f075a287a70edc"
 dependencies = [
  "three-d-animation",
  "three-d-core",
@@ -3719,12 +3719,12 @@ dependencies = [
 [[package]]
 name = "three-d-core"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=6b04dc4bc16f9bcd65c1bc755254370012065e61#6b04dc4bc16f9bcd65c1bc755254370012065e61"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=21e916dcea8859334e800ed7a4f075a287a70edc#21e916dcea8859334e800ed7a4f075a287a70edc"
 
 [[package]]
 name = "three-d-formats"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=6b04dc4bc16f9bcd65c1bc755254370012065e61#6b04dc4bc16f9bcd65c1bc755254370012065e61"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=21e916dcea8859334e800ed7a4f075a287a70edc#21e916dcea8859334e800ed7a4f075a287a70edc"
 dependencies = [
  "base64 0.23.1",
  "gltf",
@@ -3738,7 +3738,7 @@ dependencies = [
 [[package]]
 name = "three-d-rigged-assets"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/3d-lab?rev=6b04dc4bc16f9bcd65c1bc755254370012065e61#6b04dc4bc16f9bcd65c1bc755254370012065e61"
+source = "git+https://github.com/moritzbrantner/3d-lab?rev=21e916dcea8859334e800ed7a4f075a287a70edc#21e916dcea8859334e800ed7a4f075a287a70edc"
 dependencies = [
  "three-d-animation",
  "three-d-core",
