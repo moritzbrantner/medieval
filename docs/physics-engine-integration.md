@@ -8,7 +8,7 @@
 
 ## Current code and migration status
 
-[Medieval #76](https://github.com/moritzbrantner/medieval/issues/76) removed the dependency. `measured_points_within_distance` in `crates/medieval-core/src/tactical.rs` now applies the inclusive squared-distance predicate below directly, after the same axis rejection, with `i64` deltas and `u128` squares. The workspace manifest, the `medieval-core` manifest and `Cargo.lock` no longer reference `physics-engine`. The `physics_contact_queries` work counter keeps its name and meaning (exact checks that pass axis rejection), so the work budgets in `crates/medieval-core/tests/fixtures/tactical-work-budgets-v1.json` stay unchanged.
+[Medieval #76](https://github.com/moritzbrantner/medieval/issues/76) removed the dependency. `measured_points_within_distance` in `crates/medieval-core/src/tactical/geometry.rs` now applies the inclusive squared-distance predicate below directly, after the same axis rejection, with `i64` deltas and `u128` squares. The workspace manifest, the `medieval-core` manifest and `Cargo.lock` no longer reference `physics-engine`. The `physics_contact_queries` work counter keeps its name and meaning (exact checks that pass axis rejection), so the work budgets in `crates/medieval-core/tests/fixtures/tactical-work-budgets-v1.json` stay unchanged.
 
 ## Exact proximity contract to preserve
 
