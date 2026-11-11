@@ -58,3 +58,11 @@ test("battle interface carries no developer diagnostic panel", () => {
   assert.doesNotMatch(html, /class="runtime-note"/);
   assert.doesNotMatch(html, /JavaScript only adapts/);
 });
+
+test("deployment prioritizes its active commands and keeps the long roster optional", () => {
+  assert.match(html, /<details class="roster-details">/);
+  assert.match(html, /<summary class="eyebrow">Army roster<\/summary>/);
+  assert.match(script, /battleStage\.dataset\.phase = deploying/);
+  assert.match(script, /querySelector\("#simulation-speed"\)\.hidden = deploying/);
+  assert.match(script, /pauseButton\.hidden = deploying/);
+});
