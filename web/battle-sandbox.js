@@ -446,6 +446,9 @@ function renderStatus(rawStatus) {
   }[currentStatus.outcome];
   // Rust reports the phase; the page only mirrors it.
   const deploying = currentStatus.battleState?.phase === "deployment";
+  battleStage.dataset.phase = deploying ? "deployment" : "live";
+  document.querySelector("#simulation-speed").hidden = deploying;
+  pauseButton.hidden = deploying;
   deploymentPanel.hidden = !deploying;
   startDeployedButton.disabled = !deploying;
   stateText.textContent = outcomeText
