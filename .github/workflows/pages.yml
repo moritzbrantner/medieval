@@ -28,8 +28,12 @@ jobs:
         run: cargo build --manifest-path web-wasm/Cargo.toml --target wasm32-unknown-unknown --release
       - name: Build tactical browser runtime
         run: cargo build --manifest-path web-battle-wasm/Cargo.toml --target wasm32-unknown-unknown --release
-      - name: Install wasm-bindgen CLI
-        run: cargo install wasm-bindgen-cli --version 0.2.130 --locked
+      # Official publisher release, digest-verified at download; fails closed instead of compiling from source.
+      - name: Install verified wasm-bindgen CLI
+        uses: moritzbrantner/reusable-workflows/.github/actions/install-verified-wasm-cli@f17cd13868ab7d956b9e8a9afae926a84b368d0d
+        with:
+          tool: wasm-bindgen
+          version: "0.2.130"
       - name: Stage Pages artifact
         run: |
           mkdir -p web/pkg
